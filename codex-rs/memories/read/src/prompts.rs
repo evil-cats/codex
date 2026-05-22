@@ -27,6 +27,7 @@ fn parse_embedded_template(source: &'static str, template_name: &str) -> Templat
 /// [MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT].
 pub async fn build_memory_tool_developer_instructions(
     codex_home: &AbsolutePathBuf,
+    read_template_path: Option<&AbsolutePathBuf>,
 ) -> Option<String> {
     let base_path = memory_root(codex_home);
     let memory_summary_path = base_path.join("memory_summary.md");
@@ -43,12 +44,35 @@ pub async fn build_memory_tool_developer_instructions(
         return None;
     }
     let base_path = base_path.display().to_string();
-    MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE
-        .render([
-            ("base_path", base_path.as_str()),
-            ("memory_summary", memory_summary.as_str()),
-        ])
-        .ok()
+    let template = load_memory_tool_developer_instructions_template(read_template_path).await?;
+    render_memory_tool_developer_instructions_template(&template, &base_path, &memory_summary)
+}
+
+async fn load_memory_tool_developer_instructions_template(
+    read_template_path: Option<&AbsolutePathBuf>,
+) -> Option<Template> {
+    let Some(read_template_path) = read_template_path else {
+        return Some(MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE.clone());
+    };
+
+    let template = fs::read_to_string(read_template_path).await.ok()?;
+    Template::parse(&template).ok()
+}
+
+fn render_memory_tool_developer_instructions_template(
+    template: &Template,
+    base_path: &str,
+    memory_summary: &str,
+) -> Option<String> {
+    let mut variables = Vec::new();
+    for placeholder in template.placeholders() {
+        match placeholder {
+            "base_path" => variables.push(("base_path", base_path)),
+            "memory_summary" => variables.push(("memory_summary", memory_summary)),
+            _ => return None,
+        }
+    }
+    template.render(variables).ok()
 }
 
 #[cfg(test)]

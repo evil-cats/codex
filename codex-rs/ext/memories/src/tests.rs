@@ -42,6 +42,7 @@ fn tools_are_not_contributed_when_disabled() {
     thread_store.insert(MemoriesExtensionConfig {
         enabled: false,
         codex_home: test_path_buf("/tmp/codex-home").abs(),
+        read_template_path: None,
     });
 
     assert!(
@@ -58,6 +59,7 @@ fn tools_are_contributed_when_enabled() {
     thread_store.insert(MemoriesExtensionConfig {
         enabled: true,
         codex_home: test_path_buf("/tmp/codex-home").abs(),
+        read_template_path: None,
     });
 
     let tool_names = extension
@@ -95,6 +97,7 @@ async fn prompt_contribution_uses_memory_summary_when_enabled() {
     thread_store.insert(MemoriesExtensionConfig {
         enabled: true,
         codex_home: tempdir.path().abs(),
+        read_template_path: None,
     });
 
     let fragments = extension

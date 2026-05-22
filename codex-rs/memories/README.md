@@ -25,6 +25,10 @@ Memory prompt templates live with the crate that uses them:
   - `write/templates/memories/stage_one_system.md`
   - `write/templates/memories/stage_one_input.md`
   - `write/templates/memories/consolidation.md`
+- The read-path template can be overridden per config/profile with
+  `[memories].read_template_path`. The configured template is rendered with
+  `{{ base_path }}` and `{{ memory_summary }}` when those placeholders are
+  present; unknown placeholders make the read-path prompt unavailable.
 - In `codex`, edit those undated template files in place.
 - The dated snapshot-copy workflow is used in the separate `openai/project/agent_memory/write` harness repo, not here.
 

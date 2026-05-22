@@ -24,6 +24,7 @@ pub(crate) struct MemoriesExtension;
 pub(crate) struct MemoriesExtensionConfig {
     pub(crate) enabled: bool,
     pub(crate) codex_home: AbsolutePathBuf,
+    pub(crate) read_template_path: Option<AbsolutePathBuf>,
 }
 
 impl MemoriesExtensionConfig {
@@ -31,6 +32,7 @@ impl MemoriesExtensionConfig {
         Self {
             enabled: config.features.enabled(Feature::MemoryTool) && config.memories.use_memories,
             codex_home: config.codex_home.clone(),
+            read_template_path: config.memories.read_template_path.clone(),
         }
     }
 }
@@ -49,11 +51,14 @@ impl ContextContributor for MemoriesExtension {
                 return Vec::new();
             }
 
-            build_memory_tool_developer_instructions(&config.codex_home)
-                .await
-                .map(PromptFragment::developer_policy)
-                .into_iter()
-                .collect()
+            build_memory_tool_developer_instructions(
+                &config.codex_home,
+                config.read_template_path.as_ref(),
+            )
+            .await
+            .map(PromptFragment::developer_policy)
+            .into_iter()
+            .collect()
         })
     }
 }
