@@ -17,7 +17,9 @@ pub(crate) fn is_source_build_version(version: &str) -> bool {
 }
 
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
+    let version = v.trim();
+    let base_version = version.split_once('+').map_or(version, |(base, _)| base);
+    let mut iter = base_version.split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
@@ -54,6 +56,13 @@ mod tests {
         assert_eq!(is_newer("0.11.0", "0.11.1"), Some(false));
         assert_eq!(is_newer("1.0.0", "0.9.9"), Some(true));
         assert_eq!(is_newer("0.9.9", "1.0.0"), Some(false));
+    }
+
+    #[test]
+    fn build_metadata_is_ignored_for_version_comparison() {
+        assert_eq!(parse_version("0.133.0+hermione"), Some((0, 133, 0)));
+        assert_eq!(is_newer("0.134.0", "0.133.0+hermione"), Some(true));
+        assert_eq!(is_newer("0.133.0", "0.133.0+hermione"), Some(false));
     }
 
     #[test]

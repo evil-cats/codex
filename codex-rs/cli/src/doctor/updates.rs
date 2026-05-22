@@ -187,7 +187,9 @@ fn is_newer(latest: &str, current: &str) -> Option<bool> {
 }
 
 fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = value.trim().split('.');
+    let version = value.trim();
+    let base_version = version.split_once('+').map_or(version, |(base, _)| base);
+    let mut parts = base_version.split('.');
     let major = parts.next()?.parse::<u64>().ok()?;
     let minor = parts.next()?.parse::<u64>().ok()?;
     let patch = parts.next()?.parse::<u64>().ok()?;
@@ -212,6 +214,13 @@ mod tests {
         assert_eq!(is_newer("1.2.4", "1.2.3"), Some(true));
         assert_eq!(is_newer("1.2.3", "1.2.4"), Some(false));
         assert_eq!(is_newer("1.2.3-beta.1", "1.2.2"), None);
+    }
+
+    #[test]
+    fn is_newer_ignores_build_metadata() {
+        assert_eq!(parse_version("0.133.0+hermione"), Some((0, 133, 0)));
+        assert_eq!(is_newer("0.134.0", "0.133.0+hermione"), Some(true));
+        assert_eq!(is_newer("0.133.0", "0.133.0+hermione"), Some(false));
     }
 
     #[test]

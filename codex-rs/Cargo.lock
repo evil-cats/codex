@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "codex-cli"
-version = "0.133.0+hermione.d976b54ed"
+version = "0.133.0+hermione"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3785,7 +3785,7 @@ dependencies = [
 
 [[package]]
 name = "codex-tui"
-version = "0.0.0"
+version = "0.133.0+hermione"
 dependencies = [
  "anyhow",
  "arboard",
