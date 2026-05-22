@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "codex-cli"
-version = "0.0.0"
+version = "0.133.0+hermione.d976b54ed"
 dependencies = [
  "anyhow",
  "assert_cmd",
