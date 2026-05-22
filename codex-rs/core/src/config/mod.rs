@@ -3162,7 +3162,46 @@ impl Config {
         let base_instructions = base_instructions
             .or(file_base_instructions)
             .or(cfg.instructions.clone());
-        let developer_instructions = developer_instructions.or(cfg.developer_instructions);
+        let file_developer_instructions = if developer_instructions.is_none() {
+            let mut sections = Vec::new();
+            for path in &cfg.developer_instructions_files {
+                let contents = fs
+                    .read_file_text(path, /*sandbox*/ None)
+                    .await
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            e.kind(),
+                            format!(
+                                "failed to read developer instructions file {}: {e}",
+                                path.display()
+                            ),
+                        )
+                    })?;
+                let contents = contents.trim();
+                if contents.is_empty() {
+                    startup_warnings.push(format!(
+                        "developer instructions file is empty: {}",
+                        path.display()
+                    ));
+                } else {
+                    sections.push(contents.to_string());
+                }
+            }
+            sections
+        } else {
+            Vec::new()
+        };
+        let developer_instructions = developer_instructions.or_else(|| {
+            let mut sections = Vec::new();
+            if let Some(inline_developer_instructions) = cfg.developer_instructions {
+                let inline_developer_instructions = inline_developer_instructions.trim();
+                if !inline_developer_instructions.is_empty() {
+                    sections.push(inline_developer_instructions.to_string());
+                }
+            }
+            sections.extend(file_developer_instructions);
+            (!sections.is_empty()).then(|| sections.join("\n\n"))
+        });
         let include_permissions_instructions = cfg.include_permissions_instructions.unwrap_or(true);
         let include_apps_instructions = cfg.include_apps_instructions.unwrap_or(true);
         let include_collaboration_mode_instructions =

@@ -1386,6 +1386,7 @@ mod unit_tests {
 # This is a field recognized by config.toml that is an AbsolutePathBuf in
 # the ConfigToml struct.
 model_instructions_file = "./some_file.md"
+developer_instructions_files = ["./developer_a.md", "./developer_b.md"]
 
 # This is a field recognized by config.toml.
 model = "gpt-1000"
@@ -1405,6 +1406,23 @@ foo = "xyzzy"
                     .to_string_lossy()
                     .to_string(),
             ),
+        );
+        expected_toml_value.insert(
+            "developer_instructions_files".to_string(),
+            TomlValue::Array(vec![
+                TomlValue::String(
+                    AbsolutePathBuf::resolve_path_against_base("./developer_a.md", base_dir)
+                        .as_path()
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                TomlValue::String(
+                    AbsolutePathBuf::resolve_path_against_base("./developer_b.md", base_dir)
+                        .as_path()
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+            ]),
         );
         expected_toml_value.insert(
             "model".to_string(),

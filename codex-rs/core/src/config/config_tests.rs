@@ -347,6 +347,25 @@ consolidation_model = "gpt-5.2"
         }
     );
 
+    let first_developer_instructions_path = test_absolute_path("/tmp/developer-a.md");
+    let second_developer_instructions_path = test_absolute_path("/tmp/developer-b.md");
+    let developer_instructions_files = format!(
+        r#"
+developer_instructions_files = ["{}", "{}"]
+"#,
+        first_developer_instructions_path.display(),
+        second_developer_instructions_path.display()
+    );
+    let developer_instructions_cfg = toml::from_str::<ConfigToml>(&developer_instructions_files)
+        .expect("TOML deserialization should succeed");
+    assert_eq!(
+        developer_instructions_cfg.developer_instructions_files,
+        vec![
+            first_developer_instructions_path,
+            second_developer_instructions_path
+        ]
+    );
+
     let legacy_memories_cfg =
         toml::from_str::<ConfigToml>("[memories]\nno_memories_if_mcp_or_web_search = true\n")
             .expect("legacy memories TOML should deserialize");
@@ -358,6 +377,93 @@ consolidation_model = "gpt-5.2"
         )
         .disable_on_external_context
     );
+}
+
+#[tokio::test]
+async fn developer_instructions_files_are_appended_in_order() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let first_path = codex_home.path().join("developer-a.md");
+    let second_path = codex_home.path().join("developer-b.md");
+    tokio::fs::write(&first_path, "\nFirst file.\n").await?;
+    tokio::fs::write(&second_path, "Second file.\n\n").await?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            developer_instructions: Some("Inline instructions.".to_string()),
+            developer_instructions_files: vec![first_path.abs(), second_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("Inline instructions.\n\nFirst file.\n\nSecond file.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn developer_instructions_files_skip_empty_files_with_warning() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let empty_path = codex_home.path().join("empty.md");
+    let instructions_path = codex_home.path().join("instructions.md");
+    tokio::fs::write(&empty_path, "\n\n").await?;
+    tokio::fs::write(&instructions_path, "File instructions.").await?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            developer_instructions_files: vec![empty_path.abs(), instructions_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.developer_instructions.as_deref(),
+        Some("File instructions.")
+    );
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains("developer instructions file is empty")),
+        "{:?}",
+        config.startup_warnings
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn developer_instructions_files_reject_missing_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let missing_path = codex_home.path().join("missing.md");
+
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            developer_instructions_files: vec![missing_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await;
+
+    let err = result.expect_err("missing developer instructions file should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        err.to_string()
+            .contains("failed to read developer instructions file"),
+        "{err}"
+    );
+
+    Ok(())
 }
 
 #[test]

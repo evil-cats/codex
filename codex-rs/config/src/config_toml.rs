@@ -213,6 +213,10 @@ pub struct ConfigToml {
     #[serde(default)]
     pub developer_instructions: Option<String>,
 
+    /// Markdown files appended to `developer_instructions` in order.
+    #[serde(default)]
+    pub developer_instructions_files: Vec<AbsolutePathBuf>,
+
     /// Whether to inject the `<permissions instructions>` developer block.
     pub include_permissions_instructions: Option<bool>,
 
