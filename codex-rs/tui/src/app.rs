@@ -44,6 +44,7 @@ use crate::history_cell::HistoryCell;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
 use crate::hooks_rpc::HookTrustUpdate;
+use crate::insert_history::HistoryInsertItem;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
@@ -498,7 +499,7 @@ pub(crate) struct App {
 
     // Pager overlay state (Transcript or Static like Diff)
     pub(crate) overlay: Option<Overlay>,
-    pub(crate) deferred_history_lines: Vec<Line<'static>>,
+    pub(crate) deferred_history_lines: Vec<HistoryInsertItem>,
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,

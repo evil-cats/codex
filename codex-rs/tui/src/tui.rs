@@ -40,6 +40,7 @@ use tokio_stream::Stream;
 pub use self::frame_requester::FrameRequester;
 use crate::custom_terminal;
 use crate::custom_terminal::Terminal as CustomTerminal;
+use crate::insert_history::HistoryInsertItem;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::notifications::DesktopNotificationBackend;
 use crate::notifications::detect_backend;
@@ -468,7 +469,7 @@ pub struct Tui {
     draw_tx: broadcast::Sender<()>,
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
-    pending_history_lines: Vec<PendingHistoryLines>,
+    pending_history_lines: Vec<PendingHistoryItems>,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
@@ -485,8 +486,8 @@ pub struct Tui {
     alt_screen_enabled: bool,
 }
 
-struct PendingHistoryLines {
-    lines: Vec<Line<'static>>,
+struct PendingHistoryItems {
+    items: Vec<HistoryInsertItem>,
     wrap_policy: HistoryLineWrapPolicy,
 }
 
@@ -700,16 +701,27 @@ impl Tui {
         lines: Vec<Line<'static>>,
         wrap_policy: HistoryLineWrapPolicy,
     ) {
-        if lines.is_empty() {
+        self.insert_history_items_with_wrap_policy(
+            lines.into_iter().map(HistoryInsertItem::Line).collect(),
+            wrap_policy,
+        );
+    }
+
+    pub fn insert_history_items_with_wrap_policy(
+        &mut self,
+        items: Vec<HistoryInsertItem>,
+        wrap_policy: HistoryLineWrapPolicy,
+    ) {
+        if items.is_empty() {
             return;
         }
         if let Some(last) = self.pending_history_lines.last_mut()
             && last.wrap_policy == wrap_policy
         {
-            last.lines.extend(lines);
+            last.items.extend(items);
         } else {
             self.pending_history_lines
-                .push(PendingHistoryLines { lines, wrap_policy });
+                .push(PendingHistoryItems { items, wrap_policy });
         }
         self.frame_requester().schedule_frame();
     }
@@ -764,16 +776,16 @@ impl Tui {
     /// Write any buffered history lines above the viewport and clear the buffer.
     fn flush_pending_history_lines(
         terminal: &mut Terminal,
-        pending_history_lines: &mut Vec<PendingHistoryLines>,
+        pending_history_lines: &mut Vec<PendingHistoryItems>,
     ) -> Result<()> {
         if pending_history_lines.is_empty() {
             return Ok(());
         }
 
         for batch in pending_history_lines.iter() {
-            crate::insert_history::insert_history_lines_with_wrap_policy(
+            crate::insert_history::insert_history_items_with_wrap_policy(
                 terminal,
-                batch.lines.clone(),
+                batch.items.clone(),
                 batch.wrap_policy,
             )?;
         }

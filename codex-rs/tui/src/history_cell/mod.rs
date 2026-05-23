@@ -141,6 +141,27 @@ pub(crate) enum HistoryRenderMode {
     Raw,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryCellDisplayItem {
+    Line(Line<'static>),
+    LocalImage(PathBuf),
+}
+
+impl HistoryCellDisplayItem {
+    fn line(self) -> Option<Line<'static>> {
+        match self {
+            Self::Line(line) => Some(line),
+            Self::LocalImage(_) => None,
+        }
+    }
+}
+
+impl From<Line<'static>> for HistoryCellDisplayItem {
+    fn from(line: Line<'static>) -> Self {
+        Self::Line(line)
+    }
+}
+
 pub(crate) fn raw_lines_from_source(source: &str) -> Vec<Line<'static>> {
     if source.is_empty() {
         return Vec::new();
@@ -192,6 +213,22 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
             HistoryRenderMode::Rich => self.display_lines(width),
             HistoryRenderMode::Raw => self.raw_lines(),
         }
+    }
+
+    /// Returns finalized scrollback items for terminal-backed history insertion.
+    ///
+    /// Most cells are line-only. Cells with local images may include `LocalImage` markers so the
+    /// terminal writer can emit image-protocol payloads while the ratatui viewport keeps a plain
+    /// text fallback.
+    fn display_items_for_mode(
+        &self,
+        width: u16,
+        mode: HistoryRenderMode,
+    ) -> Vec<HistoryCellDisplayItem> {
+        self.display_lines_for_mode(width, mode)
+            .into_iter()
+            .map(HistoryCellDisplayItem::Line)
+            .collect()
     }
 
     /// Returns the number of viewport rows needed to render this cell.

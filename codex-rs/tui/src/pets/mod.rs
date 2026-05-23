@@ -13,7 +13,11 @@
 //! ensure a built-in asset exists before loading it and must persist the final
 //! selection only after the load succeeds.
 
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Write;
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 mod ambient;
 mod asset_pack;
@@ -28,6 +32,8 @@ mod sixel;
 use anyhow::Context;
 use anyhow::Result;
 
+use crate::insert_history::TerminalHistoryImage;
+use crate::insert_history::TerminalHistoryImagePayload;
 pub(crate) use ambient::AmbientPet;
 pub(crate) use ambient::AmbientPetDraw;
 pub(crate) use ambient::PetNotificationKind;
@@ -36,12 +42,10 @@ pub(crate) use ambient::test_ambient_pet;
 pub(crate) use asset_pack::builtin_spritesheet_path;
 #[cfg(test)]
 pub(crate) use asset_pack::write_test_pack;
-#[cfg(test)]
 pub(crate) use image_protocol::ImageProtocol;
 pub(crate) use image_protocol::PetImageSupport;
 #[cfg(test)]
 pub(crate) use image_protocol::PetImageUnsupportedReason;
-#[cfg(not(test))]
 pub(crate) use image_protocol::detect_pet_image_support;
 pub(crate) use picker::PET_PICKER_VIEW_ID;
 pub(crate) use picker::build_pet_picker_params;
@@ -111,6 +115,108 @@ pub(crate) fn render_pet_picker_preview_image(
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
     render_pet_image(writer, state, /*image_id*/ 0xC0DF, request)
+}
+
+const HISTORY_IMAGE_TARGET_ROWS: u16 = 12;
+const HISTORY_IMAGE_ROW_HEIGHT_PX: u16 = 15;
+const TERMINAL_CELL_WIDTH_TO_HEIGHT: f64 = 0.52;
+
+pub(crate) fn prepare_history_image(
+    path: &Path,
+    protocol: ImageProtocol,
+    max_columns: u16,
+    cache_root: &Path,
+) -> std::result::Result<TerminalHistoryImage, PetImageRenderError> {
+    let size = history_image_size(path, max_columns).map_err(PetImageRenderError::Asset)?;
+    let payload = match protocol {
+        ImageProtocol::Kitty => TerminalHistoryImagePayload::Text(
+            image_protocol::kitty_transmit_png_with_id(
+                path,
+                size.columns,
+                size.rows,
+                /*image_id*/ None,
+            )
+            .map_err(PetImageRenderError::Asset)?,
+        ),
+        ImageProtocol::KittyLocalFile => TerminalHistoryImagePayload::Text(
+            image_protocol::kitty_transmit_png_file_with_id(
+                path,
+                size.columns,
+                size.rows,
+                /*image_id*/ None,
+            )
+            .map_err(PetImageRenderError::Asset)?,
+        ),
+        ImageProtocol::Sixel => {
+            let cache_dir = history_image_cache_dir(path, cache_root);
+            let path = image_protocol::sixel_frame(path, &cache_dir, size.height_px)
+                .map_err(PetImageRenderError::Asset)?;
+            let sixel = std::fs::read(&path)
+                .with_context(|| format!("read {}", path.display()))
+                .map_err(PetImageRenderError::Asset)?;
+            TerminalHistoryImagePayload::Bytes(sixel)
+        }
+    };
+
+    Ok(TerminalHistoryImage {
+        x: 2,
+        columns: size.columns,
+        rows: size.rows,
+        payload,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HistoryImageSize {
+    columns: u16,
+    rows: u16,
+    height_px: u16,
+}
+
+fn history_image_size(path: &Path, max_columns: u16) -> Result<HistoryImageSize> {
+    let (width, height) =
+        image::image_dimensions(path).with_context(|| format!("read {}", path.display()))?;
+    let max_columns = max_columns.max(1);
+    let target_rows = HISTORY_IMAGE_TARGET_ROWS.max(1);
+    let mut rows = target_rows;
+    let mut columns = columns_for_image_rows(width, height, rows);
+
+    if columns > max_columns {
+        rows = ((f64::from(max_columns) * f64::from(height) * TERMINAL_CELL_WIDTH_TO_HEIGHT)
+            / f64::from(width))
+        .round()
+        .clamp(1.0, f64::from(target_rows)) as u16;
+        columns = columns_for_image_rows(width, height, rows).min(max_columns);
+    }
+
+    Ok(HistoryImageSize {
+        columns: columns.max(1),
+        rows: rows.max(1),
+        height_px: rows.max(1).saturating_mul(HISTORY_IMAGE_ROW_HEIGHT_PX),
+    })
+}
+
+fn columns_for_image_rows(width: u32, height: u32, rows: u16) -> u16 {
+    if height == 0 {
+        return 1;
+    }
+    ((f64::from(rows) * f64::from(width)) / (f64::from(height) * TERMINAL_CELL_WIDTH_TO_HEIGHT))
+        .round()
+        .max(1.0) as u16
+}
+
+fn history_image_cache_dir(path: &Path, cache_root: &Path) -> std::path::PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    if let Ok(metadata) = std::fs::metadata(path) {
+        metadata.len().hash(&mut hasher);
+        if let Ok(modified) = metadata.modified()
+            && let Ok(duration) = modified.duration_since(UNIX_EPOCH)
+        {
+            duration.as_nanos().hash(&mut hasher);
+        }
+    }
+    cache_root.join(format!("{:016x}", hasher.finish()))
 }
 
 #[derive(Debug, Default)]
@@ -258,6 +364,11 @@ mod tests {
     use super::image_protocol::ImageProtocol;
     use super::*;
 
+    fn write_test_png(path: &std::path::Path, width: u32, height: u32) {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 255, 255]));
+        image.save(path).unwrap();
+    }
+
     #[test]
     fn ambient_pet_image_restores_cursor_after_drawing() {
         let dir = tempfile::tempdir().unwrap();
@@ -346,6 +457,44 @@ mod tests {
         assert!(output.contains("a=T,t=f,f=100,c=4,r=2,q=2,i=49374;"));
         assert!(!output.contains("cG5n"));
         assert!(output.contains("\x1b8"));
+    }
+
+    #[test]
+    fn history_image_size_clamps_wide_images_to_available_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("wide.png");
+        write_test_png(&frame, /*width*/ 400, /*height*/ 100);
+
+        let size = history_image_size(&frame, /*max_columns*/ 20).unwrap();
+
+        assert!(size.columns <= 20);
+        assert!(size.rows < HISTORY_IMAGE_TARGET_ROWS);
+        assert_eq!(
+            size.height_px,
+            size.rows.saturating_mul(HISTORY_IMAGE_ROW_HEIGHT_PX)
+        );
+    }
+
+    #[test]
+    fn history_image_prepare_kitty_payload_uses_auto_image_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.png");
+        write_test_png(&frame, /*width*/ 100, /*height*/ 100);
+
+        let image = prepare_history_image(
+            &frame,
+            ImageProtocol::Kitty,
+            /*max_columns*/ 40,
+            &dir.path().join("cache"),
+        )
+        .unwrap();
+
+        let TerminalHistoryImagePayload::Text(payload) = image.payload else {
+            panic!("expected kitty text payload");
+        };
+        assert!(payload.contains("a=T,t=d,f=100"));
+        assert!(!payload.contains(",i="));
+        assert!(image.columns <= 40);
     }
 
     #[test]

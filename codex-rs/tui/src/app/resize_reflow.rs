@@ -26,6 +26,8 @@ use super::App;
 use super::InitialHistoryReplayBuffer;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
+use crate::history_cell::HistoryCellDisplayItem;
+use crate::insert_history::HistoryInsertItem;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
 use crate::tui;
@@ -88,20 +90,77 @@ impl App {
         display
     }
 
+    fn display_items_for_history_insert(
+        &mut self,
+        cell: &dyn HistoryCell,
+        width: u16,
+    ) -> Vec<HistoryInsertItem> {
+        let mode = self.chat_widget.history_render_mode();
+        let mut display =
+            self.prepare_history_insert_items(cell.display_items_for_mode(width, mode), width);
+        if !display.is_empty() && !cell.is_stream_continuation() {
+            if self.has_emitted_history_lines {
+                display.insert(0, HistoryInsertItem::Line(Line::from("")));
+            } else {
+                self.has_emitted_history_lines = true;
+            }
+        }
+        display
+    }
+
+    fn prepare_history_insert_items(
+        &self,
+        display: Vec<HistoryCellDisplayItem>,
+        width: u16,
+    ) -> Vec<HistoryInsertItem> {
+        let protocol = crate::pets::detect_pet_image_support().protocol();
+        let cache_root = self
+            .config
+            .codex_home
+            .join("cache")
+            .join("tui-history-images");
+        let max_columns = width.saturating_sub(/*right_margin*/ 4).max(1);
+        display
+            .into_iter()
+            .filter_map(|item| match item {
+                HistoryCellDisplayItem::Line(line) => Some(HistoryInsertItem::Line(line)),
+                HistoryCellDisplayItem::LocalImage(path) => {
+                    let protocol = protocol?;
+                    match crate::pets::prepare_history_image(
+                        &path,
+                        protocol,
+                        max_columns,
+                        &cache_root,
+                    ) {
+                        Ok(image) => Some(HistoryInsertItem::Image(image)),
+                        Err(err) => {
+                            tracing::debug!(
+                                error = %err,
+                                path = %path.display(),
+                                "failed to prepare local image history preview"
+                            );
+                            None
+                        }
+                    }
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn insert_history_cell_lines(
         &mut self,
         tui: &mut tui::Tui,
         cell: &dyn HistoryCell,
         width: u16,
     ) {
-        let display = self.display_lines_for_history_insert(cell, width);
+        let display = self.display_items_for_history_insert(cell, width);
         if display.is_empty() {
             return;
         }
         if self.overlay.is_some() {
             self.deferred_history_lines.extend(display);
         } else {
-            tui.insert_history_lines_with_wrap_policy(display, self.history_line_wrap_policy());
+            tui.insert_history_items_with_wrap_policy(display, self.history_line_wrap_policy());
         }
     }
 
@@ -188,7 +247,8 @@ impl App {
             if let Some(max_rows) = max_rows {
                 Self::buffer_initial_history_replay_display_lines(buffer, display, max_rows);
             } else if self.overlay.is_some() {
-                self.deferred_history_lines.extend(display);
+                self.deferred_history_lines
+                    .extend(display.into_iter().map(HistoryInsertItem::Line));
             } else {
                 tui.insert_history_lines_with_wrap_policy(display, self.history_line_wrap_policy());
             }

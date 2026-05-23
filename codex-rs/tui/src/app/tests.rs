@@ -21,6 +21,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_session_info;
+use crate::insert_history::HistoryInsertItem;
 use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
 
@@ -4910,7 +4911,7 @@ async fn queued_rollback_syncs_overlay_and_clears_deferred_history() {
         app.transcript_cells.clone(),
         app.keymap.pager.clone(),
     ));
-    app.deferred_history_lines = vec![Line::from("stale buffered line")];
+    app.deferred_history_lines = vec![HistoryInsertItem::Line(Line::from("stale buffered line"))];
     app.backtrack.overlay_preview_active = true;
     app.backtrack.nth_user_message = 1;
 
@@ -5444,7 +5445,7 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
         app.transcript_cells.clone(),
         crate::keymap::RuntimeKeymap::defaults().pager,
     ));
-    app.deferred_history_lines = vec![Line::from("stale buffered line")];
+    app.deferred_history_lines = vec![HistoryInsertItem::Line(Line::from("stale buffered line"))];
     app.has_emitted_history_lines = true;
     app.backtrack.primed = true;
     app.backtrack.overlay_preview_active = true;

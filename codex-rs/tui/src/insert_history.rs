@@ -7,6 +7,7 @@ use std::fmt;
 use std::io;
 use std::io::Write;
 
+use crate::render::line_utils::line_to_static;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::line_contains_url_like;
@@ -34,6 +35,32 @@ use ratatui::style::Modifier;
 use ratatui::text::Line;
 use ratatui::text::Span;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryInsertItem {
+    Line(Line<'static>),
+    Image(TerminalHistoryImage),
+}
+
+impl From<Line<'static>> for HistoryInsertItem {
+    fn from(line: Line<'static>) -> Self {
+        Self::Line(line)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalHistoryImage {
+    pub x: u16,
+    pub columns: u16,
+    pub rows: u16,
+    pub payload: TerminalHistoryImagePayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalHistoryImagePayload {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryLineWrapPolicy {
     PreWrap,
@@ -44,7 +71,7 @@ pub enum HistoryLineWrapPolicy {
 /// (avoids direct stdout references).
 pub fn insert_history_lines<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<Line>,
+    lines: Vec<Line<'static>>,
 ) -> io::Result<()>
 where
     B: Backend + Write,
@@ -54,7 +81,19 @@ where
 
 pub fn insert_history_lines_with_wrap_policy<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<Line>,
+    lines: Vec<Line<'static>>,
+    wrap_policy: HistoryLineWrapPolicy,
+) -> io::Result<()>
+where
+    B: Backend + Write,
+{
+    let items = lines.into_iter().map(HistoryInsertItem::Line).collect();
+    insert_history_items_with_wrap_policy(terminal, items, wrap_policy)
+}
+
+pub fn insert_history_items_with_wrap_policy<B>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    items: Vec<HistoryInsertItem>,
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
@@ -82,24 +121,40 @@ where
     let mut wrapped = Vec::new();
     let mut wrapped_rows = 0usize;
 
-    for line in &lines {
-        let line_wrapped = match wrap_policy {
-            HistoryLineWrapPolicy::Terminal => vec![line.clone()],
-            HistoryLineWrapPolicy::PreWrap
-                if line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line) =>
-            {
-                vec![line.clone()]
+    for item in &items {
+        match item {
+            HistoryInsertItem::Line(line) => {
+                let line_wrapped = match wrap_policy {
+                    HistoryLineWrapPolicy::Terminal => vec![line.clone()],
+                    HistoryLineWrapPolicy::PreWrap
+                        if line_contains_url_like(line)
+                            && !line_has_mixed_url_and_non_url_tokens(line) =>
+                    {
+                        vec![line.clone()]
+                    }
+                    HistoryLineWrapPolicy::PreWrap => adaptive_wrap_line(
+                        line,
+                        RtOptions::new(wrap_width)
+                            .subsequent_indent(leading_whitespace_prefix(line)),
+                    ),
+                };
+                wrapped_rows += line_wrapped
+                    .iter()
+                    .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))
+                    .sum::<usize>();
+                wrapped.extend(
+                    line_wrapped
+                        .iter()
+                        .map(line_to_static)
+                        .map(HistoryInsertItem::Line),
+                );
             }
-            HistoryLineWrapPolicy::PreWrap => adaptive_wrap_line(
-                line,
-                RtOptions::new(wrap_width).subsequent_indent(leading_whitespace_prefix(line)),
-            ),
-        };
-        wrapped_rows += line_wrapped
-            .iter()
-            .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))
-            .sum::<usize>();
-        wrapped.extend(line_wrapped);
+            HistoryInsertItem::Image(image) => {
+                let rows = image.rows.max(1);
+                wrapped_rows += usize::from(rows);
+                wrapped.push(HistoryInsertItem::Image(image.clone()));
+            }
+        }
     }
     let wrapped_lines = wrapped_rows as u16;
     let cursor_top = if area.bottom() < screen_size.height {
@@ -145,9 +200,12 @@ where
     // fetch/restore the cursor position. insert_history_lines should be cursor-position-neutral :)
     queue!(writer, MoveTo(/*x*/ 0, cursor_top))?;
 
-    for line in &wrapped {
+    for item in &wrapped {
         queue!(writer, Print("\r\n"))?;
-        write_history_line(writer, line, wrap_width)?;
+        match item {
+            HistoryInsertItem::Line(line) => write_history_line(writer, line, wrap_width)?,
+            HistoryInsertItem::Image(image) => write_history_image(writer, image)?,
+        }
     }
 
     queue!(writer, ResetScrollRegion)?;
@@ -225,6 +283,37 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
         })
         .collect();
     write_spans(writer, merged_spans.iter())
+}
+
+fn write_history_image<W: Write>(writer: &mut W, image: &TerminalHistoryImage) -> io::Result<()> {
+    use crossterm::cursor::MoveToColumn;
+
+    let rows = image.rows.max(1);
+    let blank = " ".repeat(image.columns.into());
+    queue!(writer, SavePosition)?;
+    for row in 0..rows {
+        if row > 0 {
+            queue!(writer, MoveDown(1), MoveToColumn(0))?;
+        }
+        queue!(
+            writer,
+            MoveToColumn(image.x),
+            Print(&blank),
+            Clear(ClearType::UntilNewLine)
+        )?;
+    }
+    queue!(writer, RestorePosition, MoveToColumn(image.x), SavePosition)?;
+
+    match &image.payload {
+        TerminalHistoryImagePayload::Text(payload) => write!(writer, "{payload}")?,
+        TerminalHistoryImagePayload::Bytes(payload) => writer.write_all(payload)?,
+    }
+
+    queue!(writer, RestorePosition)?;
+    for _ in 1..rows {
+        queue!(writer, MoveDown(1), MoveToColumn(0))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -444,6 +533,30 @@ mod tests {
             saw_colored,
             "expected at least one colored cell in vt100 output"
         );
+    }
+
+    #[test]
+    fn history_image_restores_cursor_and_reserves_rows() {
+        let image = TerminalHistoryImage {
+            x: 2,
+            columns: 4,
+            rows: 3,
+            payload: TerminalHistoryImagePayload::Text("image-payload".to_string()),
+        };
+        let mut output = Vec::new();
+
+        write_history_image(&mut output, &image).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let first_save = output.find("\x1b7").expect("saves cursor before clearing");
+        let payload = output.find("image-payload").expect("writes image payload");
+        let last_restore = output
+            .rfind("\x1b8")
+            .expect("restores cursor after drawing");
+        assert!(first_save < payload);
+        assert!(payload < last_restore);
+        assert!(output.contains("\x1b[3G"));
+        assert_eq!(output.matches("\x1b[1B").count(), 4);
     }
 
     #[test]

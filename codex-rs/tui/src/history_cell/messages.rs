@@ -6,7 +6,6 @@ use super::*;
 pub(crate) struct UserHistoryCell {
     pub message: String,
     pub text_elements: Vec<TextElement>,
-    #[allow(dead_code)]
     pub local_image_paths: Vec<PathBuf>,
     pub remote_image_urls: Vec<String>,
 }
@@ -77,7 +76,7 @@ fn build_user_message_lines_with_elements(
     raw_lines
 }
 
-fn remote_image_display_line(style: Style, index: usize) -> Line<'static> {
+fn image_display_line(style: Style, index: usize) -> Line<'static> {
     Line::from(local_image_label_text(index)).style(style)
 }
 
@@ -93,6 +92,45 @@ fn trim_trailing_blank_lines(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>
 
 impl HistoryCell for UserHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.rich_display_items(width)
+            .into_iter()
+            .filter_map(HistoryCellDisplayItem::line)
+            .collect()
+    }
+
+    fn display_items_for_mode(
+        &self,
+        width: u16,
+        mode: HistoryRenderMode,
+    ) -> Vec<HistoryCellDisplayItem> {
+        match mode {
+            HistoryRenderMode::Rich => self.rich_display_items(width),
+            HistoryRenderMode::Raw => self
+                .raw_lines()
+                .into_iter()
+                .map(HistoryCellDisplayItem::Line)
+                .collect(),
+        }
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = raw_lines_from_source(self.message.trim_end_matches(['\r', '\n']));
+        let attachment_count = self
+            .remote_image_urls
+            .len()
+            .saturating_add(self.local_image_paths.len());
+        if attachment_count > 0 {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.extend((1..=attachment_count).map(|idx| Line::from(local_image_label_text(idx))));
+        }
+        lines
+    }
+}
+
+impl UserHistoryCell {
+    fn rich_display_items(&self, width: u16) -> Vec<HistoryCellDisplayItem> {
         let wrap_width = width
             .saturating_sub(
                 LIVE_PREFIX_COLS + 1, /* keep a one-column right margin for wrapping */
@@ -102,20 +140,10 @@ impl HistoryCell for UserHistoryCell {
         let style = user_message_style();
         let element_style = style.fg(Color::Cyan);
 
-        let wrapped_remote_images = if self.remote_image_urls.is_empty() {
-            None
-        } else {
-            Some(adaptive_wrap_lines(
-                self.remote_image_urls
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, _url)| {
-                        remote_image_display_line(element_style, idx.saturating_add(1))
-                    }),
-                RtOptions::new(usize::from(wrap_width))
-                    .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
-            ))
-        };
+        let attachment_count = self
+            .remote_image_urls
+            .len()
+            .saturating_add(self.local_image_paths.len());
 
         let wrapped_message = if self.message.is_empty() && self.text_elements.is_empty() {
             None
@@ -147,49 +175,61 @@ impl HistoryCell for UserHistoryCell {
             (!wrapped.is_empty()).then_some(wrapped)
         };
 
-        if wrapped_remote_images.is_none() && wrapped_message.is_none() {
+        if attachment_count == 0 && wrapped_message.is_none() {
             return Vec::new();
         }
 
-        let mut lines: Vec<Line<'static>> = vec![Line::from("").style(style)];
+        let mut items: Vec<HistoryCellDisplayItem> =
+            vec![HistoryCellDisplayItem::Line(Line::from("").style(style))];
 
-        if let Some(wrapped_remote_images) = wrapped_remote_images {
-            lines.extend(prefix_lines(
-                wrapped_remote_images,
-                "  ".into(),
-                "  ".into(),
-            ));
+        if attachment_count > 0 {
+            for index in 1..=self.remote_image_urls.len() {
+                let wrapped_label = adaptive_wrap_lines(
+                    [image_display_line(element_style, index)],
+                    RtOptions::new(usize::from(wrap_width))
+                        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+                );
+                items.extend(
+                    prefix_lines(wrapped_label, "  ".into(), "  ".into())
+                        .into_iter()
+                        .map(HistoryCellDisplayItem::Line),
+                );
+            }
+
+            for (idx, path) in self.local_image_paths.iter().enumerate() {
+                let index = self
+                    .remote_image_urls
+                    .len()
+                    .saturating_add(idx)
+                    .saturating_add(1);
+                let wrapped_label = adaptive_wrap_lines(
+                    [image_display_line(element_style, index)],
+                    RtOptions::new(usize::from(wrap_width))
+                        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
+                );
+                items.extend(
+                    prefix_lines(wrapped_label, "  ".into(), "  ".into())
+                        .into_iter()
+                        .map(HistoryCellDisplayItem::Line),
+                );
+                items.push(HistoryCellDisplayItem::LocalImage(path.clone()));
+            }
+
             if wrapped_message.is_some() {
-                lines.push(Line::from("").style(style));
+                items.push(HistoryCellDisplayItem::Line(Line::from("").style(style)));
             }
         }
 
         if let Some(wrapped_message) = wrapped_message {
-            lines.extend(prefix_lines(
-                wrapped_message,
-                "› ".bold().dim(),
-                "  ".into(),
-            ));
-        }
-
-        lines.push(Line::from("").style(style));
-        lines
-    }
-
-    fn raw_lines(&self) -> Vec<Line<'static>> {
-        let mut lines = raw_lines_from_source(self.message.trim_end_matches(['\r', '\n']));
-        if !self.remote_image_urls.is_empty() {
-            if !lines.is_empty() {
-                lines.push(Line::from(""));
-            }
-            lines.extend(
-                self.remote_image_urls
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, _url)| Line::from(local_image_label_text(idx.saturating_add(1)))),
+            items.extend(
+                prefix_lines(wrapped_message, "› ".bold().dim(), "  ".into())
+                    .into_iter()
+                    .map(HistoryCellDisplayItem::Line),
             );
         }
-        lines
+
+        items.push(HistoryCellDisplayItem::Line(Line::from("").style(style)));
+        items
     }
 }
 

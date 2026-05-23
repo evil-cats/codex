@@ -1905,6 +1905,26 @@ fn user_history_cell_renders_remote_image_urls() {
 }
 
 #[test]
+fn user_history_cell_emits_local_image_items_for_terminal_history() {
+    let image_path = PathBuf::from("/tmp/example.png");
+    let cell = UserHistoryCell {
+        message: "describe this".to_string(),
+        text_elements: Vec::new(),
+        local_image_paths: vec![image_path.clone()],
+        remote_image_urls: Vec::new(),
+    };
+
+    let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
+
+    assert!(display_items.iter().any(
+        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
+    ));
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+    assert!(rendered.contains("[Image #1]"));
+    assert!(rendered.contains("describe this"));
+}
+
+#[test]
 fn user_history_cell_summarizes_inline_data_urls() {
     let cell = UserHistoryCell {
         message: "describe inline image".to_string(),
