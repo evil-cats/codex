@@ -500,6 +500,13 @@ strip = "symbols"
 # See https://github.com/openai/codex/issues/1411 for details.
 codegen-units = 1
 
+[profile.release-fast]
+inherits = "release"
+# Local optimized builds should keep using multiple cores during the final
+# optimization stages. The canonical release profile above favors size.
+lto = "thin"
+codegen-units = 16
+
 [profile.profiling]
 inherits = "release"
 debug = "full"
