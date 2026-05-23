@@ -4,6 +4,24 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn terminal_title_can_include_configured_session_label() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_terminal_title_label = Some("hermione".to_string());
+    chat.config.tui_terminal_title = Some(vec![
+        "session-label".to_string(),
+        "project-name".to_string(),
+        "run-state".to_string(),
+    ]);
+
+    chat.refresh_terminal_title();
+
+    assert_eq!(
+        chat.last_terminal_title,
+        Some("hermione | project | Ready".to_string())
+    );
+}
+
+#[tokio::test]
 async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.bottom_pane.set_task_running(/*running*/ true);

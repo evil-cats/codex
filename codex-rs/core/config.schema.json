@@ -2974,6 +2974,11 @@
           },
           "type": "array"
         },
+        "terminal_title_label": {
+          "default": null,
+          "description": "Optional static label available to terminal-title item `session-label`.\n\nThis is useful for distinguishing named local profiles in terminals with multiple Codex tabs.",
+          "type": "string"
+        },
         "theme": {
           "default": null,
           "description": "Syntax highlighting theme name (kebab-case).\n\nWhen set, overrides automatic light/dark theme detection. Use `/theme` in the TUI or see `$CODEX_HOME/themes` for custom themes.",

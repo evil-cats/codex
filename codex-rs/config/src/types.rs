@@ -701,6 +701,13 @@ pub struct Tui {
     #[serde(default)]
     pub terminal_title: Option<Vec<String>>,
 
+    /// Optional static label available to terminal-title item `session-label`.
+    ///
+    /// This is useful for distinguishing named local profiles in terminals with
+    /// multiple Codex tabs.
+    #[serde(default)]
+    pub terminal_title_label: Option<String>,
+
     /// Syntax highlighting theme name (kebab-case).
     ///
     /// When set, overrides automatic light/dark theme detection.

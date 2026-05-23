@@ -8,6 +8,7 @@ use super::status_line_setup::StatusLineItem;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) enum StatusSurfacePreviewItem {
     AppName,
+    SessionLabel,
     ProjectName,
     ProjectRoot,
     CurrentDir,
@@ -39,6 +40,7 @@ impl StatusSurfacePreviewItem {
     fn placeholder(self) -> &'static str {
         match self {
             StatusSurfacePreviewItem::AppName => "codex",
+            StatusSurfacePreviewItem::SessionLabel => "session-label",
             StatusSurfacePreviewItem::ProjectName => "my-project",
             StatusSurfacePreviewItem::ProjectRoot => "my-project",
             StatusSurfacePreviewItem::CurrentDir => "~/my-project/subdir",
@@ -70,6 +72,7 @@ impl StatusSurfacePreviewItem {
     pub(crate) fn iter() -> impl Iterator<Item = Self> {
         [
             Self::AppName,
+            Self::SessionLabel,
             Self::ProjectName,
             Self::ProjectRoot,
             Self::CurrentDir,

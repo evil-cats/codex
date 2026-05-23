@@ -39,6 +39,8 @@ use crate::render::renderable::Renderable;
 pub(crate) enum TerminalTitleItem {
     /// Codex app name.
     AppName,
+    /// Static session label configured via `tui.terminal_title_label`.
+    SessionLabel,
     /// Project root name, or a compact cwd fallback.
     #[strum(to_string = "project-name", serialize = "project")]
     Project,
@@ -90,6 +92,7 @@ impl TerminalTitleItem {
     pub(crate) fn description(self) -> &'static str {
         match self {
             TerminalTitleItem::AppName => "Codex app name",
+            TerminalTitleItem::SessionLabel => "Static session label from tui.terminal_title_label",
             TerminalTitleItem::Project => "Project name (falls back to current directory name)",
             TerminalTitleItem::CurrentDir => "Current working directory",
             TerminalTitleItem::Spinner => {
@@ -131,6 +134,7 @@ impl TerminalTitleItem {
     pub(crate) fn preview_item(self) -> Option<StatusSurfacePreviewItem> {
         match self {
             TerminalTitleItem::AppName => Some(StatusSurfacePreviewItem::AppName),
+            TerminalTitleItem::SessionLabel => Some(StatusSurfacePreviewItem::SessionLabel),
             TerminalTitleItem::Project => Some(StatusSurfacePreviewItem::ProjectName),
             TerminalTitleItem::CurrentDir => Some(StatusSurfacePreviewItem::CurrentDir),
             TerminalTitleItem::Spinner => None,
@@ -521,6 +525,7 @@ mod tests {
         let items = parse_terminal_title_items(
             [
                 "app-name",
+                "session-label",
                 "context-remaining",
                 "context-used",
                 "five-hour-limit",
@@ -544,6 +549,7 @@ mod tests {
             items,
             Some(vec![
                 TerminalTitleItem::AppName,
+                TerminalTitleItem::SessionLabel,
                 TerminalTitleItem::ContextRemaining,
                 TerminalTitleItem::ContextUsed,
                 TerminalTitleItem::FiveHourLimit,

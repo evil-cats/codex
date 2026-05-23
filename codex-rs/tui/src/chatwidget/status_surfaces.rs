@@ -669,6 +669,9 @@ impl ChatWidget {
     ) -> Option<String> {
         let status_line_item = match item {
             StatusSurfacePreviewItem::AppName => return Some("codex".to_string()),
+            StatusSurfacePreviewItem::SessionLabel => {
+                return self.config.tui_terminal_title_label.clone();
+            }
             StatusSurfacePreviewItem::ProjectName => return self.terminal_title_project_name(),
             StatusSurfacePreviewItem::ProjectRoot => StatusLineItem::ProjectRoot,
             StatusSurfacePreviewItem::Status => return Some(self.run_state_status_text()),
@@ -708,6 +711,11 @@ impl ChatWidget {
     ) -> Option<String> {
         match item {
             TerminalTitleItem::AppName => Some("codex".to_string()),
+            TerminalTitleItem::SessionLabel => {
+                self.config.tui_terminal_title_label.as_ref().map(|label| {
+                    Self::truncate_terminal_title_part(label.clone(), /*max_chars*/ 24)
+                })
+            }
             TerminalTitleItem::Project => self.terminal_title_project_name(),
             TerminalTitleItem::CurrentDir => Some(Self::truncate_terminal_title_part(
                 format_directory_display(self.status_line_cwd(), /*max_width*/ None),
