@@ -21,6 +21,7 @@ const ESC: &str = "\x1b";
 const ST: &str = "\x1b\\";
 const KITTY_CHUNK_SIZE: usize = 4096;
 const SIXEL_CACHE_VERSION: &str = "v2";
+const PNG_CACHE_VERSION: &str = "v1";
 const ITERM2_KITTY_MIN_VERSION: (u64, u64, u64) = (3, 6, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,6 +266,33 @@ pub fn kitty_transmit_png_file_with_id(
     let command = format!("{ESC}_Ga=T,t=f,f=100,c={columns},r={rows},q=2{image_id};{payload}{ST}");
 
     Ok(wrap_for_tmux_if_needed(&command))
+}
+
+pub fn png_frame(frame_path: &Path, cache_dir: &Path, height_px: u16) -> Result<PathBuf> {
+    fs::create_dir_all(cache_dir).with_context(|| format!("create {}", cache_dir.display()))?;
+
+    let stem = frame_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .context("frame path has no valid file stem")?;
+    let path = cache_dir.join(format!("{stem}_h{height_px}_{PNG_CACHE_VERSION}.png"));
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let frame =
+        image::open(frame_path).with_context(|| format!("read {}", frame_path.display()))?;
+    let height = u32::from(height_px).max(1);
+    let width = ((u64::from(frame.width()) * u64::from(height)) / u64::from(frame.height()))
+        .try_into()
+        .unwrap_or(u32::MAX)
+        .max(1);
+    frame
+        .resize(width, height, FilterType::Lanczos3)
+        .save_with_format(&path, image::ImageFormat::Png)
+        .with_context(|| format!("write {}", path.display()))?;
+
+    Ok(path)
 }
 
 fn kitty_image_id_arg(image_id: Option<u32>) -> String {
@@ -669,6 +697,21 @@ mod tests {
         assert!(sixel.contains("#224;2;100;0;0"));
         assert!(sixel.contains("#224@"));
         assert!(sixel.ends_with("\x1b\\"));
+    }
+
+    #[test]
+    fn png_frame_converts_jpeg_to_resized_png() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame_path = dir.path().join("frame.jpg");
+        let rgb = image::RgbImage::from_pixel(20, 10, image::Rgb([255, 0, 0]));
+        rgb.save_with_format(&frame_path, image::ImageFormat::Jpeg)
+            .unwrap();
+
+        let png_path = png_frame(&frame_path, &dir.path().join("png"), /*height_px*/ 5).unwrap();
+        let png = fs::read(&png_path).unwrap();
+
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+        assert_eq!(image::image_dimensions(&png_path).unwrap(), (10, 5));
     }
 
     #[test]

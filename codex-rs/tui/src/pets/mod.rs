@@ -128,27 +128,35 @@ pub(crate) fn prepare_history_image(
     cache_root: &Path,
 ) -> std::result::Result<TerminalHistoryImage, PetImageRenderError> {
     let size = history_image_size(path, max_columns).map_err(PetImageRenderError::Asset)?;
+    let cache_dir = history_image_cache_dir(path, cache_root);
     let payload = match protocol {
-        ImageProtocol::Kitty => TerminalHistoryImagePayload::Text(
-            image_protocol::kitty_transmit_png_with_id(
-                path,
-                size.columns,
-                size.rows,
-                /*image_id*/ None,
+        ImageProtocol::Kitty => {
+            let path = image_protocol::png_frame(path, &cache_dir, size.height_px)
+                .map_err(PetImageRenderError::Asset)?;
+            TerminalHistoryImagePayload::Text(
+                image_protocol::kitty_transmit_png_with_id(
+                    &path,
+                    size.columns,
+                    size.rows,
+                    /*image_id*/ None,
+                )
+                .map_err(PetImageRenderError::Asset)?,
             )
-            .map_err(PetImageRenderError::Asset)?,
-        ),
-        ImageProtocol::KittyLocalFile => TerminalHistoryImagePayload::Text(
-            image_protocol::kitty_transmit_png_file_with_id(
-                path,
-                size.columns,
-                size.rows,
-                /*image_id*/ None,
+        }
+        ImageProtocol::KittyLocalFile => {
+            let path = image_protocol::png_frame(path, &cache_dir, size.height_px)
+                .map_err(PetImageRenderError::Asset)?;
+            TerminalHistoryImagePayload::Text(
+                image_protocol::kitty_transmit_png_file_with_id(
+                    &path,
+                    size.columns,
+                    size.rows,
+                    /*image_id*/ None,
+                )
+                .map_err(PetImageRenderError::Asset)?,
             )
-            .map_err(PetImageRenderError::Asset)?,
-        ),
+        }
         ImageProtocol::Sixel => {
-            let cache_dir = history_image_cache_dir(path, cache_root);
             let path = image_protocol::sixel_frame(path, &cache_dir, size.height_px)
                 .map_err(PetImageRenderError::Asset)?;
             let sixel = std::fs::read(&path)
@@ -369,6 +377,13 @@ mod tests {
         image.save(path).unwrap();
     }
 
+    fn write_test_jpeg(path: &std::path::Path, width: u32, height: u32) {
+        let image = image::RgbImage::from_pixel(width, height, image::Rgb([255, 0, 0]));
+        image
+            .save_with_format(path, image::ImageFormat::Jpeg)
+            .unwrap();
+    }
+
     #[test]
     fn ambient_pet_image_restores_cursor_after_drawing() {
         let dir = tempfile::tempdir().unwrap();
@@ -495,6 +510,28 @@ mod tests {
         assert!(payload.contains("a=T,t=d,f=100"));
         assert!(!payload.contains(",i="));
         assert!(image.columns <= 40);
+    }
+
+    #[test]
+    fn history_image_prepare_kitty_payload_converts_jpeg_to_png() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.jpg");
+        write_test_jpeg(&frame, /*width*/ 100, /*height*/ 100);
+
+        let image = prepare_history_image(
+            &frame,
+            ImageProtocol::Kitty,
+            /*max_columns*/ 40,
+            &dir.path().join("cache"),
+        )
+        .unwrap();
+
+        let TerminalHistoryImagePayload::Text(payload) = image.payload else {
+            panic!("expected kitty text payload");
+        };
+        assert!(payload.contains("a=T,t=d,f=100"));
+        assert!(payload.contains("iVBORw0KGgo"));
+        assert!(!payload.contains("/9j/"));
     }
 
     #[test]
