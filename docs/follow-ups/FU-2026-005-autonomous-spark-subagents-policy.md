@@ -22,7 +22,7 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | принят (`accepted`) |
+| Статус | `accepted` |
 | Суть | Оценить доработку, позволяющую Hermione автономно запускать bounded routine subagents на `gpt-5.3-codex-spark`. |
 | Почему важно | У Spark отдельные лимиты, поэтому простую sidecar работу можно вынести из основного агента без траты сильной модели. |
 | Когда вернуться | Перед изменением `spawn_agent` policy, `multi_agent_v2` defaults или Hermione profile delegation guidance. |

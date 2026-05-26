@@ -4,7 +4,7 @@
 
 | ID | Название | Статус | Текущий этап | Архитектура | План |
 | --- | --- | --- | --- | --- | --- |
-| PLAN-TUI-ASSISTANT-IMAGES-001 | Изображения в истории TUI | активен (`active`) | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | [feature:tui-history-image-previews] | [plan:PLAN-TUI-ASSISTANT-IMAGES-001] |
+| PLAN-TUI-ASSISTANT-IMAGES-001 | Изображения в истории TUI | `active` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | [feature:tui-history-image-previews] | [plan:PLAN-TUI-ASSISTANT-IMAGES-001] |
 
 ## Архив
 

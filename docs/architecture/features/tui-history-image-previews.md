@@ -2,7 +2,7 @@
 
 ## Статус
 
-реализовано (`implemented`)
+`implemented`
 
 ## Кратко
 

@@ -21,7 +21,7 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | принят (`accepted`) |
+| Статус | `accepted` |
 | Суть | Добавить controlled source-backed path для assistant/tool generated local images без Markdown auto-rendering. |
 | Почему важно | Без structured boundary легко смешать model text, shell output, local file reads и trusted UI events. |
 | Когда вернуться | При старте stage 002 или другого плана, который добавляет assistant/tool image previews. |

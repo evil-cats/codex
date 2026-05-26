@@ -19,7 +19,7 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | принят (`accepted`) |
+| Статус | `accepted` |
 | Суть | Сделать TUI rendering local Markdown links configurable, чтобы таблицы документации могли показывать labels, а не только target paths. |
 | Почему важно | Reference-style links помогают source Markdown, но текущий TUI rich display снова расширяет таблицы локальными путями. |
 | Когда вернуться | После согласования правил refactor и перед массовым переписыванием таблиц с reference-style links. |

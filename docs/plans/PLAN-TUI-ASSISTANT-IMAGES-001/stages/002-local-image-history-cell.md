@@ -2,7 +2,7 @@
 
 ## Статус
 
-предложен (`proposed`)
+`proposed`
 
 ## Кратко
 
@@ -101,12 +101,12 @@ AppEvent::InsertLocalImage { path, caption }
 
 | ID | Вопрос | Статус | Решение / итог | Детали |
 | --- | --- | --- | --- | --- |
-| [Q-001] | Где разместить `LocalImageHistoryCell`? | открыто (`open`) | Новый приватный модуль в `history_cell/` | [details][Q-001] |
-| [Q-002] | Как назвать warning/fallback? | открыто (`open`) | Reuse warning cell или `[Image: <caption>]` | [details][Q-002] |
+| [Q-001] | Где разместить `LocalImageHistoryCell`? | `open` | Новый приватный модуль в `history_cell/` | [details][Q-001] |
+| [Q-002] | Как назвать warning/fallback? | `open` | Reuse warning cell или `[Image: <caption>]` | [details][Q-002] |
 
 ### Q-001: Размещение LocalImageHistoryCell
 
-Статус: открыто (`open`).
+Статус: `open`.
 
 Предварительное решение: новый приватный модуль в `history_cell/`, чтобы не
 раздувать существующие central modules и держать cell behavior рядом с другими
@@ -114,7 +114,7 @@ history cell implementations.
 
 ### Q-002: Название warning/fallback
 
-Статус: открыто (`open`).
+Статус: `open`.
 
 Предварительное решение: переиспользовать warning cell или текстовый fallback
 `[Image: <caption>]`, но точную форму выбрать при реализации validation path,

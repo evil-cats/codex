@@ -21,7 +21,7 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | принят (`accepted`) |
+| Статус | `accepted` |
 | Суть | Решить, должны ли bitmap previews переэмититься при resize/reflow, initial replay и resume. |
 | Почему важно | Сейчас вне normal insertion остаются только `[Image #n]` fallback labels; ожидания пользователя могут стать выше. |
 | Когда вернуться | Перед расширением image history beyond normal insertion или перед resume-stable image assets. |

@@ -2,7 +2,7 @@
 
 ## Статус
 
-активен (`active`)
+`active`
 
 ## Кратко
 
@@ -55,10 +55,10 @@ previews.
 
 | Этап | Статус | Документ | Результат |
 | --- | --- | --- | --- |
-| 001 | выполнен (`completed`) | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001] | Границы MVP |
-| 002 | предложен (`proposed`) | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | Источник assistant/tool изображений |
-| 003 | предложен (`proposed`) | TBD | Подключить контролируемый источник ассистентских image items |
-| 004 | предложен (`proposed`) | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
+| 001 | `completed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001] | Границы MVP |
+| 002 | `proposed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | Источник assistant/tool изображений |
+| 003 | `proposed` | TBD | Подключить контролируемый источник ассистентских image items |
+| 004 | `proposed` | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
 
 ## Следующий шаг
 
@@ -73,8 +73,8 @@ previews.
 
 | ID | Статус | Когда вернуться |
 | --- | --- | --- |
-| [follow-up:FU-2026-001] | принят (`accepted`) | Перед расширением image history beyond normal insertion |
-| [follow-up:FU-2026-002] | принят (`accepted`) | При старте source-backed assistant/tool image previews |
+| [follow-up:FU-2026-001] | `accepted` | Перед расширением image history beyond normal insertion |
+| [follow-up:FU-2026-002] | `accepted` | При старте source-backed assistant/tool image previews |
 
 [code:app-event]: ../../../codex-rs/tui/src/app_event.rs
 [code:history-cell]: ../../../codex-rs/tui/src/history_cell/mod.rs
