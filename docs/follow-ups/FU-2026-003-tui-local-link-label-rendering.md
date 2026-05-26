@@ -6,11 +6,11 @@ kind: feature
 tags: [tui, markdown, local-links, documentation]
 created: 2026-05-26
 updated: 2026-05-26
-review_at: after documentation refactor rules are agreed and before refactoring docs tables
+review_at: после согласования правил рефакторинга документации и перед переписыванием таблиц
 architecture_refs:
   - codex-rs/tui/src/markdown_render.rs
 invalid_if:
-  - documentation tables stop using local Markdown links in Codex-rendered terminal output
+  - таблицы документации перестают использовать local Markdown links в терминальном выводе Codex
 ---
 
 # FU-2026-003: labels для local links в таблицах документации
@@ -20,10 +20,10 @@ invalid_if:
 | Поле | Значение |
 | --- | --- |
 | Статус | `accepted` |
-| Суть | Сделать TUI rendering local Markdown links configurable, чтобы таблицы документации могли показывать labels, а не только target paths. |
-| Почему важно | Reference-style links помогают source Markdown, но текущий TUI rich display снова расширяет таблицы локальными путями. |
-| Когда вернуться | После согласования правил refactor и перед массовым переписыванием таблиц с reference-style links. |
-| Когда закрыть | Если documentation tables перестанут использовать local Markdown links в Codex-rendered terminal output. |
+| Суть | Сделать рендеринг local Markdown links в TUI настраиваемым, чтобы таблицы документации могли показывать labels, а не только target paths. |
+| Почему важно | Reference-style links помогают source Markdown, но текущий rich display в TUI снова расширяет таблицы локальными путями. |
+| Когда вернуться | После согласования правил рефакторинга и перед массовым переписыванием таблиц с reference-style links. |
+| Когда закрыть | Если таблицы документации перестанут использовать local Markdown links в терминальном выводе Codex. |
 | Следующий шаг | Спроектировать настройку display mode без хардкода и сохранить способ увидеть/copy target path. |
 | Связи | [code:markdown-render], [follow-ups:image-history] |
 
@@ -58,8 +58,8 @@ terminal-rendered previews всегда показывают target path, таб
 
 ## Когда закрыть как неактуальное
 
-Если documentation tables перестанут использовать local Markdown links в
-Codex-rendered terminal output или будет выбран внешний просмотрщик, где labels
+Если таблицы документации перестанут использовать local Markdown links в
+терминальном выводе Codex или будет выбран внешний просмотрщик, где labels
 уже отображаются достаточно хорошо.
 
 ## Связи

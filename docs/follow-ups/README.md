@@ -4,11 +4,11 @@
 
 | ID | Статус | Тема | Когда вернуться | Связи |
 | --- | --- | --- | --- | --- |
-| [follow-up:FU-2026-001] | `accepted` | Переэмиссия bitmap previews при resize/reflow/replay | перед расширением image history за пределы normal insertion | [plan:PLAN-TUI-ASSISTANT-IMAGES-001], [feature:tui-history-image-previews] |
-| [follow-up:FU-2026-002] | `accepted` | Controlled source path для assistant/tool изображений | при старте source-backed assistant/tool image previews | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002], [feature:tui-history-image-previews] |
-| [follow-up:FU-2026-003] | `accepted` | Labels для local Markdown links в таблицах документации | после правил doc-refactor и перед массовым переписыванием таблиц | [code:markdown-render], [follow-up:FU-2026-004] |
-| [follow-up:FU-2026-004] | `accepted` | Adaptive row separators для длинных wrapped TUI tables | после doc-refactor и оценки реальных таблиц | [code:markdown-render], [test:long-link-table-rendering] |
-| [follow-up:FU-2026-005] | `accepted` | Политика автономных Spark subagents | перед изменением `spawn_agent` policy или Hermione multi-agent defaults | [code:multi-agents-spec], [code:multi-agent-config], [code:feature-configs] |
+| [follow-up:FU-2026-001] | `accepted` | Переэмиссия bitmap-превью при resize/reflow/replay | перед расширением истории изображений за пределы обычной вставки | [plan:PLAN-TUI-ASSISTANT-IMAGES-001], [feature:tui-history-image-previews] |
+| [follow-up:FU-2026-002] | `accepted` | Контролируемый исходный путь для изображений ассистента/инструментов | при старте превью изображений ассистента/инструментов с исходным файлом | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002], [feature:tui-history-image-previews] |
+| [follow-up:FU-2026-003] | `accepted` | Labels для local Markdown links в таблицах документации | после правил рефакторинга документации и перед массовым переписыванием таблиц | [code:markdown-render], [follow-up:FU-2026-004] |
+| [follow-up:FU-2026-004] | `accepted` | Адаптивные разделители строк для длинных TUI-таблиц с переносами | после рефакторинга документации и оценки реальных таблиц | [code:markdown-render], [test:long-link-table-rendering] |
+| [follow-up:FU-2026-005] | `accepted` | Политика автономных Spark-субагентов | перед изменением `spawn_agent` policy или defaults Hermione multi-agent | [code:multi-agents-spec], [code:multi-agent-config], [code:feature-configs] |
 
 ## Архив
 

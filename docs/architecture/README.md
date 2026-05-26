@@ -5,19 +5,19 @@
 ```text
 codex-rs/tui
   |
-  +-- history_cell/         source-backed transcript cells
+  +-- history_cell/         transcript-ячейки с исходными путями
   |      |
   |      +-- HistoryCellDisplayItem::LocalImage(path)
   |
-  +-- app/resize_reflow.rs  history insertion preparation
+  +-- app/resize_reflow.rs  подготовка вставки в историю
   |      |
   |      +-- HistoryInsertItem::Image
   |
-  +-- pets/                 Kitty / KittyLocalFile / Sixel preparation
+  +-- pets/                 подготовка Kitty / KittyLocalFile / Sixel
   |      |
   |      +-- cache/tui-history-images
   |
-  +-- insert_history.rs     terminal scrollback writer
+  +-- insert_history.rs     запись в историю терминала
 ```
 
 ## Mermaid-схема
@@ -29,7 +29,7 @@ flowchart TD
     Prep["app/resize_reflow.rs"]
     Pets["pets/*"]
     Insert["insert_history.rs"]
-    Terminal["terminal scrollback"]
+    Terminal["История терминала"]
 
     TUI --> Cells
     Cells --> Prep
@@ -54,9 +54,9 @@ flowchart TD
 
 | Тема | Документ |
 | --- | --- |
-| TUI local image previews in history | [feature:tui-history-image-previews] |
-| План развития assistant/tool image previews | [plan:PLAN-TUI-ASSISTANT-IMAGES-001] |
-| Отложенные работы по image history | [follow-ups:image-history] |
+| Локальные превью изображений в истории TUI | [feature:tui-history-image-previews] |
+| План развития изображений ассистента/инструментов в истории TUI | [plan:PLAN-TUI-ASSISTANT-IMAGES-001] |
+| Отложенные работы по истории изображений | [follow-ups:image-history] |
 
 [feature:tui-history-image-previews]: features/tui-history-image-previews.md
 [follow-ups:image-history]: ../follow-ups/README.md

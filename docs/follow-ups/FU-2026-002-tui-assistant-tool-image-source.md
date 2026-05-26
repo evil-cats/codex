@@ -12,55 +12,56 @@ owner_stage: 002-local-image-history-cell
 architecture_refs:
   - docs/architecture/features/tui-history-image-previews.md#контракты
 invalid_if:
-  - assistant and tool outputs remain text-only and do not render local bitmap previews in TUI history
+  - вывод ассистента и инструментов остается text-only и не рендерит локальные bitmap-превью в истории TUI
 ---
 
-# FU-2026-002: controlled source path для assistant/tool изображений
+# FU-2026-002: контролируемый исходный путь для изображений ассистента/инструментов
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
 | Статус | `accepted` |
-| Суть | Добавить controlled source-backed path для assistant/tool generated local images без Markdown auto-rendering. |
-| Почему важно | Без structured boundary легко смешать model text, shell output, local file reads и trusted UI events. |
-| Когда вернуться | При старте stage 002 или другого плана, который добавляет assistant/tool image previews. |
-| Когда закрыть | Если assistant/tool outputs остаются text-only или image output переедет в отдельный UI surface. |
+| Суть | Добавить контролируемый путь с исходным файлом для локальных изображений ассистента/инструментов без Markdown auto-rendering. |
+| Почему важно | Без структурированной границы легко смешать текст модели, shell output, чтение локальных файлов и доверенные UI-события. |
+| Когда вернуться | При старте stage 002 или другого плана, который добавляет превью изображений ассистента/инструментов. |
+| Когда закрыть | Если вывод ассистента/инструментов остается text-only или image output переедет в отдельный UI surface. |
 | Следующий шаг | Реализовать `AppEvent::InsertLocalImage { path, caption }`, validation и regression tests против Markdown/plain text. |
 | Связи | [plan:PLAN-TUI-ASSISTANT-IMAGES-001], [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002], [feature:tui-history-image-previews] |
 
 ## Наблюдение
 
-Текущая реализация поддерживает local image previews для user attachments через
-`UserHistoryCell.local_image_paths`. Для assistant/tool generated local images
-нужен controlled source-backed path; произвольный Markdown image syntax или
-shell output не должен становиться trusted local file input.
+Текущая реализация поддерживает local image previews для пользовательских
+вложений через `UserHistoryCell.local_image_paths`. Для локальных изображений
+ассистента/инструментов нужен контролируемый путь с исходным файлом; произвольный
+Markdown image syntax или shell output не должен становиться доверенным входом
+локального файла.
 
 ## Почему это важно
 
-Без structured source boundary image rendering может случайно смешать model
-text, shell output, local file reads и trusted UI events. Это усложнит review
-фичи и сделает расширение рискованнее.
+Без структурированной границы источника image rendering может случайно смешать
+текст модели, shell output, чтение локальных файлов и доверенные UI-события. Это
+усложнит review фичи и сделает расширение рискованнее.
 
 ## Что нужно сделать
 
-- Зафиксировать MVP source path, например `AppEvent::InsertLocalImage { path,
-  caption }` плюс app-layer validation.
-- Добавить dedicated cell или эквивалентное source-backed представление для
-  assistant/tool image outputs.
+- Зафиксировать исходный путь MVP, например `AppEvent::InsertLocalImage { path,
+  caption }` плюс validation в app layer.
+- Добавить отдельную cell или эквивалентное представление с исходным файлом для
+  вывода изображений ассистента/инструментов.
 - Проверять, что `path` существует, является regular file и декодируется до
-  создания bitmap marker.
+  создания bitmap-маркера.
 - Добавить regression tests, подтверждающие, что Markdown/plain text не
-  auto-render local images.
+  выполняют auto-render локальных изображений.
 
 ## Когда вернуться
 
-При старте stage 002 или другого плана, который добавляет assistant/tool image
-previews в TUI history.
+При старте stage 002 или другого плана, который добавляет image previews
+ассистента/инструментов в историю TUI.
 
 ## Когда закрыть как неактуальное
 
-Если assistant/tool outputs окончательно остаются text-only или image output
+Если вывод ассистента/инструментов окончательно остается text-only или image output
 переносится в отдельный UI surface без terminal history previews.
 
 ## Связи
