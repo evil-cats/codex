@@ -1,16 +1,16 @@
-# 001: Open questions and MVP boundary
+# 001: открытые вопросы и граница MVP
 
 ## Статус
 
-`completed`
+выполнен (`completed`)
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
 | Цель этапа | Зафиксировать границы MVP для assistant/tool local image previews до реализации. |
-| Уже сделано / решено | 10 вопросов переведены в `decided`; выбран controlled structured path, отдельный `LocalImageHistoryCell`, fallback и validation policy. |
-| Открыто / deferred / не сделано | 2 вопроса оставлены `deferred`: resize/reflow и resume bitmap replay. |
+| Уже сделано / решено | 10 вопросов решены (`decided`); выбран controlled structured path, отдельный `LocalImageHistoryCell`, fallback и validation policy. |
+| Открыто / отложено / не сделано | 2 вопроса отложены (`deferred`): resize/reflow и resume bitmap replay. |
 | Следующий шаг | Реализовать [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
 | Детали | [details:architecture], [details:scope], [details:mvp], [details:questions], [details:follow-ups] |
 
@@ -63,8 +63,8 @@ replay и границы безопасности.
 
 ## Критерии готовности
 
-- Для каждого открытого вопроса ниже выбран статус `decided` или явно оставлен
-  `deferred`.
+- Для каждого открытого вопроса ниже выбран статус решено (`decided`) или
+  явно отложено (`deferred`).
 - MVP можно реализовать без чтения произвольных локальных путей из model text.
 - План содержит минимум один проверяемый happy path и один fallback/error path.
 - Следующий этап можно оценить по конкретным файлам и тестам.
@@ -87,80 +87,80 @@ replay и границы безопасности.
 
 | ID | Вопрос | Статус | Итог | Готовность / связь |
 | --- | --- | --- | --- | --- |
-| [Q-001] | Как ассистентский ответ должен порождать image item? | decided | Controlled structured path через `LocalImageHistoryCell` / `AppEvent`; Markdown не source. | Готово для stage 002 |
-| [Q-002] | Переиспользовать user attachments или добавить новый cell? | decided | Добавить отдельный `LocalImageHistoryCell`; не переиспользовать `UserHistoryCell.local_image_paths`. | Готово для stage 002 |
-| [Q-003] | Можно ли автоматически превращать `![alt](path)` в preview? | decided | Нет, Markdown image syntax остается текстом/ссылкой. | Regression test в stage 002 |
-| [Q-004] | Какие local paths считать trusted? | decided | Только controlled structured event; перед rendering проверить regular file и decode. | Validation в stage 002 |
-| [Q-005] | Что показывать при unsupported terminal или decode/cache error? | decided | Всегда fallback; invalid event создает warning/fallback cell, bitmap не вставляется. | Fallback/error tests |
-| [Q-006] | Должны ли картинки переэмититься при resize/reflow? | deferred | В MVP достаточно fallback после resize/reflow. | [follow-up:FU-2026-001] |
-| [Q-007] | Должны ли картинки восстанавливаться после resume? | deferred | Bitmap resume требует managed artifact ownership; пока достаточно fallback. | [follow-up:FU-2026-001] |
-| [Q-008] | Где хранить preview/cache asset? | decided | Новое хранилище оригиналов не вводим; derived previews остаются в текущем cache. | Без нового storage в MVP |
-| [Q-009] | Что делать с `tmux`/`zellij`? | decided | В MVP fallback-only через текущий `/pets` detection. | Ручная fallback-проверка |
-| [Q-010] | Нужна ли поддержка remote URLs? | decided | Не входит в MVP; нужен отдельный controlled download/artifact workflow. | Out of scope |
-| [Q-011] | Какой размер preview использовать? | decided | Переиспользовать текущую geometry: 12 rows, `x = 2`, `max_columns = width - 4`. | Настройки позже |
-| [Q-012] | Какие тесты обязательны? | decided | Unit, validation, Markdown/plain-text regression, focused insertion и ручная Kitty-проверка. | Stage 002 criteria |
+| [Q-001] | Как ассистентский ответ должен порождать image item? | решено (`decided`) | Controlled structured path через `LocalImageHistoryCell` / `AppEvent`; Markdown не source. | Готово для stage 002 |
+| [Q-002] | Переиспользовать user attachments или добавить новый cell? | решено (`decided`) | Добавить отдельный `LocalImageHistoryCell`; не переиспользовать `UserHistoryCell.local_image_paths`. | Готово для stage 002 |
+| [Q-003] | Можно ли автоматически превращать `![alt](path)` в preview? | решено (`decided`) | Нет, Markdown image syntax остается текстом/ссылкой. | Regression-тест в этапе 002 |
+| [Q-004] | Какие local paths считать trusted? | решено (`decided`) | Только controlled structured event; перед rendering проверить regular file и decode. | Validation в stage 002 |
+| [Q-005] | Что показывать при unsupported terminal или decode/cache error? | решено (`decided`) | Всегда fallback; invalid event создает warning/fallback cell, bitmap не вставляется. | Fallback/error tests |
+| [Q-006] | Должны ли картинки переэмититься при resize/reflow? | отложено (`deferred`) | В MVP достаточно fallback после resize/reflow. | [follow-up:FU-2026-001] |
+| [Q-007] | Должны ли картинки восстанавливаться после resume? | отложено (`deferred`) | Bitmap resume требует managed artifact ownership; пока достаточно fallback. | [follow-up:FU-2026-001] |
+| [Q-008] | Где хранить preview/cache asset? | решено (`decided`) | Новое хранилище оригиналов не вводим; derived previews остаются в текущем cache. | Без нового storage в MVP |
+| [Q-009] | Что делать с `tmux`/`zellij`? | решено (`decided`) | В MVP fallback-only через текущий `/pets` detection. | Ручная fallback-проверка |
+| [Q-010] | Нужна ли поддержка remote URLs? | решено (`decided`) | Не входит в MVP; нужен отдельный controlled download/artifact workflow. | Out of scope |
+| [Q-011] | Какой размер preview использовать? | решено (`decided`) | Переиспользовать текущую geometry: 12 rows, `x = 2`, `max_columns = width - 4`. | Настройки позже |
+| [Q-012] | Какие тесты обязательны? | решено (`decided`) | Unit, validation, Markdown/plain-text regression, focused insertion и ручная Kitty-проверка. | Criteria этапа 002 |
 
-[Q-001]: #q-001-assistant-image-item-source
-[Q-002]: #q-002-local-image-history-cell
-[Q-003]: #q-003-markdown-image-syntax
-[Q-004]: #q-004-trusted-local-paths
-[Q-005]: #q-005-fallback-and-errors
+[Q-001]: #q-001-источник-image-item-ассистента
+[Q-002]: #q-002-localimagehistorycell
+[Q-003]: #q-003-синтаксис-markdown-для-изображений
+[Q-004]: #q-004-доверенные-local-paths
+[Q-005]: #q-005-fallback-и-ошибки
 [Q-006]: #q-006-resize-reflow
 [Q-007]: #q-007-resume
 [Q-008]: #q-008-preview-cache-asset
 [Q-009]: #q-009-tmux-zellij
 [Q-010]: #q-010-remote-urls
-[Q-011]: #q-011-preview-size
-[Q-012]: #q-012-required-tests
+[Q-011]: #q-011-размер-preview
+[Q-012]: #q-012-обязательные-тесты
 
-### Q-001: Assistant image item source
+### Q-001: Источник image item ассистента
 
 Вопрос: как ассистентский ответ должен порождать image item?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 Preview изображений от ассистента создаются только через контролируемый
 структурированный путь, на первом этапе через отдельный
 `LocalImageHistoryCell` / `AppEvent`. Markdown-синтаксис изображений в ответах
 ассистента не считается разрешением читать или рендерить локальные файлы.
 
-### Q-002: Local image history cell
+### Q-002: LocalImageHistoryCell
 
 Вопрос: переиспользовать user attachments или добавить новый cell?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 Добавить отдельный `LocalImageHistoryCell` для ассистентских и tool-generated
 локальных изображений. Не переиспользовать `UserHistoryCell.local_image_paths`:
 user attachments и assistant/tool image outputs имеют разные ownership,
 fallback, trust boundary и future replay semantics.
 
-### Q-003: Markdown image syntax
+### Q-003: Синтаксис Markdown для изображений
 
 Вопрос: можно ли автоматически превращать `![alt](path)` в preview?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 Нет. TUI не превращает Markdown image syntax из ассистентского текста в
 terminal image preview. Локальные пути в Markdown остаются текстом/ссылками;
 для bitmap preview нужен отдельный controlled structured path.
 
-### Q-004: Trusted local paths
+### Q-004: Доверенные local paths
 
 Вопрос: какие local paths считать trusted?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 В MVP trusted source только structured event из контролируемого Codex/TUI
 workflow. Paths из ассистентского Markdown/plain text, shell output и remote
 content не считаются trusted. Перед rendering файл всё равно должен
 существовать, быть regular file и успешно декодироваться через `image` crate.
 
-### Q-005: Fallback and errors
+### Q-005: Fallback и ошибки
 
 Вопрос: что показывать при unsupported terminal или decode/cache error?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 `LocalImageHistoryCell` всегда рендерит текстовый fallback. Bitmap payload
 является best-effort enhancement. Unsupported terminal или failure в
@@ -172,7 +172,7 @@ structured event указывает на несуществующий или н�
 
 Вопрос: должны ли картинки переэмититься при resize/reflow?
 
-Статус: `deferred`.
+Статус: отложено (`deferred`).
 
 Отложить до момента, когда базовый показ ассистентской картинки заработает.
 В первом вертикальном срезе достаточно текстового fallback после
@@ -182,7 +182,7 @@ resize/reflow; item-oriented reflow вынести в `FU-2026-001`.
 
 Вопрос: должны ли картинки восстанавливаться после resume?
 
-Статус: `deferred`.
+Статус: отложено (`deferred`).
 
 Отложить до момента, когда базовый показ ассистентской картинки заработает.
 Полноценное восстановление bitmap после resume требует отдельного решения по
@@ -193,7 +193,7 @@ managed artifact ownership. Пока достаточно fallback, если sou
 
 Вопрос: где хранить preview/cache asset?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 В первом вертикальном срезе не вводить новое managed хранилище оригинальных
 изображений. Structured event передаёт source path, `LocalImageHistoryCell`
@@ -204,7 +204,7 @@ managed artifact ownership. Пока достаточно fallback, если sou
 
 Вопрос: что делать с `tmux`/`zellij`?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 В MVP не поддерживать terminal image previews внутри `tmux`/`zellij`.
 Сохраняем текущий отказ из `/pets` detection и показываем только fallback text.
@@ -215,7 +215,7 @@ pane-local behavior, scrollback, resize и cleanup.
 
 Вопрос: нужна ли поддержка remote URLs?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 Remote URL rendering не входит в этот MVP. TUI не скачивает remote images из
 Markdown/plain text; remote URLs остаются текстом/ссылками. Если позже нужен
@@ -223,22 +223,22 @@ preview remote image, он должен идти через отдельный c
 download/artifact workflow с network approval, MIME validation, size limits и
 managed cache.
 
-### Q-011: Preview size
+### Q-011: Размер preview
 
 Вопрос: какой размер preview использовать?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 В MVP переиспользовать текущую geometry history previews: target 12 rows,
 `x = 2`, `max_columns = width - 4`, aspect ratio через
 `TERMINAL_CELL_WIDTH_TO_HEIGHT`. Настройки размера, compact mode и
 caption-aware layout вынести в follow-up после работающего вертикального среза.
 
-### Q-012: Required tests
+### Q-012: Обязательные тесты
 
 Вопрос: какие тесты обязательны?
 
-Статус: `decided`.
+Статус: решено (`decided`).
 
 MVP должен иметь unit tests для `LocalImageHistoryCell`, validation tests для
 structured event, regression tests против Markdown/plain-text auto-rendering и
@@ -246,7 +246,7 @@ focused insertion tests. Ручная проверка в Kitty-compatible termi
 обязательна перед завершением фичи; `tmux`/`zellij` проверяются на
 fallback-only behavior.
 
-## Найденные follow-ups
+## Найденные отложенные работы
 
 - [follow-up:FU-2026-001]: item-oriented resize/reflow и replay для bitmap previews после
   того, как normal insertion path стабилизирован.
@@ -259,7 +259,7 @@ fallback-only behavior.
 [code:pets-mod]: ../../../../codex-rs/tui/src/pets/mod.rs
 [code:resize-reflow]: ../../../../codex-rs/tui/src/app/resize_reflow.rs
 [details:architecture]: #связанные-элементы-архитектуры
-[details:follow-ups]: #найденные-follow-ups
+[details:follow-ups]: #найденные-отложенные-работы
 [details:mvp]: #граница-mvp
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ

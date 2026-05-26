@@ -1,33 +1,33 @@
-# Feature: TUI history local image previews
+# Фича: локальные превью изображений в истории TUI
 
-## Status
+## Статус
 
-implemented
+реализовано (`implemented`)
 
-## Summary
+## Кратко
 
-| Field | Value |
+| Поле | Значение |
 | --- | --- |
-| Purpose | User local image attachments render in TUI history as terminal image previews with `[Image #n]` text fallback. |
-| Current state | Implemented for user attachments and normal history insertion. |
-| Done / Implemented | `LocalImage` display item, image preparation through `/pets`, terminal scrollback insertion, PNG normalization for Kitty, targeted tests. |
-| Open / Deferred | Assistant/tool source path, bitmap re-emission during resize/reflow/replay, and managed resume-stable image ownership. |
-| Next | Continue [plan:PLAN-TUI-ASSISTANT-IMAGES-001], especially [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
+| Назначение | Локальные user attachments рендерятся в TUI history как terminal image previews с текстовым fallback `[Image #n]`. |
+| Текущее состояние | Реализовано для user attachments и normal history insertion. |
+| Готово / реализовано | `LocalImage` display item, подготовка image через `/pets`, вставка в terminal scrollback, PNG-normalization для Kitty, targeted tests. |
+| Открыто / отложено | Assistant/tool source path, bitmap re-emission при resize/reflow/replay и managed resume-stable image ownership. |
+| Следующий шаг | Продолжить [plan:PLAN-TUI-ASSISTANT-IMAGES-001], особенно [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
 
-## Detail Map
+## Карта деталей
 
-| Detail | Where |
+| Деталь | Где |
 | --- | --- |
-| Current shape | [details:current-shape] |
-| Code map | [details:code-map] |
-| Flow | [details:flow] |
-| Contracts | [details:contracts] |
-| Invariants | [details:invariants] |
-| Runtime notes | [details:runtime-notes] |
-| Verification | [details:verification] |
-| Links | [details:links] |
+| Текущее устройство | [details:current-shape] |
+| Карта кода | [details:code-map] |
+| Поток | [details:flow] |
+| Контракты | [details:contracts] |
+| Инварианты | [details:invariants] |
+| Runtime-заметки | [details:runtime-notes] |
+| Проверки | [details:verification] |
+| Связи | [details:links] |
 
-## Purpose
+## Назначение
 
 Показывать локальные изображения из пользовательских attachments в TUI history
 как terminal image previews, сохраняя текстовый fallback `[Image #n]` для raw
@@ -36,7 +36,7 @@ mode, copy, unsupported terminals, resize/reflow и replay paths.
 Фича относится к локальной Hermione-ветке Codex и не является официальной
 пользовательской документацией upstream.
 
-## Current Shape
+## Текущее устройство
 
 Локальный путь изображения остается source-backed частью `UserHistoryCell`.
 В rich history insertion cell отдает обычные текстовые строки и дополнительный
@@ -50,7 +50,7 @@ mode, copy, unsupported terminals, resize/reflow и replay paths.
 недоступен или подготовка asset падает, история остается читаемой через
 текстовый fallback.
 
-## Code Map
+## Карта кода
 
 - `codex-rs/tui/src/history_cell/mod.rs`
   - `HistoryCellDisplayItem::LocalImage`: marker для terminal-backed bitmap
@@ -75,7 +75,7 @@ mode, copy, unsupported terminals, resize/reflow и replay paths.
   - `insert_history_items_with_wrap_policy`: TUI boundary для вставки mixed
     line/image history items.
 
-## Flow
+## Поток
 
 ```text
 User local image attachment
@@ -136,7 +136,7 @@ flowchart TD
     Writer --> Scrollback
 ```
 
-## Contracts
+## Контракты
 
 - `HistoryCell::display_items_for_mode(width, HistoryRenderMode::Rich)` может
   вернуть `HistoryCellDisplayItem::LocalImage(path)` только рядом с текстовым
@@ -151,7 +151,7 @@ flowchart TD
 - `insert_history_items_with_wrap_policy` резервирует rows для
   `HistoryInsertItem::Image` так же, как считает wrapped rows для text lines.
 
-## Invariants
+## Инварианты
 
 - Не встраивать raw terminal escape payload в ratatui `Line`.
 - Не читать локальные пути из произвольного Markdown/plain text как trusted
@@ -162,7 +162,7 @@ flowchart TD
 - `tmux` и `zellij` остаются fallback-only через текущий
   `detect_pet_image_support` policy.
 
-## Runtime Notes
+## Runtime-заметки
 
 - Поддерживаемые protocol paths: Kitty inline data, Kitty local file graphics и
   Sixel.
@@ -175,7 +175,7 @@ flowchart TD
 - Source image ownership остается у исходного attachment path; cache содержит
   derived preview assets, а не managed копию оригинала.
 
-## Verification
+## Проверки
 
 - Cell marker emission:
   `cargo test -p codex-tui user_history_cell_emits_local_image_items_for_terminal_history`
@@ -205,24 +205,24 @@ flowchart TD
   Proves: regression coverage для TUI paths, если нужен полный локальный
   прогон.
 
-## Links
+## Связи
 
-- Plan: [plan:PLAN-TUI-ASSISTANT-IMAGES-001]
-- Stage 002: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]
-- Resize/reflow follow-up: [follow-up:FU-2026-001]
-- Assistant/tool source follow-up: [follow-up:FU-2026-002]
-- Follow-ups: [follow-ups:image-history]
-- Implementation commits: `96feb7e0d Add terminal image previews to TUI history`,
+- План: [plan:PLAN-TUI-ASSISTANT-IMAGES-001]
+- Этап 002: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]
+- Отложенная работа по resize/reflow: [follow-up:FU-2026-001]
+- Отложенная работа по assistant/tool source: [follow-up:FU-2026-002]
+- Отложенные работы: [follow-ups:image-history]
+- Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`
 
-[details:code-map]: #code-map
-[details:contracts]: #contracts
-[details:current-shape]: #current-shape
-[details:flow]: #flow
-[details:invariants]: #invariants
-[details:links]: #links
-[details:runtime-notes]: #runtime-notes
-[details:verification]: #verification
+[details:code-map]: #карта-кода
+[details:contracts]: #контракты
+[details:current-shape]: #текущее-устройство
+[details:flow]: #поток
+[details:invariants]: #инварианты
+[details:links]: #связи
+[details:runtime-notes]: #runtime-заметки
+[details:verification]: #проверки
 [follow-up:FU-2026-001]: ../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
 [follow-up:FU-2026-002]: ../../follow-ups/FU-2026-002-tui-assistant-tool-image-source.md
 [follow-ups:image-history]: ../../follow-ups/README.md

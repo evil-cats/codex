@@ -10,19 +10,19 @@ review_at: PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
 owner_plan: PLAN-TUI-ASSISTANT-IMAGES-001
 owner_stage: 002-local-image-history-cell
 architecture_refs:
-  - docs/architecture/features/tui-history-image-previews.md#runtime-notes
+  - docs/architecture/features/tui-history-image-previews.md#runtime-заметки
 invalid_if:
   - terminal history image previews remain intentionally fallback-only outside normal insertion
 ---
 
-# FU-2026-001: Re-emit bitmap previews during resize/reflow and replay
+# FU-2026-001: переэмиссия bitmap previews при resize/reflow/replay
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
-| Summary | Решить, должны ли bitmap previews переэмититься при resize/reflow, initial replay и resume. |
+| Статус | принят (`accepted`) |
+| Суть | Решить, должны ли bitmap previews переэмититься при resize/reflow, initial replay и resume. |
 | Почему важно | Сейчас вне normal insertion остаются только `[Image #n]` fallback labels; ожидания пользователя могут стать выше. |
 | Когда вернуться | Перед расширением image history beyond normal insertion или перед resume-stable image assets. |
 | Когда закрыть | Если проектное решение закрепит fallback-only behavior для local images вне normal insertion. |

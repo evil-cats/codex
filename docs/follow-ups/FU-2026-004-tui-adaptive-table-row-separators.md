@@ -15,14 +15,14 @@ invalid_if:
   - documentation tables avoid long wrapped cells or a different terminal Markdown renderer is chosen
 ---
 
-# FU-2026-004: Adaptive table row separators in TUI Markdown rendering
+# FU-2026-004: adaptive row separators в TUI Markdown tables
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
-| Summary | Добавить adaptive body row separators для длинных wrapped Markdown tables в TUI renderer. |
+| Статус | принят (`accepted`) |
+| Суть | Добавить adaptive body row separators для длинных wrapped Markdown tables в TUI renderer. |
 | Почему важно | Короткие таблицы должны оставаться компактными, но многострочные rows без разделителей плохо читаются. |
 | Когда вернуться | После doc-refactor, когда будет понятно, какие таблицы реально остаются и как они wrapping-rendered. |
 | Когда закрыть | Если длинные wrapped cells исчезнут, будет выбран внешний renderer или тест покажет, что separators не помогают. |

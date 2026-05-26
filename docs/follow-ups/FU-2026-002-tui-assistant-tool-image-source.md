@@ -10,19 +10,19 @@ review_at: PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
 owner_plan: PLAN-TUI-ASSISTANT-IMAGES-001
 owner_stage: 002-local-image-history-cell
 architecture_refs:
-  - docs/architecture/features/tui-history-image-previews.md#contracts
+  - docs/architecture/features/tui-history-image-previews.md#контракты
 invalid_if:
   - assistant and tool outputs remain text-only and do not render local bitmap previews in TUI history
 ---
 
-# FU-2026-002: Controlled assistant/tool image source path
+# FU-2026-002: controlled source path для assistant/tool изображений
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
-| Summary | Добавить controlled source-backed path для assistant/tool generated local images без Markdown auto-rendering. |
+| Статус | принят (`accepted`) |
+| Суть | Добавить controlled source-backed path для assistant/tool generated local images без Markdown auto-rendering. |
 | Почему важно | Без structured boundary легко смешать model text, shell output, local file reads и trusted UI events. |
 | Когда вернуться | При старте stage 002 или другого плана, который добавляет assistant/tool image previews. |
 | Когда закрыть | Если assistant/tool outputs остаются text-only или image output переедет в отдельный UI surface. |
@@ -31,27 +31,27 @@ invalid_if:
 
 ## Наблюдение
 
-Current implementation supports local image previews for user attachments via
-`UserHistoryCell.local_image_paths`. Assistant/tool generated local images still
-need a controlled source-backed path; arbitrary Markdown image syntax or shell
-output must not become trusted local file input.
+Текущая реализация поддерживает local image previews для user attachments через
+`UserHistoryCell.local_image_paths`. Для assistant/tool generated local images
+нужен controlled source-backed path; произвольный Markdown image syntax или
+shell output не должен становиться trusted local file input.
 
 ## Почему это важно
 
-Without a structured source boundary, image rendering can accidentally blur
-model text, shell output, local file reads and trusted UI events. That would
-make the feature harder to review and riskier to extend.
+Без structured source boundary image rendering может случайно смешать model
+text, shell output, local file reads и trusted UI events. Это усложнит review
+фичи и сделает расширение рискованнее.
 
 ## Что нужно сделать
 
-- Define the MVP source path, for example `AppEvent::InsertLocalImage { path,
-  caption }` plus app-layer validation.
-- Add a dedicated cell or equivalent source-backed representation for
+- Зафиксировать MVP source path, например `AppEvent::InsertLocalImage { path,
+  caption }` плюс app-layer validation.
+- Добавить dedicated cell или эквивалентное source-backed представление для
   assistant/tool image outputs.
-- Validate that `path` exists, is a regular file and can be decoded before
-  producing a bitmap marker.
-- Add regression tests proving that Markdown/plain text does not auto-render
-  local images.
+- Проверять, что `path` существует, является regular file и декодируется до
+  создания bitmap marker.
+- Добавить regression tests, подтверждающие, что Markdown/plain text не
+  auto-render local images.
 
 ## Когда вернуться
 

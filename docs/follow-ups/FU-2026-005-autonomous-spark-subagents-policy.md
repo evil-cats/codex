@@ -16,14 +16,14 @@ invalid_if:
   - Hermione profile uses config-only usage hints and no Rust change is needed
 ---
 
-# FU-2026-005: Autonomous Spark subagents policy
+# FU-2026-005: политика автономных Spark subagents
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
-| Summary | Оценить доработку, позволяющую Hermione автономно запускать bounded routine subagents на `gpt-5.3-codex-spark`. |
+| Статус | принят (`accepted`) |
+| Суть | Оценить доработку, позволяющую Hermione автономно запускать bounded routine subagents на `gpt-5.3-codex-spark`. |
 | Почему важно | У Spark отдельные лимиты, поэтому простую sidecar работу можно вынести из основного агента без траты сильной модели. |
 | Когда вернуться | Перед изменением `spawn_agent` policy, `multi_agent_v2` defaults или Hermione profile delegation guidance. |
 | Когда закрыть | Если subagent delegation остается строго explicit-only или достаточно config-only `usage_hint_text` без Rust-доработки. |
@@ -75,7 +75,7 @@ delegation или если для Hermione достаточно config-only `usa
 
 - Tool description: [code:multi-agents-spec]
 - Multi-agent config: [code:multi-agent-config]
-- Feature config TOML: [code:feature-configs]
+- TOML-конфиг feature flags: [code:feature-configs]
 
 [code:feature-configs]: ../../codex-rs/features/src/feature_configs.rs
 [code:multi-agent-config]: ../../codex-rs/core/src/config/mod.rs

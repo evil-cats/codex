@@ -1,16 +1,16 @@
-# 002: Local image history cell
+# 002: LocalImageHistoryCell для локальных изображений
 
 ## Статус
 
-`proposed`
+предложен (`proposed`)
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
 | Цель этапа | Реализовать минимальный controlled path от `AppEvent::InsertLocalImage` до `HistoryCellDisplayItem::LocalImage`. |
-| Уже сделано / решено | Stage 001 зафиксировал trust boundary, fallback policy, validation requirements и out-of-scope items. |
-| Открыто / deferred / не сделано | Нужно выбрать точное место `LocalImageHistoryCell` и имя warning/fallback; resize/reflow/resume остаются вне scope. |
+| Уже сделано / решено | Этап 001 зафиксировал trust boundary, fallback policy, validation requirements и out-of-scope items. |
+| Открыто / отложено / не сделано | Нужно выбрать точное место `LocalImageHistoryCell` и имя warning/fallback; resize/reflow/resume остаются вне scope. |
 | Следующий шаг | Начать с размещения `LocalImageHistoryCell`, затем добавить structured event, validation и targeted tests. |
 | Детали | [details:architecture], [details:scope], [details:actions], [details:criteria], [details:questions], [details:follow-ups] |
 
@@ -101,26 +101,26 @@ AppEvent::InsertLocalImage { path, caption }
 
 | ID | Вопрос | Статус | Решение / итог | Детали |
 | --- | --- | --- | --- | --- |
-| [Q-001] | Где разместить `LocalImageHistoryCell`? | open | Новый приватный модуль в `history_cell/` | [details][Q-001] |
-| [Q-002] | Как назвать warning/fallback? | open | Reuse warning cell или `[Image: <caption>]` | [details][Q-002] |
+| [Q-001] | Где разместить `LocalImageHistoryCell`? | открыто (`open`) | Новый приватный модуль в `history_cell/` | [details][Q-001] |
+| [Q-002] | Как назвать warning/fallback? | открыто (`open`) | Reuse warning cell или `[Image: <caption>]` | [details][Q-002] |
 
-### Q-001: LocalImageHistoryCell placement
+### Q-001: Размещение LocalImageHistoryCell
 
-Статус: `open`.
+Статус: открыто (`open`).
 
 Предварительное решение: новый приватный модуль в `history_cell/`, чтобы не
 раздувать существующие central modules и держать cell behavior рядом с другими
 history cell implementations.
 
-### Q-002: Warning fallback name
+### Q-002: Название warning/fallback
 
-Статус: `open`.
+Статус: открыто (`open`).
 
 Предварительное решение: переиспользовать warning cell или текстовый fallback
 `[Image: <caption>]`, но точную форму выбрать при реализации validation path,
 чтобы raw/copy behavior остался понятным.
 
-## Найденные follow-ups
+## Найденные отложенные работы
 
 - [follow-up:FU-2026-001]: item-oriented resize/reflow и replay для bitmap previews.
 - [follow-up:FU-2026-002]: controlled assistant/tool image source path.
@@ -134,11 +134,11 @@ history cell implementations.
 [details:actions]: #план-действий
 [details:architecture]: #связанные-элементы-архитектуры
 [details:criteria]: #критерии-готовности
-[details:follow-ups]: #найденные-follow-ups
+[details:follow-ups]: #найденные-отложенные-работы
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ
 [feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
 [follow-up:FU-2026-001]: ../../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
 [follow-up:FU-2026-002]: ../../../follow-ups/FU-2026-002-tui-assistant-tool-image-source.md
-[Q-001]: #q-001-localimagehistorycell-placement
-[Q-002]: #q-002-warning-fallback-name
+[Q-001]: #q-001-размещение-localimagehistorycell
+[Q-002]: #q-002-название-warningfallback

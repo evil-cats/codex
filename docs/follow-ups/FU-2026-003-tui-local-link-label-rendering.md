@@ -13,14 +13,14 @@ invalid_if:
   - documentation tables stop using local Markdown links in Codex-rendered terminal output
 ---
 
-# FU-2026-003: TUI local-link label rendering for documentation tables
+# FU-2026-003: labels для local links в таблицах документации
 
 ## Кратко
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
-| Summary | Сделать TUI rendering local Markdown links configurable, чтобы documentation tables могли показывать labels, а не только target paths. |
+| Статус | принят (`accepted`) |
+| Суть | Сделать TUI rendering local Markdown links configurable, чтобы таблицы документации могли показывать labels, а не только target paths. |
 | Почему важно | Reference-style links помогают source Markdown, но текущий TUI rich display снова расширяет таблицы локальными путями. |
 | Когда вернуться | После согласования правил refactor и перед массовым переписыванием таблиц с reference-style links. |
 | Когда закрыть | Если documentation tables перестанут использовать local Markdown links в Codex-rendered terminal output. |

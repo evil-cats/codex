@@ -1,8 +1,8 @@
-# PLAN-TUI-ASSISTANT-IMAGES-001: Assistant image previews in TUI history
+# PLAN-TUI-ASSISTANT-IMAGES-001: превью изображений ассистента в истории TUI
 
 ## Статус
 
-`active`
+активен (`active`)
 
 ## Кратко
 
@@ -55,10 +55,10 @@ previews.
 
 | Этап | Статус | Документ | Результат |
 | --- | --- | --- | --- |
-| 001 | completed | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001] | Границы MVP |
-| 002 | proposed | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | Assistant/tool source |
-| 003 | proposed | TBD | Подключить контролируемый источник ассистентских image items |
-| 004 | proposed | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
+| 001 | выполнен (`completed`) | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001] | Границы MVP |
+| 002 | предложен (`proposed`) | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | Источник assistant/tool изображений |
+| 003 | предложен (`proposed`) | TBD | Подключить контролируемый источник ассистентских image items |
+| 004 | предложен (`proposed`) | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
 
 ## Следующий шаг
 
@@ -69,12 +69,12 @@ previews.
 - validation handler;
 - targeted tests.
 
-## Follow-ups
+## Отложенные работы
 
 | ID | Статус | Когда вернуться |
 | --- | --- | --- |
-| [follow-up:FU-2026-001] | accepted | Перед расширением image history beyond normal insertion |
-| [follow-up:FU-2026-002] | accepted | При старте source-backed assistant/tool image previews |
+| [follow-up:FU-2026-001] | принят (`accepted`) | Перед расширением image history beyond normal insertion |
+| [follow-up:FU-2026-002] | принят (`accepted`) | При старте source-backed assistant/tool image previews |
 
 [code:app-event]: ../../../codex-rs/tui/src/app_event.rs
 [code:history-cell]: ../../../codex-rs/tui/src/history_cell/mod.rs
@@ -84,7 +84,7 @@ previews.
 [code:pets-mod]: ../../../codex-rs/tui/src/pets/mod.rs
 [code:resize-reflow]: ../../../codex-rs/tui/src/app/resize_reflow.rs
 [details:architecture]: #архитектурные-ссылки
-[details:follow-ups]: #follow-ups
+[details:follow-ups]: #отложенные-работы
 [details:stages]: #этапы
 [details:state]: #текущее-состояние
 [feature:tui-history-image-previews]: ../../architecture/features/tui-history-image-previews.md
