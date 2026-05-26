@@ -26,7 +26,13 @@ In the codex-rs folder where the rust code lives:
   - Implementations may still use `async fn foo(&self, ...) -> T` when they satisfy that contract.
   - Do not use `#[allow(async_fn_in_trait)]` as a shortcut around spelling the future contract explicitly.
 - When writing tests, prefer comparing the equality of entire objects over fields one by one.
-- Do not add general product or user-facing documentation to the `docs/` folder. The official Codex documentation lives elsewhere. The exception is app-server API documentation, which is covered by the app-server guidance below.
+- Do not add broad upstream product or user-facing documentation to the `docs/`
+  folder. The official Codex documentation lives elsewhere. This fork may keep
+  internal development documentation under `docs/architecture/`, `docs/plans/`,
+  `docs/follow-ups/`, and `docs/backlog/` when it records fork-specific
+  implementation decisions, verification, maintenance notes, or work tracking.
+  The exception for app-server API documentation is covered by the app-server
+  guidance below.
 - Prefer private modules and explicitly exported public crate API.
 - If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.

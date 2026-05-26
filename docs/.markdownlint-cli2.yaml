@@ -1,0 +1,10 @@
+globs:
+  - "architecture/**/*.md"
+  - "plans/**/*.md"
+  - "follow-ups/**/*.md"
+  - "table-rendering-long-links-test.md"
+
+config:
+  MD013:
+    line_length: 200
+    tables: false
