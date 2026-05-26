@@ -866,6 +866,32 @@ async fn view_image_tool_call_emits_local_image_event() {
 }
 
 #[tokio::test]
+async fn image_generation_call_with_saved_path_emits_local_image_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let image_path = test_path_buf("/tmp/ig-1.png").abs();
+
+    handle_image_generation_end(
+        &mut chat,
+        "call-image-generation",
+        Some("A tiny blue square".into()),
+        Some(image_path.clone()),
+    );
+
+    let (cells, local_images) = drain_history_events(&mut rx);
+    assert!(
+        cells.is_empty(),
+        "image generation with saved_path should not emit legacy text cell"
+    );
+    assert_eq!(
+        local_images,
+        vec![(
+            image_path.as_path().to_path_buf(),
+            Some("A tiny blue square".to_string())
+        )]
+    );
+}
+
+#[tokio::test]
 async fn image_generation_call_adds_history_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -873,16 +899,12 @@ async fn image_generation_call_adds_history_cell() {
         &mut chat,
         "call-image-generation",
         Some("A tiny blue square".into()),
-        Some(test_path_buf("/tmp/ig-1.png").abs()),
+        None,
     );
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected a single history cell");
-    let platform_file_url = url::Url::from_file_path(test_path_buf("/tmp/ig-1.png"))
-        .expect("test path should convert to file URL")
-        .to_string();
-    let combined =
-        lines_to_single_string(&cells[0]).replace(&platform_file_url, "file:///tmp/ig-1.png");
+    let combined = lines_to_single_string(&cells[0]);
     assert_chatwidget_snapshot!("image_generation_call_history_snapshot", combined);
 }
 

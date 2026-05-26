@@ -252,16 +252,16 @@ fallback-only behavior.
 - [follow-up:FU-2026-002]: путь источника изображений ассистента/инструментов с исходным файлом без Markdown
   auto-rendering и без произвольного чтения локальных путей из текста модели.
 
-[code:app-event]: ../../../../codex-rs/tui/src/app_event.rs
-[code:history-cell]: ../../../../codex-rs/tui/src/history_cell/mod.rs
-[code:insert-history]: ../../../../codex-rs/tui/src/insert_history.rs
-[code:pets-mod]: ../../../../codex-rs/tui/src/pets/mod.rs
-[code:resize-reflow]: ../../../../codex-rs/tui/src/app/resize_reflow.rs
+[code:app-event]: ../../../../../../codex-rs/tui/src/app_event.rs
+[code:history-cell]: ../../../../../../codex-rs/tui/src/history_cell/mod.rs
+[code:insert-history]: ../../../../../../codex-rs/tui/src/insert_history.rs
+[code:pets-mod]: ../../../../../../codex-rs/tui/src/pets/mod.rs
+[code:resize-reflow]: ../../../../../../codex-rs/tui/src/app/resize_reflow.rs
 [details:architecture]: #связанные-элементы-архитектуры
 [details:follow-ups]: #найденные-отложенные-работы
 [details:mvp]: #граница-mvp
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ
-[follow-up:FU-2026-001]: ../../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
-[follow-up:FU-2026-002]: ../../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
+[follow-up:FU-2026-001]: ../../../../../follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md
+[follow-up:FU-2026-002]: ../../../../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: 002-local-image-history-cell.md

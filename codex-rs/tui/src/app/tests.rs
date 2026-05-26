@@ -3950,6 +3950,17 @@ fn rendered_line_text(line: &Line<'static>) -> String {
         .collect()
 }
 
+fn rendered_item_line_text(item: &HistoryCellDisplayItem) -> Option<String> {
+    match item {
+        HistoryCellDisplayItem::Line(line) => Some(rendered_line_text(line)),
+        HistoryCellDisplayItem::LocalImage(_) => None,
+    }
+}
+
+fn rendered_item_line_texts(items: &[HistoryCellDisplayItem]) -> Vec<String> {
+    items.iter().filter_map(rendered_item_line_text).collect()
+}
+
 #[tokio::test]
 async fn capped_resize_reflow_renders_recent_suffix_only() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
@@ -3960,13 +3971,9 @@ async fn capped_resize_reflow_renders_recent_suffix_only() {
 
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
-    assert_eq!(rendered.lines.len(), 5);
+    assert_eq!(rendered.items.len(), 5);
     assert_eq!(
-        rendered
-            .lines
-            .iter()
-            .map(rendered_line_text)
-            .collect::<Vec<_>>(),
+        rendered_item_line_texts(&rendered.items),
         vec![
             "cell 17".to_string(),
             String::new(),
@@ -3987,9 +3994,9 @@ async fn uncapped_resize_reflow_renders_all_cells_when_row_cap_absent() {
 
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
-    assert_eq!(rendered.lines.len(), 39);
-    assert_eq!(rendered_line_text(&rendered.lines[0]), "cell 0");
-    assert_eq!(rendered_line_text(&rendered.lines[38]), "cell 19");
+    assert_eq!(rendered.items.len(), 39);
+    assert_eq!(rendered_item_line_texts(&rendered.items)[0], "cell 0");
+    assert_eq!(rendered_item_line_texts(&rendered.items)[38], "cell 19");
 }
 
 #[tokio::test]
@@ -4013,7 +4020,7 @@ async fn resize_reflow_wraps_transcript_early_when_pet_is_enabled() {
     let with_pet = app.render_transcript_lines_for_reflow(width);
 
     assert!(
-        with_pet.lines.len() > without_pet.lines.len(),
+        with_pet.items.len() > without_pet.items.len(),
         "expected pet-enabled transcript reflow to wrap earlier"
     );
 }
@@ -4029,11 +4036,7 @@ async fn uncapped_resize_reflow_renders_all_cells_under_row_limit() {
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
     assert_eq!(
-        rendered
-            .lines
-            .iter()
-            .map(rendered_line_text)
-            .collect::<Vec<_>>(),
+        rendered_item_line_texts(&rendered.items),
         vec![
             "cell 0".to_string(),
             String::new(),
@@ -4045,6 +4048,29 @@ async fn uncapped_resize_reflow_renders_all_cells_under_row_limit() {
 }
 
 #[tokio::test]
+async fn resize_reflow_preserves_local_image_display_item() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    let dir = tempdir().expect("tempdir");
+    let image_path = write_test_png(dir.path(), "assistant-image.png");
+    app.transcript_cells = vec![
+        App::history_cell_for_local_image_event(image_path.clone(), Some("diagram".to_string()))
+            .into(),
+    ];
+
+    let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
+
+    assert!(rendered.items.iter().any(
+        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
+    ));
+    assert!(
+        rendered_item_line_texts(&rendered.items)
+            .iter()
+            .any(|line| line.contains("[Image: diagram]"))
+    );
+}
+
+#[tokio::test]
 async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
     enable_terminal_resize_reflow(&mut app);
@@ -4052,11 +4078,13 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
 
     app.begin_initial_history_replay_buffer();
     for index in 0..5 {
-        App::buffer_initial_history_replay_display_lines(
+        App::buffer_initial_history_replay_display_items(
             app.initial_history_replay_buffer
                 .as_mut()
                 .expect("initial replay buffer active"),
-            vec![Line::from(format!("line {index}"))],
+            vec![HistoryCellDisplayItem::Line(Line::from(format!(
+                "line {index}"
+            )))],
             /*max_rows*/ 3,
         );
     }
@@ -4067,9 +4095,9 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
         .expect("initial replay buffer should remain active");
     assert_eq!(
         buffer
-            .retained_lines
+            .retained_items
             .iter()
-            .map(rendered_line_text)
+            .filter_map(rendered_item_line_text)
             .collect::<Vec<_>>(),
         vec![
             "line 2".to_string(),
@@ -4077,6 +4105,35 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
             "line 4".to_string(),
         ]
     );
+}
+
+#[tokio::test]
+async fn initial_replay_buffer_preserves_local_image_marker() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(4);
+    let dir = tempdir().expect("tempdir");
+    let image_path = write_test_png(dir.path(), "assistant-image.png");
+
+    app.begin_initial_history_replay_buffer();
+    App::buffer_initial_history_replay_display_items(
+        app.initial_history_replay_buffer
+            .as_mut()
+            .expect("initial replay buffer active"),
+        vec![
+            HistoryCellDisplayItem::Line(Line::from("[Image: diagram]")),
+            HistoryCellDisplayItem::LocalImage(image_path.clone()),
+        ],
+        /*max_rows*/ 4,
+    );
+
+    let buffer = app
+        .initial_history_replay_buffer
+        .as_ref()
+        .expect("initial replay buffer should remain active");
+    assert!(buffer.retained_items.iter().any(
+        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
+    ));
 }
 
 #[tokio::test]
@@ -4092,7 +4149,7 @@ async fn thread_switch_replay_buffer_uses_transcript_tail_mode_when_row_cap_pres
         .as_ref()
         .expect("thread switch replay buffer should be active");
     assert!(buffer.render_from_transcript_tail);
-    assert!(buffer.retained_lines.is_empty());
+    assert!(buffer.retained_items.is_empty());
 }
 
 #[tokio::test]

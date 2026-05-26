@@ -560,6 +560,34 @@ mod tests {
     }
 
     #[test]
+    fn insert_history_items_with_wrap_policy_counts_image_rows() {
+        let width: u16 = 40;
+        let height: u16 = 8;
+        let backend = VT100Backend::new(width, height);
+        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+        let viewport = Rect::new(0, height - 1, width, 1);
+        term.set_viewport_area(viewport);
+
+        insert_history_items_with_wrap_policy(
+            &mut term,
+            vec![
+                HistoryInsertItem::Line(Line::from("head")),
+                HistoryInsertItem::Image(TerminalHistoryImage {
+                    x: 0,
+                    columns: 4,
+                    rows: 3,
+                    payload: TerminalHistoryImagePayload::Text("image-payload".to_string()),
+                }),
+                HistoryInsertItem::Line(Line::from("tail")),
+            ],
+            HistoryLineWrapPolicy::PreWrap,
+        )
+        .expect("history items should insert");
+
+        assert_eq!(term.visible_history_rows(), 5);
+    }
+
+    #[test]
     fn vt100_blockquote_wrap_preserves_color_on_all_wrapped_lines() {
         // Force wrapping by using a narrow viewport width and a long blockquote line.
         let width: u16 = 20;

@@ -40,11 +40,18 @@ impl ChatWidget {
         saved_path: Option<AbsolutePathBuf>,
     ) {
         self.flush_answer_stream_with_separator();
-        self.add_to_history(history_cell::new_image_generation_call(
-            call_id,
-            revised_prompt,
-            saved_path,
-        ));
+        if let Some(saved_path) = saved_path {
+            let caption = revised_prompt
+                .filter(|prompt| !prompt.trim().is_empty())
+                .unwrap_or(call_id);
+            self.insert_local_image_history(saved_path.as_path().to_path_buf(), Some(caption));
+        } else {
+            self.add_to_history(history_cell::new_image_generation_call(
+                call_id,
+                revised_prompt,
+                None,
+            ));
+        }
         self.request_redraw();
     }
 

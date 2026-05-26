@@ -33,17 +33,16 @@ use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
 use crate::tui;
 
 struct ReflowCellDisplay {
-    lines: Vec<Line<'static>>,
+    items: Vec<HistoryCellDisplayItem>,
     is_stream_continuation: bool,
 }
 
-/// Rendered transcript lines ready to be replayed into terminal scrollback.
+/// Rendered transcript items ready to be replayed into terminal scrollback.
 ///
-/// This is intentionally line-oriented rather than cell-oriented because the terminal only accepts
-/// already-wrapped rows. Callers should keep treating `transcript_cells` as the source of truth; the
-/// rows here are a transient render product for a single terminal width.
+/// Callers should keep treating `transcript_cells` as the source of truth; the
+/// items here are a transient render product for a single terminal width.
 pub(super) struct ReflowRenderResult {
-    pub(super) lines: Vec<Line<'static>>,
+    pub(super) items: Vec<HistoryCellDisplayItem>,
 }
 
 pub(super) fn trailing_run_start<T: 'static>(transcript_cells: &[Arc<dyn HistoryCell>]) -> usize {
@@ -73,16 +72,16 @@ impl App {
         self.deferred_history_lines.clear();
     }
 
-    fn display_lines_for_history_insert(
+    fn display_items_for_history_cell(
         &mut self,
         cell: &dyn HistoryCell,
         width: u16,
-    ) -> Vec<Line<'static>> {
-        let mut display =
-            cell.display_lines_for_mode(width, self.chat_widget.history_render_mode());
+    ) -> Vec<HistoryCellDisplayItem> {
+        let mode = self.chat_widget.history_render_mode();
+        let mut display = cell.display_items_for_mode(width, mode);
         if !display.is_empty() && !cell.is_stream_continuation() {
             if self.has_emitted_history_lines {
-                display.insert(0, Line::from(""));
+                display.insert(0, HistoryCellDisplayItem::Line(Line::from("")));
             } else {
                 self.has_emitted_history_lines = true;
             }
@@ -95,17 +94,8 @@ impl App {
         cell: &dyn HistoryCell,
         width: u16,
     ) -> Vec<HistoryInsertItem> {
-        let mode = self.chat_widget.history_render_mode();
-        let mut display =
-            self.prepare_history_insert_items(cell.display_items_for_mode(width, mode), width);
-        if !display.is_empty() && !cell.is_stream_continuation() {
-            if self.has_emitted_history_lines {
-                display.insert(0, HistoryInsertItem::Line(Line::from("")));
-            } else {
-                self.has_emitted_history_lines = true;
-            }
-        }
-        display
+        let display = self.display_items_for_history_cell(cell, width);
+        self.prepare_history_insert_items(display, width)
     }
 
     fn prepare_history_insert_items(
@@ -191,7 +181,7 @@ impl App {
             && self.overlay.is_none()
         {
             self.initial_history_replay_buffer = Some(InitialHistoryReplayBuffer {
-                retained_lines: VecDeque::new(),
+                retained_items: VecDeque::new(),
                 render_from_transcript_tail: true,
             });
         }
@@ -199,27 +189,34 @@ impl App {
 
     /// Flush retained initial resume replay rows into terminal scrollback.
     ///
-    /// The buffer stores display lines, not cells, because the cap is measured in terminal rows.
-    /// This mirrors terminal scrollback behavior and avoids making startup replay cheaper or more
-    /// expensive than a later resize rebuild of the same transcript.
+    /// The buffer stores display items, not cells, so local-image markers can be replayed through
+    /// the same terminal image path as normal history insertion.
     pub(super) fn finish_initial_history_replay_buffer(&mut self, tui: &mut tui::Tui) {
         let Some(buffer) = self.initial_history_replay_buffer.take() else {
             return;
         };
 
-        if buffer.retained_lines.is_empty() {
+        if buffer.retained_items.is_empty() {
             if buffer.render_from_transcript_tail {
                 let width = tui.terminal.last_known_screen_size.width;
-                let reflowed_lines = self.render_transcript_lines_for_reflow(width).lines;
-                if !reflowed_lines.is_empty() {
-                    tui.insert_history_lines(reflowed_lines);
+                let reflowed_items = self.render_transcript_lines_for_reflow(width).items;
+                let insert_items = self.prepare_history_insert_items(reflowed_items, width);
+                if !insert_items.is_empty() {
+                    tui.insert_history_items_with_wrap_policy(
+                        insert_items,
+                        self.history_line_wrap_policy(),
+                    );
                 }
             }
             return;
         }
 
-        let retained_lines = buffer.retained_lines.into_iter().collect::<Vec<_>>();
-        tui.insert_history_lines_with_wrap_policy(retained_lines, self.history_line_wrap_policy());
+        let retained_items = buffer.retained_items.into_iter().collect::<Vec<_>>();
+        let insert_items = self.prepare_history_insert_items(
+            retained_items,
+            tui.terminal.last_known_screen_size.width,
+        );
+        tui.insert_history_items_with_wrap_policy(insert_items, self.history_line_wrap_policy());
     }
 
     pub(super) fn insert_history_cell_lines_with_initial_replay_buffer(
@@ -236,7 +233,7 @@ impl App {
             return;
         }
 
-        let display = self.display_lines_for_history_insert(cell, width);
+        let display = self.display_items_for_history_cell(cell, width);
 
         if display.is_empty() {
             return;
@@ -245,12 +242,16 @@ impl App {
         let max_rows = self.resize_reflow_max_rows();
         if let Some(buffer) = &mut self.initial_history_replay_buffer {
             if let Some(max_rows) = max_rows {
-                Self::buffer_initial_history_replay_display_lines(buffer, display, max_rows);
+                Self::buffer_initial_history_replay_display_items(buffer, display, max_rows);
             } else if self.overlay.is_some() {
-                self.deferred_history_lines
-                    .extend(display.into_iter().map(HistoryInsertItem::Line));
+                let insert_items = self.prepare_history_insert_items(display, width);
+                self.deferred_history_lines.extend(insert_items);
             } else {
-                tui.insert_history_lines_with_wrap_policy(display, self.history_line_wrap_policy());
+                let insert_items = self.prepare_history_insert_items(display, width);
+                tui.insert_history_items_with_wrap_policy(
+                    insert_items,
+                    self.history_line_wrap_policy(),
+                );
             }
         }
     }
@@ -263,19 +264,19 @@ impl App {
         }
     }
 
-    /// Retain only the newest rendered rows for initial resume replay.
+    /// Retain only the newest rendered display items for initial resume replay.
     ///
-    /// The oldest rows are dropped first because terminal scrollback caps preserve the tail of the
-    /// transcript. Keeping this policy local to display lines is important: trimming source cells
+    /// The oldest items are dropped first because terminal scrollback caps preserve the tail of the
+    /// transcript. Keeping this policy local to display items is important: trimming source cells
     /// here would make copy, transcript overlay, and future replay paths disagree about history.
-    pub(super) fn buffer_initial_history_replay_display_lines(
+    pub(super) fn buffer_initial_history_replay_display_items(
         buffer: &mut InitialHistoryReplayBuffer,
-        display: Vec<Line<'static>>,
+        display: Vec<HistoryCellDisplayItem>,
         max_rows: usize,
     ) {
-        buffer.retained_lines.extend(display);
-        while buffer.retained_lines.len() > max_rows {
-            buffer.retained_lines.pop_front();
+        buffer.retained_items.extend(display);
+        while buffer.retained_items.len() > max_rows {
+            buffer.retained_items.pop_front();
         }
     }
 
@@ -489,16 +490,17 @@ impl App {
         }
 
         let reflow_result = self.render_transcript_lines_for_reflow(width);
-        let reflowed_lines = reflow_result.lines;
+        let reflowed_items = reflow_result.items;
 
         // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
         tui.clear_pending_history_lines();
         self.clear_terminal_for_resize_replay(tui)?;
 
         self.deferred_history_lines.clear();
-        if !reflowed_lines.is_empty() {
-            tui.insert_history_lines_with_wrap_policy(
-                reflowed_lines,
+        let insert_items = self.prepare_history_insert_items(reflowed_items, width);
+        if !insert_items.is_empty() {
+            tui.insert_history_items_with_wrap_policy(
+                insert_items,
                 self.history_line_wrap_policy(),
             );
         }
@@ -522,10 +524,10 @@ impl App {
         while start > 0 {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
-            let lines = cell.display_lines_for_mode(width, self.chat_widget.history_render_mode());
-            rendered_rows += lines.len();
+            let items = cell.display_items_for_mode(width, self.chat_widget.history_render_mode());
+            rendered_rows += items.len();
             cell_displays.push_front(ReflowCellDisplay {
-                lines,
+                items,
                 is_stream_continuation: cell.is_stream_continuation(),
             });
 
@@ -542,33 +544,33 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             cell_displays.push_front(ReflowCellDisplay {
-                lines: cell.display_lines_for_mode(width, self.chat_widget.history_render_mode()),
+                items: cell.display_items_for_mode(width, self.chat_widget.history_render_mode()),
                 is_stream_continuation: cell.is_stream_continuation(),
             });
         }
 
         let mut has_emitted_history_lines = false;
-        let mut reflowed_lines = Vec::new();
+        let mut reflowed_items = Vec::new();
         for display in cell_displays {
-            if !display.lines.is_empty() && !display.is_stream_continuation {
+            if !display.items.is_empty() && !display.is_stream_continuation {
                 if has_emitted_history_lines {
-                    reflowed_lines.push(Line::from(""));
+                    reflowed_items.push(HistoryCellDisplayItem::Line(Line::from("")));
                 } else {
                     has_emitted_history_lines = true;
                 }
             }
-            reflowed_lines.extend(display.lines);
+            reflowed_items.extend(display.items);
         }
         if let Some(max_rows) = row_cap
-            && reflowed_lines.len() > max_rows
+            && reflowed_items.len() > max_rows
         {
-            let trimmed_line_count = reflowed_lines.len() - max_rows;
-            reflowed_lines = reflowed_lines.split_off(trimmed_line_count);
+            let trimmed_item_count = reflowed_items.len() - max_rows;
+            reflowed_items = reflowed_items.split_off(trimmed_item_count);
         }
-        self.has_emitted_history_lines = !reflowed_lines.is_empty();
+        self.has_emitted_history_lines = !reflowed_items.is_empty();
 
         ReflowRenderResult {
-            lines: reflowed_lines,
+            items: reflowed_items,
         }
     }
 

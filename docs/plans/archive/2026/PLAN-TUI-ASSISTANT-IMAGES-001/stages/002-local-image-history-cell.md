@@ -139,12 +139,12 @@ Invalid structured event превращается в warning cell без bitmap 
 - [follow-up:FU-2026-001]: resize/reflow и replay на уровне items для bitmap-превью.
 - [follow-up:FU-2026-002]: закрыто stage 002; вызывающий production-код вынесен в [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003].
 
-[code:app-event]: ../../../../codex-rs/tui/src/app_event.rs
-[code:event-dispatch]: ../../../../codex-rs/tui/src/app/event_dispatch.rs
-[code:history-cell]: ../../../../codex-rs/tui/src/history_cell/mod.rs
-[code:history-cell-base]: ../../../../codex-rs/tui/src/history_cell/base.rs
-[code:pets-mod]: ../../../../codex-rs/tui/src/pets/mod.rs
-[code:resize-reflow]: ../../../../codex-rs/tui/src/app/resize_reflow.rs
+[code:app-event]: ../../../../../../codex-rs/tui/src/app_event.rs
+[code:event-dispatch]: ../../../../../../codex-rs/tui/src/app/event_dispatch.rs
+[code:history-cell]: ../../../../../../codex-rs/tui/src/history_cell/mod.rs
+[code:history-cell-base]: ../../../../../../codex-rs/tui/src/history_cell/base.rs
+[code:pets-mod]: ../../../../../../codex-rs/tui/src/pets/mod.rs
+[code:resize-reflow]: ../../../../../../codex-rs/tui/src/app/resize_reflow.rs
 [details:actions]: #план-действий
 [details:architecture]: #связанные-элементы-архитектуры
 [details:criteria]: #критерии-готовности
@@ -152,9 +152,9 @@ Invalid structured event превращается в warning cell без bitmap 
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ
 [details:verification]: #проверки
-[feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
-[follow-up:FU-2026-001]: ../../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
-[follow-up:FU-2026-002]: ../../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
+[feature:tui-history-image-previews]: ../../../../../architecture/features/tui-history-image-previews.md
+[follow-up:FU-2026-001]: ../../../../../follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md
+[follow-up:FU-2026-002]: ../../../../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [Q-001]: #q-001-размещение-localimagehistorycell
 [Q-002]: #q-002-название-warningfallback
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: 003-wire-assistant-image-source.md

@@ -41,6 +41,7 @@ use crate::external_editor;
 use crate::file_search::FileSearchManager;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
+use crate::history_cell::HistoryCellDisplayItem;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
 use crate::hooks_rpc::HookTrustUpdate;
@@ -474,7 +475,7 @@ struct SessionSummary {
 
 #[derive(Debug, Default)]
 struct InitialHistoryReplayBuffer {
-    retained_lines: VecDeque<Line<'static>>,
+    retained_items: VecDeque<HistoryCellDisplayItem>,
     render_from_transcript_tail: bool,
 }
 

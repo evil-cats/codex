@@ -83,6 +83,6 @@ Markdown image syntax или shell output не должен становитьс
 - Архитектура: [feature:tui-history-image-previews]
 
 [feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
-[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md
+[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md

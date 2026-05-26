@@ -60,4 +60,4 @@ flowchart TD
 
 [feature:tui-history-image-previews]: features/tui-history-image-previews.md
 [follow-ups:image-history]: ../follow-ups/README.md
-[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
+[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md

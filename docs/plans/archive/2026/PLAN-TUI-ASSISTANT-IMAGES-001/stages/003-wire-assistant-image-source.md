@@ -105,17 +105,17 @@ cwd или относительный/home-relative path для других л�
 - Runner-проверка: `cargo test -p codex-tui local_image` - passed, 14 tests.
 - Runner-проверка: `git diff --check` - passed.
 
-[code:app-event]: ../../../../codex-rs/tui/src/app_event.rs
-[code:event-dispatch]: ../../../../codex-rs/tui/src/app/event_dispatch.rs
-[code:local-image-cell]: ../../../../codex-rs/tui/src/history_cell/local_image.rs
-[code:tool-lifecycle]: ../../../../codex-rs/tui/src/chatwidget/tool_lifecycle.rs
+[code:app-event]: ../../../../../../codex-rs/tui/src/app_event.rs
+[code:event-dispatch]: ../../../../../../codex-rs/tui/src/app/event_dispatch.rs
+[code:local-image-cell]: ../../../../../../codex-rs/tui/src/history_cell/local_image.rs
+[code:tool-lifecycle]: ../../../../../../codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 [details:actions]: #план-действий
 [details:architecture]: #связанные-элементы-архитектуры
 [details:criteria]: #критерии-готовности
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ
 [details:verification]: #проверки
-[feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
+[feature:tui-history-image-previews]: ../../../../../architecture/features/tui-history-image-previews.md
 [Q-001]: #q-001-первый-вызывающий-код
 [Q-002]: #q-002-caption
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: 004-wire-image-generation-saved-path.md

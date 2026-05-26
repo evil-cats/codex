@@ -8,11 +8,11 @@
 
 | Поле | Значение |
 | --- | --- |
-| Назначение | Локальные пользовательские вложения рендерятся в истории TUI как терминальные превью изображений с текстовым fallback `[Image #n]`. |
-| Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path и `view_image` production caller. |
-| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image` caller, подготовка через `/pets`, PNG-нормализация для Kitty, точечные тесты. |
-| Открыто / отложено | `ImageGeneration.saved_path`, повторная эмиссия bitmap-превью при resize/reflow/replay и managed ownership после resume. |
-| Следующий шаг | Продолжить [plan:PLAN-TUI-ASSISTANT-IMAGES-001], особенно [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]. |
+| Назначение | Локальные пользовательские, ассистентские и tool-generated изображения рендерятся в истории TUI как терминальные превью с текстовым fallback. |
+| Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path, `view_image`, `ImageGeneration.saved_path` и item-level replay/reflow. |
+| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image`, `ImageGeneration.saved_path`, replay/reflow, подготовка через `/pets`, PNG-нормализация для Kitty, точечные тесты. |
+| Открыто / отложено | Managed ownership оригинальных изображений после resume не реализован; если source path недоступен, остается fallback. При экстремально узком окне preview может не поместиться. |
+| Следующий шаг | Нет; реализация завершена, план перенесен в архив. |
 
 ## Карта деталей
 
@@ -29,27 +29,34 @@
 
 ## Назначение
 
-Показывать локальные изображения из пользовательских вложений в истории TUI как
-терминальные превью, сохраняя текстовый fallback `[Image #n]` для `Raw` mode,
-копирования, неподдерживаемых терминалов, resize/reflow и replay-сценариев.
+Показывать локальные изображения из пользовательских вложений,
+ассистентских/tool-generated sources и replay/reflow paths в истории TUI как
+терминальные превью, сохраняя текстовый fallback `[Image #n]` / `[Image]` для
+`Raw` mode, копирования, неподдерживаемых терминалов и ошибок подготовки asset.
 
 Фича относится к локальной Hermione-ветке Codex и не является официальной
 пользовательской документацией upstream.
 
 ## Текущее устройство
 
-Локальный путь изображения остается частью `UserHistoryCell`, привязанной к
-исходному пути.
-В `Rich` mode ячейка для вставки в историю отдаёт обычные текстовые строки и
-дополнительный маркер `HistoryCellDisplayItem::LocalImage(path)`. Слой `App`
-превращает этот маркер в `HistoryInsertItem::Image`, используя тот же стек
-протокола terminal-image, что и `/pets`.
+Локальный путь изображения остается частью `UserHistoryCell` для
+пользовательских вложений или приходит через controlled app event для
+ассистентских/tool-generated изображений. В `Rich` mode ячейка для вставки в
+историю отдаёт обычные текстовые строки и дополнительный маркер
+`HistoryCellDisplayItem::LocalImage(path)`. Слой `App` превращает этот маркер в
+`HistoryInsertItem::Image`, используя тот же стек протокола terminal-image, что
+и `/pets`.
 
 Для Kitty и KittyLocalFile изображения сначала нормализуются в PNG-preview в
 `CODEX_HOME/cache/tui-history-images`, потому что Kitty payload объявляется как
 `f=100`. Для Sixel создается sixel cache asset. Если протокол terminal image
 недоступен или подготовка asset падает, история остается читаемой через
 текстовый fallback.
+
+Resize reflow, initial replay, thread-switch tail replay и overlay-deferred
+history paths сохраняют `HistoryCellDisplayItem::LocalImage` до границы
+`prepare_history_insert_items`, поэтому повторная запись scrollback может снова
+подготовить terminal image payload, если source path еще доступен.
 
 ## Карта кода
 
@@ -73,9 +80,15 @@
 - [`codex-rs/tui/src/chatwidget/tool_lifecycle.rs`][code:tool-lifecycle]
   - `ChatWidget::on_view_image_tool_call`: первый production caller, который
     отправляет `AppEvent::InsertLocalImage` вместо legacy text-only cell.
+  - `ChatWidget::on_image_generation_end`: отправляет `ImageGeneration.saved_path`
+    через `AppEvent::InsertLocalImage`; если path отсутствует, сохраняет
+    text-only history cell.
 - [`codex-rs/tui/src/app/resize_reflow.rs`][code:resize-reflow]
   - `App::prepare_history_insert_items`: в best-effort-режиме превращает
     маркер `LocalImage` в `HistoryInsertItem::Image`.
+  - Resize reflow и initial/thread-switch replay работают на уровне
+    `HistoryCellDisplayItem`, а не только `Line`, чтобы не терять bitmap marker
+    до финальной подготовки terminal image.
 - [`codex-rs/tui/src/pets/mod.rs`][code:pets-mod]
   - `prepare_history_image`: готовит payload для Kitty, KittyLocalFile или
     Sixel и размер preview.
@@ -91,15 +104,16 @@
 ## Поток
 
 ```text
-Пользовательское локальное вложение с изображением
+Пользовательское локальное вложение / controlled local image source
   |
-  v
-UserHistoryCell.local_image_paths
+  +-- UserHistoryCell.local_image_paths
+  |
+  +-- AppEvent::InsertLocalImage
   |
   v
 Rich mode display_items_for_mode(width)
   |
-  +-- Line("[Image #n]") fallback
+  +-- Line("[Image #n]" / "[Image: caption]") fallback
   |
   +-- HistoryCellDisplayItem::LocalImage(path)
           |
@@ -125,7 +139,10 @@ Rich mode display_items_for_mode(width)
 ```mermaid
 flowchart TD
     Attachment["Пользовательское локальное вложение с изображением"]
+    Generated["ImageGeneration.saved_path"]
+    ViewImage["view_image path"]
     UserCell["UserHistoryCell.local_image_paths"]
+    AppEvent["AppEvent::InsertLocalImage"]
     Display["display_items_for_mode(width, Rich)"]
     Fallback["Line: [Image #n]"]
     Marker["HistoryCellDisplayItem::LocalImage(path)"]
@@ -137,7 +154,10 @@ flowchart TD
     Scrollback["История терминала"]
 
     Attachment --> UserCell
+    Generated --> AppEvent
+    ViewImage --> AppEvent
     UserCell --> Display
+    AppEvent --> Display
     Display --> Fallback
     Display --> Marker
     Marker --> Prepare
@@ -159,16 +179,28 @@ flowchart TD
   file и успешно декодироваться через `image` crate до создания marker.
 - `ThreadItem::ImageView` / `view_image` является первым production source для
   `InsertLocalImage`; caption строится из `display_path_for(path, cwd)`.
+- `ImageGeneration.saved_path` является controlled source для
+  `InsertLocalImage`: core сохраняет artifact под
+  `CODEX_HOME/generated_images/<session>/<call>.png`; caption строится из
+  непустого `revised_prompt`, иначе из `call_id`.
+- Если `ImageGeneration.saved_path` отсутствует, TUI оставляет text-only
+  `Generated Image` history cell без bitmap marker.
 - `HistoryRenderMode::Raw` остается line-only. История для Raw/copy не
   содержит terminal image payload.
 - `App::prepare_history_insert_items` является best-effort boundary: при
   неподдерживаемом терминале или ошибке подготовки asset маркер пропускается, а
   строка fallback остается в истории.
+- Resize/reflow/replay paths должны сохранять `HistoryCellDisplayItem::LocalImage`
+  до `prepare_history_insert_items`; преждевременная конвертация в `Line`
+  запрещена для `Rich` history.
 - `pets::prepare_history_image` возвращает `TerminalHistoryImage` с координатой
   `x = 2`, размером в строках/колонках и payload типа `Text` или `Bytes`.
 - `insert_history_items_with_wrap_policy` резервирует rows для
   `HistoryInsertItem::Image` так же, как считает wrapped rows для текстовых
   строк.
+- Managed ownership оригинального файла не является контрактом этой фичи:
+  cache хранит derived preview assets, а source path должен оставаться
+  доступным для повторной подготовки bitmap payload.
 
 ## Инварианты
 
@@ -186,11 +218,16 @@ flowchart TD
 - Поддерживаемые пути протоколов: Kitty inline data, Kitty local file graphics и
   Sixel.
 - Корень cache: `CODEX_HOME/cache/tui-history-images`.
+- Generated image artifacts, которые могут стать source для TUI preview, лежат
+  под `CODEX_HOME/generated_images/<session>/<call>.png`.
 - Целевая высота preview: `HISTORY_IMAGE_TARGET_ROWS = 12`; ширина
   ограничивается текущей шириной терминала через `max_columns = width - 4`.
-- Обычная вставка в историю может вставить bitmap preview. Resize reflow,
-  initial replay и overlay-deferred paths сейчас остаются line-oriented и
-  сохраняют только fallback-метки.
+- Обычная вставка в историю, resize reflow, initial replay, thread-switch tail
+  replay и overlay-deferred paths могут вставить bitmap preview.
+- Пользовательский smoke в Kitty подтвердил, что прямой Kitty graphics command
+  показывает PNG, TUI показывает картинку через `view_image`, а preview
+  переживает resize. При очень жестком shrink, когда окно меньше картинки,
+  preview может не поместиться.
 - Владение исходным изображением остается у исходного пути вложения; cache
   содержит derived preview assets, а не managed копию оригинала.
 
@@ -231,6 +268,31 @@ flowchart TD
   Проверяет: `ThreadItem::ImageView` отправляет `InsertLocalImage` и не создает
   legacy text-only history cell.
 
+- Production caller `ImageGeneration.saved_path`:
+  `env RUST_MIN_STACK=8388608 cargo test -p codex-tui image_generation_call`
+
+  Проверяет: `ImageGeneration.saved_path` отправляет `InsertLocalImage` без
+  duplicate legacy text-only cell, а no-path fallback сохраняет text-only
+  history cell.
+
+- Replay/reflow для local images:
+  `env RUST_MIN_STACK=8388608 cargo test -p codex-tui resize_reflow`
+
+  Проверяет: resize reflow сохраняет `LocalImage` display item, а capped/uncapped
+  reflow продолжает отдавать ожидаемый tail.
+
+- Подсчет строк mixed history items:
+  `env RUST_MIN_STACK=8388608 cargo test -p codex-tui insert_history_items_with_wrap_policy_counts_image_rows`
+
+  Проверяет: `insert_history_items_with_wrap_policy` учитывает image rows вместе
+  с текстовыми строками.
+
+- Manual Kitty visual smoke:
+  direct Kitty graphics command + TUI `view_image` path.
+
+  Проверяет: Kitty protocol показывает PNG, TUI показывает картинку в истории,
+  preview переживает resize кроме экстремально узкого окна меньше preview.
+
 - Полный TUI crate:
   `cargo test -p codex-tui`
 
@@ -243,7 +305,8 @@ flowchart TD
 - Этап 002: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]
 - Этап 003: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]
 - Этап 004: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]
-- Отложенная работа по resize/reflow: [follow-up:FU-2026-001]
+- Этап 005: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:005]
+- Закрытая работа по resize/reflow: [follow-up:FU-2026-001]
 - Закрытая работа по контролируемому пути источника: [follow-up:FU-2026-002]
 - Отложенные работы: [follow-ups:image-history]
 - Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
@@ -268,10 +331,11 @@ flowchart TD
 [details:links]: #связи
 [details:runtime-notes]: #runtime-заметки
 [details:verification]: #проверки
-[follow-up:FU-2026-001]: ../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
+[follow-up:FU-2026-001]: ../../follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md
 [follow-up:FU-2026-002]: ../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [follow-ups:image-history]: ../../follow-ups/README.md
-[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/004-wire-image-generation-saved-path.md
+[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/004-wire-image-generation-saved-path.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:005]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/005-replay-resize-and-terminal-verification.md
