@@ -52,26 +52,26 @@ mode, copy, unsupported terminals, resize/reflow и replay paths.
 
 ## Карта кода
 
-- `codex-rs/tui/src/history_cell/mod.rs`
+- [`codex-rs/tui/src/history_cell/mod.rs`][code:history-cell]
   - `HistoryCellDisplayItem::LocalImage`: marker для terminal-backed bitmap
     preview вне ratatui `Line`.
   - `HistoryCell::display_items_for_mode`: rich mode может вернуть строки и
     image markers.
-- `codex-rs/tui/src/history_cell/messages.rs`
+- [`codex-rs/tui/src/history_cell/messages.rs`][code:history-cell-messages]
   - `UserHistoryCell.local_image_paths`: source локальных attachment paths и
     fallback labels `[Image #n]`.
-- `codex-rs/tui/src/app/resize_reflow.rs`
+- [`codex-rs/tui/src/app/resize_reflow.rs`][code:resize-reflow]
   - `App::prepare_history_insert_items`: превращает `LocalImage` marker в
     `HistoryInsertItem::Image` best-effort.
-- `codex-rs/tui/src/pets/mod.rs`
+- [`codex-rs/tui/src/pets/mod.rs`][code:pets-mod]
   - `prepare_history_image`: готовит Kitty, KittyLocalFile или Sixel payload и
     размер preview.
-- `codex-rs/tui/src/pets/image_protocol.rs`
+- [`codex-rs/tui/src/pets/image_protocol.rs`][code:image-protocol]
   - `png_frame`, `sixel_frame`: создают cache assets для terminal protocols.
-- `codex-rs/tui/src/insert_history.rs`
+- [`codex-rs/tui/src/insert_history.rs`][code:insert-history]
   - `HistoryInsertItem::Image`: резервирует строки scrollback и пишет image
     payload напрямую в terminal writer.
-- `codex-rs/tui/src/tui.rs`
+- [`codex-rs/tui/src/tui.rs`][code:tui]
   - `insert_history_items_with_wrap_policy`: TUI boundary для вставки mixed
     line/image history items.
 
@@ -215,6 +215,13 @@ flowchart TD
 - Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`
 
+[code:history-cell]: ../../../codex-rs/tui/src/history_cell/mod.rs
+[code:history-cell-messages]: ../../../codex-rs/tui/src/history_cell/messages.rs
+[code:image-protocol]: ../../../codex-rs/tui/src/pets/image_protocol.rs
+[code:insert-history]: ../../../codex-rs/tui/src/insert_history.rs
+[code:pets-mod]: ../../../codex-rs/tui/src/pets/mod.rs
+[code:resize-reflow]: ../../../codex-rs/tui/src/app/resize_reflow.rs
+[code:tui]: ../../../codex-rs/tui/src/tui.rs
 [details:code-map]: #карта-кода
 [details:contracts]: #контракты
 [details:current-shape]: #текущее-устройство
