@@ -845,16 +845,24 @@ async fn unified_exec_non_empty_then_empty_snapshots() {
 }
 
 #[tokio::test]
-async fn view_image_tool_call_adds_history_cell() {
+async fn view_image_tool_call_emits_local_image_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let image_path = chat.config.cwd.join("example.png");
 
-    handle_view_image_tool_call(&mut chat, "call-image", image_path);
+    handle_view_image_tool_call(&mut chat, "call-image", image_path.clone());
 
-    let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "expected a single history cell");
-    let combined = lines_to_single_string(&cells[0]);
-    assert_chatwidget_snapshot!("local_image_attachment_history_snapshot", combined);
+    let (cells, local_images) = drain_history_events(&mut rx);
+    assert!(
+        cells.is_empty(),
+        "view_image should not emit legacy text cell"
+    );
+    assert_eq!(
+        local_images,
+        vec![(
+            image_path.as_path().to_path_buf(),
+            Some("example.png".to_string())
+        )]
+    );
 }
 
 #[tokio::test]

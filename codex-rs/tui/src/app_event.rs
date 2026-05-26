@@ -571,6 +571,15 @@ pub(crate) enum AppEvent {
 
     InsertHistoryCell(Box<dyn HistoryCell>),
 
+    /// Insert a controlled local image preview into history after app-layer validation.
+    ///
+    /// This is the trusted boundary for assistant/tool generated local images. Markdown text,
+    /// shell output, or arbitrary model text must not create local image previews directly.
+    InsertLocalImage {
+        path: PathBuf,
+        caption: Option<String>,
+    },
+
     /// Finish buffering initial resume replay after all replay events have been queued.
     EndInitialHistoryReplayBuffer,
 

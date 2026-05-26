@@ -1,6 +1,6 @@
 ---
 id: FU-2026-002
-status: accepted
+status: done
 priority: high
 kind: feature
 tags: [tui, images, assistant-output, tool-output]
@@ -21,12 +21,12 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
+| Статус | `done` |
 | Суть | Добавить контролируемый путь с исходным файлом для локальных изображений ассистента/инструментов без Markdown auto-rendering. |
 | Почему важно | Без структурированной границы легко смешать текст модели, shell output, чтение локальных файлов и доверенные UI-события. |
-| Когда вернуться | При старте stage 002 или другого плана, который добавляет превью изображений ассистента/инструментов. |
-| Когда закрыть | Если вывод ассистента/инструментов остается text-only или image output переедет в отдельный UI surface. |
-| Следующий шаг | Реализовать `AppEvent::InsertLocalImage { path, caption }`, validation и regression tests против Markdown/plain text. |
+| Когда вернулись | Stage 002: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
+| Итог | Реализованы `LocalImageHistoryCell`, `AppEvent::InsertLocalImage { path, caption }`, validation и regression tests против Markdown/plain text. |
+| Следующий шаг | Подключить вызывающий production-код в [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]. |
 | Связи | [plan:PLAN-TUI-ASSISTANT-IMAGES-001], [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002], [feature:tui-history-image-previews] |
 
 ## Наблюдение
@@ -45,14 +45,25 @@ Markdown image syntax или shell output не должен становитьс
 
 ## Что нужно сделать
 
-- Зафиксировать исходный путь MVP, например `AppEvent::InsertLocalImage { path,
+- [x] Зафиксировать исходный путь MVP, например `AppEvent::InsertLocalImage { path,
   caption }` плюс validation в app layer.
-- Добавить отдельную cell или эквивалентное представление с исходным файлом для
+- [x] Добавить отдельную cell или эквивалентное представление с исходным файлом для
   вывода изображений ассистента/инструментов.
-- Проверять, что `path` существует, является regular file и декодируется до
+- [x] Проверять, что `path` существует, является regular file и декодируется до
   создания bitmap-маркера.
-- Добавить regression tests, подтверждающие, что Markdown/plain text не
+- [x] Добавить regression tests, подтверждающие, что Markdown/plain text не
   выполняют auto-render локальных изображений.
+
+## Итог
+
+Закрыто в stage 002:
+
+- `LocalImageHistoryCell` хранит исходный path и caption fallback.
+- `AppEvent::InsertLocalImage { path, caption }` добавлен как trusted boundary.
+- `history_cell_for_local_image_event` валидирует regular file и decode через
+  `image` crate перед созданием cell.
+- Invalid event создает warning cell без `LocalImage` marker.
+- Markdown image syntax не создает `HistoryCellDisplayItem::LocalImage`.
 
 ## Когда вернуться
 
@@ -68,8 +79,10 @@ Markdown image syntax или shell output не должен становитьс
 
 - План: [plan:PLAN-TUI-ASSISTANT-IMAGES-001]
 - Этап: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]
+- Следующий этап: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]
 - Архитектура: [feature:tui-history-image-previews]
 
-[feature:tui-history-image-previews]: ../architecture/features/tui-history-image-previews.md
-[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
-[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
+[feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
+[plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md

@@ -60,17 +60,6 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_view_image_tool_call(path: AbsolutePathBuf, cwd: &Path) -> PlainHistoryCell {
-    let display_path = display_path_for(path.as_path(), cwd);
-
-    let lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Viewed Image".bold()].into(),
-        vec!["  └ ".dim(), display_path.dim()].into(),
-    ];
-
-    PlainHistoryCell { lines }
-}
-
 pub(crate) fn new_image_generation_call(
     call_id: String,
     revised_prompt: Option<String>,

@@ -9,6 +9,62 @@ use super::*;
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
 impl App {
+    fn insert_history_cell_from_event(&mut self, tui: &mut tui::Tui, cell: Box<dyn HistoryCell>) {
+        let cell: Arc<dyn HistoryCell> = cell.into();
+        if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+            t.insert_cell(cell.clone());
+            tui.frame_requester().schedule_frame();
+        }
+        self.transcript_cells.push(cell.clone());
+        if self.initial_history_replay_buffer.as_ref().is_some() {
+            self.insert_history_cell_lines_with_initial_replay_buffer(
+                tui,
+                cell.as_ref(),
+                self.chat_widget
+                    .history_wrap_width(tui.terminal.last_known_screen_size.width),
+            );
+        } else {
+            self.insert_history_cell_lines(
+                tui,
+                cell.as_ref(),
+                self.chat_widget
+                    .history_wrap_width(tui.terminal.last_known_screen_size.width),
+            );
+        }
+    }
+
+    pub(super) fn validate_local_image_path_for_history(
+        path: &Path,
+    ) -> std::result::Result<(), String> {
+        let metadata = std::fs::metadata(path)
+            .map_err(|err| format!("image path is not accessible: {err}"))?;
+        if !metadata.is_file() {
+            return Err("image path is not a regular file".to_string());
+        }
+
+        image::ImageReader::open(path)
+            .map_err(|err| format!("image path could not be opened: {err}"))?
+            .with_guessed_format()
+            .map_err(|err| format!("image format could not be detected: {err}"))?
+            .decode()
+            .map_err(|err| format!("image could not be decoded: {err}"))?;
+
+        Ok(())
+    }
+
+    pub(super) fn history_cell_for_local_image_event(
+        path: PathBuf,
+        caption: Option<String>,
+    ) -> Box<dyn HistoryCell> {
+        match Self::validate_local_image_path_for_history(&path) {
+            Ok(()) => Box::new(history_cell::new_local_image(path, caption)),
+            Err(err) => Box::new(history_cell::new_warning_event(format!(
+                "Image preview unavailable for {}: {err}",
+                path.display()
+            ))),
+        }
+    }
+
     pub(super) async fn handle_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -192,27 +248,11 @@ impl App {
                 self.begin_thread_switch_history_replay_buffer();
             }
             AppEvent::InsertHistoryCell(cell) => {
-                let cell: Arc<dyn HistoryCell> = cell.into();
-                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.insert_cell(cell.clone());
-                    tui.frame_requester().schedule_frame();
-                }
-                self.transcript_cells.push(cell.clone());
-                if self.initial_history_replay_buffer.as_ref().is_some() {
-                    self.insert_history_cell_lines_with_initial_replay_buffer(
-                        tui,
-                        cell.as_ref(),
-                        self.chat_widget
-                            .history_wrap_width(tui.terminal.last_known_screen_size.width),
-                    );
-                } else {
-                    self.insert_history_cell_lines(
-                        tui,
-                        cell.as_ref(),
-                        self.chat_widget
-                            .history_wrap_width(tui.terminal.last_known_screen_size.width),
-                    );
-                }
+                self.insert_history_cell_from_event(tui, cell);
+            }
+            AppEvent::InsertLocalImage { path, caption } => {
+                let cell = Self::history_cell_for_local_image_event(path, caption);
+                self.insert_history_cell_from_event(tui, cell);
             }
             AppEvent::EndInitialHistoryReplayBuffer => {
                 self.finish_initial_history_replay_buffer(tui);

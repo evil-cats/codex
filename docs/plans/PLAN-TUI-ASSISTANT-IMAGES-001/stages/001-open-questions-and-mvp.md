@@ -263,5 +263,5 @@ fallback-only behavior.
 [details:questions]: #открытые-вопросы
 [details:scope]: #объем-работ
 [follow-up:FU-2026-001]: ../../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
-[follow-up:FU-2026-002]: ../../../follow-ups/FU-2026-002-tui-assistant-tool-image-source.md
+[follow-up:FU-2026-002]: ../../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: 002-local-image-history-cell.md

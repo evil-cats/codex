@@ -316,20 +316,34 @@ pub(crate) async fn make_chatwidget_manual_with_sender() -> (
     (widget, app_event_tx, rx, op_rx)
 }
 
+type DrainedHistoryLines = Vec<ratatui::text::Line<'static>>;
+type DrainedHistoryEvents = (Vec<DrainedHistoryLines>, Vec<(PathBuf, Option<String>)>);
+
 pub(super) fn drain_insert_history(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
-) -> Vec<Vec<ratatui::text::Line<'static>>> {
+) -> Vec<DrainedHistoryLines> {
+    drain_history_events(rx).0
+}
+
+pub(super) fn drain_history_events(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> DrainedHistoryEvents {
     let mut out = Vec::new();
+    let mut local_images = Vec::new();
     while let Ok(ev) = rx.try_recv() {
-        if let AppEvent::InsertHistoryCell(cell) = ev {
-            let mut lines = cell.display_lines(/*width*/ 80);
-            if !cell.is_stream_continuation() && !out.is_empty() && !lines.is_empty() {
-                lines.insert(0, "".into());
+        match ev {
+            AppEvent::InsertHistoryCell(cell) => {
+                let mut lines = cell.display_lines(/*width*/ 80);
+                if !cell.is_stream_continuation() && !out.is_empty() && !lines.is_empty() {
+                    lines.insert(0, "".into());
+                }
+                out.push(lines)
             }
-            out.push(lines)
+            AppEvent::InsertLocalImage { path, caption } => local_images.push((path, caption)),
+            _ => {}
         }
     }
-    out
+    (out, local_images)
 }
 
 pub(super) fn lines_to_single_string(lines: &[ratatui::text::Line<'static>]) -> String {

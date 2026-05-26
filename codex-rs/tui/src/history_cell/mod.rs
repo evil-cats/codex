@@ -12,7 +12,6 @@
 
 use crate::diff_model::FileChange;
 use crate::diff_render::create_diff_summary;
-use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
 use crate::exec_cell::TOOL_CALL_MAX_LINES;
@@ -106,6 +105,7 @@ mod approvals;
 mod base;
 mod exec;
 mod hook_cell;
+mod local_image;
 mod mcp;
 mod messages;
 mod notices;
@@ -122,6 +122,7 @@ pub(crate) use exec::*;
 pub(crate) use hook_cell::HookCell;
 pub(crate) use hook_cell::new_active_hook_cell;
 pub(crate) use hook_cell::new_completed_hook_cell;
+pub(crate) use local_image::*;
 pub(crate) use mcp::*;
 pub(crate) use messages::*;
 pub(crate) use notices::*;

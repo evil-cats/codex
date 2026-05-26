@@ -9,10 +9,10 @@
 | Поле | Значение |
 | --- | --- |
 | Назначение | Локальные пользовательские вложения рендерятся в истории TUI как терминальные превью изображений с текстовым fallback `[Image #n]`. |
-| Текущее состояние | Реализовано для пользовательских вложений и обычной вставки в историю. |
-| Готово / реализовано | Элемент отображения `LocalImage`, подготовка изображений через `/pets`, вставка в историю терминала, PNG-нормализация для Kitty, точечные тесты. |
-| Открыто / отложено | Источник изображений ассистента/инструментов, повторная эмиссия bitmap-превью при resize/reflow/replay и управляемое владение артефактами изображений, стабильное после resume. |
-| Следующий шаг | Продолжить [plan:PLAN-TUI-ASSISTANT-IMAGES-001], особенно [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
+| Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path и `view_image` production caller. |
+| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image` caller, подготовка через `/pets`, PNG-нормализация для Kitty, точечные тесты. |
+| Открыто / отложено | `ImageGeneration.saved_path`, повторная эмиссия bitmap-превью при resize/reflow/replay и managed ownership после resume. |
+| Следующий шаг | Продолжить [plan:PLAN-TUI-ASSISTANT-IMAGES-001], особенно [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]. |
 
 ## Карта деталей
 
@@ -61,6 +61,18 @@
 - [`codex-rs/tui/src/history_cell/messages.rs`][code:history-cell-messages]
   - `UserHistoryCell.local_image_paths`: источник локальных путей вложений и
     fallback-меток `[Image #n]`.
+- [`codex-rs/tui/src/history_cell/local_image.rs`][code:local-image-cell]
+  - `LocalImageHistoryCell`: controlled cell для ассистента/инструментов с fallback
+    `[Image]` / `[Image: <caption>]` и marker `LocalImage(path)` в `Rich`.
+- [`codex-rs/tui/src/app_event.rs`][code:app-event]
+  - `AppEvent::InsertLocalImage { path, caption }`: trusted app-layer event для
+    локальных preview с исходным файлом.
+- [`codex-rs/tui/src/app/event_dispatch.rs`][code:event-dispatch]
+  - validation для `InsertLocalImage`: `regular file` и decode через `image`
+    crate перед созданием bitmap marker.
+- [`codex-rs/tui/src/chatwidget/tool_lifecycle.rs`][code:tool-lifecycle]
+  - `ChatWidget::on_view_image_tool_call`: первый production caller, который
+    отправляет `AppEvent::InsertLocalImage` вместо legacy text-only cell.
 - [`codex-rs/tui/src/app/resize_reflow.rs`][code:resize-reflow]
   - `App::prepare_history_insert_items`: в best-effort-режиме превращает
     маркер `LocalImage` в `HistoryInsertItem::Image`.
@@ -142,6 +154,11 @@ flowchart TD
 - `HistoryCell::display_items_for_mode(width, HistoryRenderMode::Rich)` может
   вернуть `HistoryCellDisplayItem::LocalImage(path)` только рядом с текстовой
   строкой fallback.
+- `AppEvent::InsertLocalImage { path, caption }` является controlled boundary
+  для ассистентских/инструментальных local images: path должен быть regular
+  file и успешно декодироваться через `image` crate до создания marker.
+- `ThreadItem::ImageView` / `view_image` является первым production source для
+  `InsertLocalImage`; caption строится из `display_path_for(path, cwd)`.
 - `HistoryRenderMode::Raw` остается line-only. История для Raw/copy не
   содержит terminal image payload.
 - `App::prepare_history_insert_items` является best-effort boundary: при
@@ -201,6 +218,19 @@ flowchart TD
 
   Проверяет: preview не выходит за доступную ширину history.
 
+- Controlled cell для ассистента/инструментов:
+  `cargo test -p codex-tui local_image`
+
+  Проверяет: `LocalImageHistoryCell` отдает marker только в `Rich`, validation
+  принимает декодируемый regular file, invalid image event не создает bitmap
+  marker, Markdown image syntax не создает `LocalImage`.
+
+- Production caller `view_image`:
+  `cargo test -p codex-tui view_image_tool_call_emits_local_image_event`
+
+  Проверяет: `ThreadItem::ImageView` отправляет `InsertLocalImage` и не создает
+  legacy text-only history cell.
+
 - Полный TUI crate:
   `cargo test -p codex-tui`
 
@@ -211,18 +241,24 @@ flowchart TD
 
 - План: [plan:PLAN-TUI-ASSISTANT-IMAGES-001]
 - Этап 002: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]
+- Этап 003: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]
+- Этап 004: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]
 - Отложенная работа по resize/reflow: [follow-up:FU-2026-001]
-- Отложенная работа по источнику изображений ассистента/инструментов: [follow-up:FU-2026-002]
+- Закрытая работа по контролируемому пути источника: [follow-up:FU-2026-002]
 - Отложенные работы: [follow-ups:image-history]
 - Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`
 
+[code:app-event]: ../../../codex-rs/tui/src/app_event.rs
+[code:event-dispatch]: ../../../codex-rs/tui/src/app/event_dispatch.rs
 [code:history-cell]: ../../../codex-rs/tui/src/history_cell/mod.rs
 [code:history-cell-messages]: ../../../codex-rs/tui/src/history_cell/messages.rs
 [code:image-protocol]: ../../../codex-rs/tui/src/pets/image_protocol.rs
 [code:insert-history]: ../../../codex-rs/tui/src/insert_history.rs
+[code:local-image-cell]: ../../../codex-rs/tui/src/history_cell/local_image.rs
 [code:pets-mod]: ../../../codex-rs/tui/src/pets/mod.rs
 [code:resize-reflow]: ../../../codex-rs/tui/src/app/resize_reflow.rs
+[code:tool-lifecycle]: ../../../codex-rs/tui/src/chatwidget/tool_lifecycle.rs
 [code:tui]: ../../../codex-rs/tui/src/tui.rs
 [details:code-map]: #карта-кода
 [details:contracts]: #контракты
@@ -233,7 +269,9 @@ flowchart TD
 [details:runtime-notes]: #runtime-заметки
 [details:verification]: #проверки
 [follow-up:FU-2026-001]: ../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
-[follow-up:FU-2026-002]: ../../follow-ups/FU-2026-002-tui-assistant-tool-image-source.md
+[follow-up:FU-2026-002]: ../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [follow-ups:image-history]: ../../follow-ups/README.md
 [plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/003-wire-assistant-image-source.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: ../../plans/PLAN-TUI-ASSISTANT-IMAGES-001/stages/004-wire-image-generation-saved-path.md

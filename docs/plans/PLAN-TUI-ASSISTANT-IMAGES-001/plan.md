@@ -9,9 +9,9 @@
 | Поле | Значение |
 | --- | --- |
 | Цель | Изображения из ответов ассистента/инструментов должны попадать в историю TUI как терминальные превью через контролируемый путь с исходным файлом. |
-| Уже сделано / решено | Превью пользовательских вложений уже идут через `HistoryCellDisplayItem::LocalImage`, `HistoryInsertItem::Image` и подготовку terminal image в стиле `/pets`. |
-| Открыто / отложено / не сделано | Нет `LocalImageHistoryCell`, нет структурированного источника изображений ассистента/инструментов, повторная эмиссия bitmap-превью при resize/reflow/replay отложена. |
-| Следующий шаг | Реализовать [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]. |
+| Уже сделано / решено | Пользовательские вложения и `view_image` tool path идут через controlled local image preview; stage 002 добавил cell/event/validation, stage 003 подключил первый production caller. |
+| Открыто / отложено / не сделано | `ImageGeneration.saved_path`, повторная эмиссия bitmap-превью при resize/reflow/replay и managed ownership после resume отложены. |
+| Следующий шаг | Разобрать [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: подключать ли `ImageGeneration.saved_path` к preview path. |
 | Детали | [details:architecture], [details:state], [details:stages], [details:follow-ups] |
 
 ## Цель
@@ -47,34 +47,38 @@ previews, а не только как текстовые ссылки или п�
   пути Kitty нормализуют входные изображения в PNG-preview cache.
 - Реализованные commits: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`.
-- Сейчас preview доступен для пользовательских локальных image attachments, но
-  нет отдельной ассистентской cell с исходным путем и нет согласованного
-  источника image item со стороны ответа ассистента или вывода tool.
+- Сейчас preview доступен для пользовательских локальных image attachments.
+- Для ассистентских/инструментальных изображений есть `LocalImageHistoryCell`,
+  `AppEvent::InsertLocalImage { path, caption }`, validation в app layer и
+  fallback при invalid image event.
+- `ThreadItem::ImageView` / `view_image` отправляет `InsertLocalImage` и больше
+  не создает legacy text-only history cell.
+- `ImageGeneration.saved_path` еще не подключен к bitmap preview.
 
 ## Этапы
 
 | Этап | Статус | Документ | Результат |
 | --- | --- | --- | --- |
 | 001 | `completed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001] | Границы MVP |
-| 002 | `proposed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | Источник изображений ассистента/инструментов |
-| 003 | `proposed` | TBD | Подключить контролируемый источник ассистентских image items |
-| 004 | `proposed` | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
+| 002 | `completed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002] | `LocalImageHistoryCell` и `InsertLocalImage` |
+| 003 | `completed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:003] | `view_image` production caller |
+| 004 | `proposed` | [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004] | Решить и при необходимости подключить `ImageGeneration.saved_path` |
+| 005 | `proposed` | TBD | Улучшить replay/resize и ручную проверку в реальных терминалах |
 
 ## Следующий шаг
 
-Следующий шаг: реализовать этап 002:
+Следующий шаг:
 
-- `LocalImageHistoryCell`;
-- структурированное событие `AppEvent::InsertLocalImage { path, caption }`;
-- handler валидации;
-- точечные тесты.
+- разобрать [stage:PLAN-TUI-ASSISTANT-IMAGES-001:004] по `ImageGeneration.saved_path`;
+- затем вернуться к stage 005: replay/resize и ручная проверка в реальных
+  терминалах.
 
 ## Отложенные работы
 
 | ID | Статус | Когда вернуться |
 | --- | --- | --- |
 | [follow-up:FU-2026-001] | `accepted` | Перед расширением истории изображений за пределы обычной вставки |
-| [follow-up:FU-2026-002] | `accepted` | При старте превью изображений ассистента/инструментов с исходным файлом |
+| [follow-up:FU-2026-002] | `done` | Реализовано в stage 002; следующий вызывающий код идет через stage 003 |
 
 [code:app-event]: ../../../codex-rs/tui/src/app_event.rs
 [code:history-cell]: ../../../codex-rs/tui/src/history_cell/mod.rs
@@ -89,6 +93,8 @@ previews, а не только как текстовые ссылки или п�
 [details:state]: #текущее-состояние
 [feature:tui-history-image-previews]: ../../architecture/features/tui-history-image-previews.md
 [follow-up:FU-2026-001]: ../../follow-ups/FU-2026-001-tui-history-image-reflow-reemit.md
-[follow-up:FU-2026-002]: ../../follow-ups/FU-2026-002-tui-assistant-tool-image-source.md
+[follow-up:FU-2026-002]: ../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:001]: stages/001-open-questions-and-mvp.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: stages/002-local-image-history-cell.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:003]: stages/003-wire-assistant-image-source.md
+[stage:PLAN-TUI-ASSISTANT-IMAGES-001:004]: stages/004-wire-image-generation-saved-path.md

@@ -18,12 +18,15 @@ use crate::file_search::FileSearchManager;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
+use crate::history_cell::HistoryCellDisplayItem;
+use crate::history_cell::HistoryRenderMode;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_session_info;
 use crate::insert_history::HistoryInsertItem;
 use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
+use base64::Engine;
 
 use crate::app_command::AppCommand as Op;
 use crate::diff_model::FileChange;
@@ -109,6 +112,8 @@ macro_rules! assert_app_snapshot {
         });
     };
 }
+
+const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 fn test_absolute_path(path: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(PathBuf::from(path)).expect("absolute test path")
@@ -3888,8 +3893,54 @@ fn enable_terminal_resize_reflow(app: &mut App) {
         .expect("feature should be configurable");
 }
 
+fn write_test_png(dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(SMALL_PNG_BASE64)
+        .expect("test PNG should decode");
+    std::fs::write(&path, bytes).expect("test PNG should be written");
+    path
+}
+
 fn plain_line_cell(text: impl Into<String>) -> Arc<dyn HistoryCell> {
     Arc::new(PlainHistoryCell::new(vec![Line::from(text.into())])) as Arc<dyn HistoryCell>
+}
+
+#[test]
+fn local_image_event_cell_accepts_decodable_regular_file() {
+    let dir = tempdir().expect("tempdir");
+    let image_path = write_test_png(dir.path(), "assistant-image.png");
+
+    let cell =
+        App::history_cell_for_local_image_event(image_path.clone(), Some("diagram".to_string()));
+    let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
+
+    assert!(display_items.iter().any(
+        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
+    ));
+    assert_eq!(
+        lines_to_single_string(&cell.raw_lines()),
+        "[Image: diagram]"
+    );
+}
+
+#[test]
+fn local_image_event_cell_rejects_invalid_image_without_bitmap_marker() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("not-image.txt");
+    std::fs::write(&path, "not an image").expect("test file should be written");
+
+    let cell = App::history_cell_for_local_image_event(path.clone(), Some("diagram".to_string()));
+    let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
+
+    assert!(
+        !display_items
+            .iter()
+            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage(_)))
+    );
+    let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 120));
+    assert!(rendered.contains("Image preview unavailable"));
+    assert!(rendered.contains(&path.display().to_string()));
 }
 
 fn rendered_line_text(line: &Line<'static>) -> String {

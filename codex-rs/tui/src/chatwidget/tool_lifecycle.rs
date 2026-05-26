@@ -12,11 +12,21 @@ impl ChatWidget {
 
     pub(super) fn on_view_image_tool_call(&mut self, path: AbsolutePathBuf) {
         self.flush_answer_stream_with_separator();
-        self.add_to_history(history_cell::new_view_image_tool_call(
-            path,
-            &self.config.cwd,
-        ));
+        self.insert_local_image_history(
+            path.as_path().to_path_buf(),
+            Some(display_path_for(path.as_path(), &self.config.cwd)),
+        );
         self.request_redraw();
+    }
+
+    fn insert_local_image_history(&mut self, path: PathBuf, caption: Option<String>) {
+        if !self.has_active_stream_tail() {
+            self.flush_active_cell();
+        }
+        self.transcript.needs_final_message_separator = true;
+        self.transcript.had_work_activity = true;
+        self.app_event_tx
+            .send(AppEvent::InsertLocalImage { path, caption });
     }
 
     pub(super) fn on_image_generation_begin(&mut self) {
