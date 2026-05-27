@@ -10,9 +10,9 @@
 | --- | --- |
 | Назначение | Локальные пользовательские, ассистентские и tool-generated изображения рендерятся в истории TUI как терминальные превью с текстовым fallback. |
 | Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path, `view_image`, `ImageGeneration.saved_path` и item-level replay/reflow. |
-| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image`, `ImageGeneration.saved_path`, replay/reflow, подготовка через `/pets`, PNG-нормализация для Kitty, точечные тесты. |
-| Открыто / отложено | Managed ownership оригинальных изображений после resume не реализован; если source path недоступен, остается fallback. При экстремально узком окне preview может не поместиться. |
-| Следующий шаг | Нет; реализация завершена, план перенесен в архив. |
+| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image`, `ImageGeneration.saved_path`, replay/reflow, подготовка через `/pets`, PNG-нормализация и Unicode placeholders для Kitty, точечные тесты. |
+| Открыто / отложено | Managed ownership оригинальных изображений после resume не реализован; если source path недоступен, остается fallback. При экстремально узком окне preview может не поместиться. Настраиваемые per-image preview sizes вынесены в [follow-up:FU-2026-006]. |
+| Следующий шаг | По запросу: вернуться к [follow-up:FU-2026-006] для `small` / `normal` / `large` preview sizes и config rows. |
 
 ## Карта деталей
 
@@ -44,14 +44,17 @@
 ассистентских/tool-generated изображений. В `Rich` mode ячейка для вставки в
 историю отдаёт обычные текстовые строки и дополнительный маркер
 `HistoryCellDisplayItem::LocalImage(path)`. Слой `App` превращает этот маркер в
-`HistoryInsertItem::Image`, используя тот же стек протокола terminal-image, что
-и `/pets`.
+`HistoryInsertItem::Image`, используя тот же стек подготовки terminal-image, что
+и `/pets`, но с другим способом привязки к истории для Kitty.
 
 Для Kitty и KittyLocalFile изображения сначала нормализуются в PNG-preview в
 `CODEX_HOME/cache/tui-history-images`, потому что Kitty payload объявляется как
-`f=100`. Для Sixel создается sixel cache asset. Если протокол terminal image
-недоступен или подготовка asset падает, история остается читаемой через
-текстовый fallback.
+`f=100`. Затем Codex передает image data и создает virtual placement `U=1`, а в
+scrollback печатает Unicode placeholder-ячейки `U+10EEEE` с явными
+row/column-diacritics как обычный текст. Так preview движется вместе с историей
+при новом выводе, resize и scrollback.
+Для Sixel создается sixel cache asset. Если протокол terminal image недоступен
+или подготовка asset падает, история остается читаемой через текстовый fallback.
 
 Resize reflow, initial replay, thread-switch tail replay и overlay-deferred
 history paths сохраняют `HistoryCellDisplayItem::LocalImage` до границы
@@ -94,9 +97,17 @@ history paths сохраняют `HistoryCellDisplayItem::LocalImage` до гр�
     Sixel и размер preview.
 - [`codex-rs/tui/src/pets/image_protocol.rs`][code:image-protocol]
   - `png_frame`, `sixel_frame`: создают cache assets для terminal protocols.
+  - `kitty_transmit_png_with_virtual_placement`,
+    `kitty_transmit_png_file_with_virtual_placement`: передают PNG и создают
+    Kitty virtual placement для Unicode placeholders.
 - [`codex-rs/tui/src/insert_history.rs`][code:insert-history]
   - `HistoryInsertItem::Image`: резервирует строки scrollback и пишет image
     payload напрямую в terminal writer.
+  - `KittyUnicodePlaceholder`: печатает placeholder-grid как текстовые ячейки
+    scrollback вместо floating screen placement.
+- [`codex-rs/tui/src/kitty_placeholder.rs`][code:kitty-placeholder]
+  - Пишет `U+10EEEE` cells с явными row/column-diacritics для Kitty virtual
+    placement.
 - [`codex-rs/tui/src/tui.rs`][code:tui]
   - `insert_history_items_with_wrap_policy`: граница TUI для вставки смешанных
     line/image элементов истории.
@@ -194,7 +205,8 @@ flowchart TD
   до `prepare_history_insert_items`; преждевременная конвертация в `Line`
   запрещена для `Rich` history.
 - `pets::prepare_history_image` возвращает `TerminalHistoryImage` с координатой
-  `x = 2`, размером в строках/колонках и payload типа `Text` или `Bytes`.
+  `x = 2`, размером в строках/колонках и payload типа
+  `KittyUnicodePlaceholder` или `Bytes`.
 - `insert_history_items_with_wrap_policy` резервирует rows для
   `HistoryInsertItem::Image` так же, как считает wrapped rows для текстовых
   строк.
@@ -205,11 +217,17 @@ flowchart TD
 ## Инварианты
 
 - Не встраивать raw terminal escape payload в ratatui `Line`.
+- Для Kitty history не использовать floating screen placement как финальное
+  отображение: image должен быть привязан к scrollback через Unicode placeholders.
 - Не читать локальные пути из произвольного Markdown/plain text как trusted
   image source.
 - Всегда сохранять fallback `[Image #n]` рядом с bitmap preview.
 - Для Kitty и KittyLocalFile history previews сначала делать PNG-preview cache,
   потому что payload отправляется как PNG (`f=100`).
+- Kitty history preview должен передавать PNG как virtual placement `U=1` и
+  печатать `U+10EEEE` placeholder cells с row/column-diacritics; иначе bitmap
+  остается привязанным к экранному слою, либо Kitty показывает только часть
+  grid.
 - `tmux` и `zellij` работают только с fallback через текущий
   `detect_pet_image_support` policy.
 
@@ -222,8 +240,22 @@ flowchart TD
   под `CODEX_HOME/generated_images/<session>/<call>.png`.
 - Целевая высота preview: `HISTORY_IMAGE_TARGET_ROWS = 12`; ширина
   ограничивается текущей шириной терминала через `max_columns = width - 4`.
+- Настраиваемые per-image размеры preview (`small` / `normal` / `large`) и
+  config rows отложены в [follow-up:FU-2026-006]. Дефолт должен сохранить
+  текущее поведение: `normal = 12 rows`.
 - Обычная вставка в историю, resize reflow, initial replay, thread-switch tail
   replay и overlay-deferred paths могут вставить bitmap preview.
+- В Kitty обычный `a=T` screen placement подходит для ambient `/pets`, но не для
+  history: он может оставаться привязанным к нижней части screen while text
+  output scrolls. History path использует Unicode placeholders, чтобы terminal
+  двигал bitmap вместе с текстовыми ячейками.
+- Строки Kitty placeholder-grid должны вставляться как реальные `\r\n` строки
+  scrollback. Cursor movement внутри нижней строки scroll region не создает
+  новые текстовые строки, и Kitty показывает только одну полоску изображения.
+- Codex отслеживает Kitty placeholder image id до момента, когда весь grid ушел
+  выше видимой history-области, и удаляет image id. Это безопасная деградация:
+  при ручном scrollback назад остается текстовый fallback, зато bitmap не
+  залипает у верхней границы viewport и не накладывается на новый текст.
 - Пользовательский smoke в Kitty подтвердил, что прямой Kitty graphics command
   показывает PNG, TUI показывает картинку через `view_image`, а preview
   переживает resize. При очень жестком shrink, когда окно меньше картинки,
@@ -249,6 +281,24 @@ flowchart TD
   `cargo test -p codex-tui history_image_prepare_kitty_payload_converts_jpeg_to_png`
 
   Проверяет: Kitty history preview получает PNG payload даже из JPEG source.
+
+- Kitty virtual placement:
+  `cargo test -p codex-tui kitty_png_virtual_placement_transmits_without_screen_placement`
+
+  Проверяет: Kitty history payload передает image data и создает virtual
+  placement `U=1`, а не screen placement.
+
+- Kitty placeholder cells:
+  `cargo test -p codex-tui kitty_placeholder_image_writes_text_anchored_cells`
+
+  Проверяет: history insertion печатает `U+10EEEE` placeholder-grid с явными
+  row/column-diacritics, который должен двигаться вместе с текстовым scrollback.
+
+- Kitty placeholder lifecycle:
+  `cargo test -p codex-tui kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history`
+
+  Проверяет: после ухода Kitty placeholder image выше видимой history-области
+  Codex отправляет delete для image id, чтобы избежать overlay/stale bitmap.
 
 - Ограничение ширины:
   `cargo test -p codex-tui history_image_size_clamps_wide_images_to_available_columns`
@@ -308,6 +358,7 @@ flowchart TD
 - Этап 005: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:005]
 - Закрытая работа по resize/reflow: [follow-up:FU-2026-001]
 - Закрытая работа по контролируемому пути источника: [follow-up:FU-2026-002]
+- Настраиваемые размеры preview: [follow-up:FU-2026-006]
 - Отложенные работы: [follow-ups:image-history]
 - Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`
@@ -318,6 +369,7 @@ flowchart TD
 [code:history-cell-messages]: ../../../codex-rs/tui/src/history_cell/messages.rs
 [code:image-protocol]: ../../../codex-rs/tui/src/pets/image_protocol.rs
 [code:insert-history]: ../../../codex-rs/tui/src/insert_history.rs
+[code:kitty-placeholder]: ../../../codex-rs/tui/src/kitty_placeholder.rs
 [code:local-image-cell]: ../../../codex-rs/tui/src/history_cell/local_image.rs
 [code:pets-mod]: ../../../codex-rs/tui/src/pets/mod.rs
 [code:resize-reflow]: ../../../codex-rs/tui/src/app/resize_reflow.rs
@@ -333,6 +385,7 @@ flowchart TD
 [details:verification]: #проверки
 [follow-up:FU-2026-001]: ../../follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md
 [follow-up:FU-2026-002]: ../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
+[follow-up:FU-2026-006]: ../../follow-ups/FU-2026-006-tui-history-image-preview-size.md
 [follow-ups:image-history]: ../../follow-ups/README.md
 [plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md

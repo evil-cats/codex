@@ -20,6 +20,7 @@ use ratatui::layout::Size;
 /// - getting the cursor position
 pub struct VT100Backend {
     crossterm_backend: CrosstermBackend<vt100::Parser>,
+    written_bytes: Vec<u8>,
 }
 
 impl VT100Backend {
@@ -28,16 +29,28 @@ impl VT100Backend {
         crossterm::style::force_color_output(true);
         Self {
             crossterm_backend: CrosstermBackend::new(vt100::Parser::new(height, width, 0)),
+            written_bytes: Vec::new(),
         }
     }
 
     pub fn vt100(&self) -> &vt100::Parser {
         self.crossterm_backend.writer()
     }
+
+    #[allow(dead_code)]
+    pub fn written_bytes(&self) -> &[u8] {
+        &self.written_bytes
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_written_bytes(&mut self) {
+        self.written_bytes.clear();
+    }
 }
 
 impl Write for VT100Backend {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.written_bytes.extend_from_slice(buf);
         self.crossterm_backend.writer_mut().write(buf)
     }
 

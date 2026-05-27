@@ -17,6 +17,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::time::UNIX_EPOCH;
 
 mod ambient;
@@ -28,6 +30,8 @@ mod model;
 mod picker;
 mod preview;
 mod sixel;
+
+pub(crate) use image_protocol::kitty_delete_image as kitty_delete_image_command;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -120,6 +124,8 @@ pub(crate) fn render_pet_picker_preview_image(
 const HISTORY_IMAGE_TARGET_ROWS: u16 = 12;
 const HISTORY_IMAGE_ROW_HEIGHT_PX: u16 = 15;
 const TERMINAL_CELL_WIDTH_TO_HEIGHT: f64 = 0.52;
+const FIRST_HISTORY_KITTY_IMAGE_ID: u32 = 0x00C0_DE00;
+static NEXT_HISTORY_KITTY_IMAGE_ID: AtomicU32 = AtomicU32::new(FIRST_HISTORY_KITTY_IMAGE_ID);
 
 pub(crate) fn prepare_history_image(
     path: &Path,
@@ -131,30 +137,34 @@ pub(crate) fn prepare_history_image(
     let cache_dir = history_image_cache_dir(path, cache_root);
     let payload = match protocol {
         ImageProtocol::Kitty => {
+            let image_id = next_history_kitty_image_id();
             let path = image_protocol::png_frame(path, &cache_dir, size.height_px)
                 .map_err(PetImageRenderError::Asset)?;
-            TerminalHistoryImagePayload::Text(
-                image_protocol::kitty_transmit_png_with_id(
+            TerminalHistoryImagePayload::KittyUnicodePlaceholder {
+                image_id,
+                transmit: image_protocol::kitty_transmit_png_with_virtual_placement(
                     &path,
                     size.columns,
                     size.rows,
-                    /*image_id*/ None,
+                    image_id,
                 )
                 .map_err(PetImageRenderError::Asset)?,
-            )
+            }
         }
         ImageProtocol::KittyLocalFile => {
+            let image_id = next_history_kitty_image_id();
             let path = image_protocol::png_frame(path, &cache_dir, size.height_px)
                 .map_err(PetImageRenderError::Asset)?;
-            TerminalHistoryImagePayload::Text(
-                image_protocol::kitty_transmit_png_file_with_id(
+            TerminalHistoryImagePayload::KittyUnicodePlaceholder {
+                image_id,
+                transmit: image_protocol::kitty_transmit_png_file_with_virtual_placement(
                     &path,
                     size.columns,
                     size.rows,
-                    /*image_id*/ None,
+                    image_id,
                 )
                 .map_err(PetImageRenderError::Asset)?,
-            )
+            }
         }
         ImageProtocol::Sixel => {
             let path = image_protocol::sixel_frame(path, &cache_dir, size.height_px)
@@ -172,6 +182,11 @@ pub(crate) fn prepare_history_image(
         rows: size.rows,
         payload,
     })
+}
+
+fn next_history_kitty_image_id() -> u32 {
+    let id = NEXT_HISTORY_KITTY_IMAGE_ID.fetch_add(1, Ordering::Relaxed) & 0x00FF_FFFF;
+    if id == 0 { 1 } else { id }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,11 +519,14 @@ mod tests {
         )
         .unwrap();
 
-        let TerminalHistoryImagePayload::Text(payload) = image.payload else {
-            panic!("expected kitty text payload");
+        let TerminalHistoryImagePayload::KittyUnicodePlaceholder { image_id, transmit } =
+            image.payload
+        else {
+            panic!("expected kitty placeholder payload");
         };
-        assert!(payload.contains("a=T,t=d,f=100"));
-        assert!(!payload.contains(",i="));
+        assert!(transmit.contains("a=t,t=d,f=100"));
+        assert!(transmit.contains("a=p,U=1"));
+        assert!(transmit.contains(&format!("i={image_id}")));
         assert!(image.columns <= 40);
     }
 
@@ -526,12 +544,13 @@ mod tests {
         )
         .unwrap();
 
-        let TerminalHistoryImagePayload::Text(payload) = image.payload else {
-            panic!("expected kitty text payload");
+        let TerminalHistoryImagePayload::KittyUnicodePlaceholder { transmit, .. } = image.payload
+        else {
+            panic!("expected kitty placeholder payload");
         };
-        assert!(payload.contains("a=T,t=d,f=100"));
-        assert!(payload.contains("iVBORw0KGgo"));
-        assert!(!payload.contains("/9j/"));
+        assert!(transmit.contains("a=t,t=d,f=100"));
+        assert!(transmit.contains("iVBORw0KGgo"));
+        assert!(!transmit.contains("/9j/"));
     }
 
     #[test]

@@ -165,6 +165,16 @@ where
     pub last_known_cursor_pos: Position,
     /// Count of visible history rows rendered above the viewport in inline mode.
     visible_history_rows: u16,
+    /// Total number of transcript history rows inserted above the viewport.
+    history_rows_inserted_total: u64,
+    /// Kitty placeholder images close enough to the visible history area to render.
+    kitty_history_images: Vec<KittyHistoryImageAnchor>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct KittyHistoryImageAnchor {
+    image_id: u32,
+    end_row: u64,
 }
 
 impl<B> Drop for Terminal<B>
@@ -242,6 +252,8 @@ where
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
             visible_history_rows: 0,
+            history_rows_inserted_total: 0,
+            kitty_history_images: Vec::new(),
         }
     }
 
@@ -519,6 +531,8 @@ where
         self.set_cursor_position(home)?;
         std::io::Write::flush(&mut self.backend)?;
         self.visible_history_rows = 0;
+        self.history_rows_inserted_total = 0;
+        self.kitty_history_images.clear();
         self.previous_buffer_mut().reset();
         Ok(())
     }
@@ -538,6 +552,8 @@ where
         std::io::Write::flush(&mut self.backend)?;
         self.last_known_cursor_pos = Position { x: 0, y: 0 };
         self.visible_history_rows = 0;
+        self.history_rows_inserted_total = 0;
+        self.kitty_history_images.clear();
         self.previous_buffer_mut().reset();
         Ok(())
     }
@@ -546,11 +562,42 @@ where
         self.visible_history_rows
     }
 
+    pub(crate) fn history_rows_inserted_total(&self) -> u64 {
+        self.history_rows_inserted_total
+    }
+
+    pub(crate) fn note_kitty_history_image_inserted(&mut self, image_id: u32, end_row: u64) {
+        self.kitty_history_images
+            .push(KittyHistoryImageAnchor { image_id, end_row });
+    }
+
     pub(crate) fn note_history_rows_inserted(&mut self, inserted_rows: u16) {
+        self.history_rows_inserted_total = self
+            .history_rows_inserted_total
+            .saturating_add(u64::from(inserted_rows));
         self.visible_history_rows = self
             .visible_history_rows
             .saturating_add(inserted_rows)
             .min(self.viewport_area.top());
+    }
+
+    pub(crate) fn take_scrolled_off_kitty_history_image_ids(&mut self) -> Vec<u32> {
+        let first_visible_history_row = self
+            .history_rows_inserted_total
+            .saturating_sub(u64::from(self.viewport_area.top()));
+        let mut retained = Vec::with_capacity(self.kitty_history_images.len());
+        let mut scrolled_off = Vec::new();
+
+        for anchor in self.kitty_history_images.drain(..) {
+            if anchor.end_row <= first_visible_history_row {
+                scrolled_off.push(anchor.image_id);
+            } else {
+                retained.push(anchor);
+            }
+        }
+
+        self.kitty_history_images = retained;
+        scrolled_off
     }
 
     /// Clears the inactive buffer and swaps it with the current buffer

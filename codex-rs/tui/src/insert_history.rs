@@ -57,8 +57,8 @@ pub struct TerminalHistoryImage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalHistoryImagePayload {
-    Text(String),
     Bytes(Vec<u8>),
+    KittyUnicodePlaceholder { image_id: u32, transmit: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +104,6 @@ where
     let mut area = terminal.viewport_area;
     let mut should_update_area = false;
     let last_cursor_pos = terminal.last_known_cursor_pos;
-    let writer = terminal.backend_mut();
 
     // Pre-wrap lines for terminal scrollback. Three paths:
     //
@@ -157,6 +156,10 @@ where
         }
     }
     let wrapped_lines = wrapped_rows as u16;
+    let history_row_base = terminal.history_rows_inserted_total();
+    let kitty_image_anchors = kitty_image_anchors(&wrapped, wrap_width, history_row_base);
+
+    let writer = terminal.backend_mut();
     let cursor_top = if area.bottom() < screen_size.height {
         // If the viewport is not at the bottom of the screen, scroll it down to make room.
         // Don't scroll it past the bottom of the screen.
@@ -217,11 +220,53 @@ where
     if should_update_area {
         terminal.set_viewport_area(area);
     }
+    for (image_id, end_row) in kitty_image_anchors {
+        terminal.note_kitty_history_image_inserted(image_id, end_row);
+    }
     if wrapped_lines > 0 {
         terminal.note_history_rows_inserted(wrapped_lines);
     }
+    let scrolled_off_kitty_images = terminal.take_scrolled_off_kitty_history_image_ids();
+    if !scrolled_off_kitty_images.is_empty() {
+        let writer = terminal.backend_mut();
+        for image_id in scrolled_off_kitty_images {
+            write!(
+                writer,
+                "{}",
+                crate::pets::kitty_delete_image_command(image_id)
+            )?;
+        }
+    }
 
     Ok(())
+}
+
+fn kitty_image_anchors(
+    items: &[HistoryInsertItem],
+    wrap_width: usize,
+    history_row_base: u64,
+) -> Vec<(u32, u64)> {
+    let mut anchors = Vec::new();
+    let mut row_offset = 0u64;
+
+    for item in items {
+        match item {
+            HistoryInsertItem::Line(line) => {
+                row_offset += line.width().max(1).div_ceil(wrap_width) as u64;
+            }
+            HistoryInsertItem::Image(image) => {
+                let rows = u64::from(image.rows.max(1));
+                if let TerminalHistoryImagePayload::KittyUnicodePlaceholder { image_id, .. } =
+                    &image.payload
+                {
+                    anchors.push((*image_id, history_row_base + row_offset + rows));
+                }
+                row_offset += rows;
+            }
+        }
+    }
+
+    anchors
 }
 
 fn leading_whitespace_prefix(line: &Line<'_>) -> Line<'static> {
@@ -288,6 +333,20 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
 fn write_history_image<W: Write>(writer: &mut W, image: &TerminalHistoryImage) -> io::Result<()> {
     use crossterm::cursor::MoveToColumn;
 
+    if let TerminalHistoryImagePayload::KittyUnicodePlaceholder { image_id, transmit } =
+        &image.payload
+    {
+        crate::kitty_placeholder::write_kitty_placeholder_image(
+            writer,
+            image.x,
+            image.columns,
+            image.rows,
+            *image_id,
+            transmit,
+        )?;
+        return Ok(());
+    }
+
     let rows = image.rows.max(1);
     let blank = " ".repeat(image.columns.into());
     queue!(writer, SavePosition)?;
@@ -305,8 +364,10 @@ fn write_history_image<W: Write>(writer: &mut W, image: &TerminalHistoryImage) -
     queue!(writer, RestorePosition, MoveToColumn(image.x), SavePosition)?;
 
     match &image.payload {
-        TerminalHistoryImagePayload::Text(payload) => write!(writer, "{payload}")?,
         TerminalHistoryImagePayload::Bytes(payload) => writer.write_all(payload)?,
+        TerminalHistoryImagePayload::KittyUnicodePlaceholder { .. } => unreachable!(
+            "kitty unicode placeholder images are handled before legacy image placement"
+        ),
     }
 
     queue!(writer, RestorePosition)?;
@@ -541,7 +602,7 @@ mod tests {
             x: 2,
             columns: 4,
             rows: 3,
-            payload: TerminalHistoryImagePayload::Text("image-payload".to_string()),
+            payload: TerminalHistoryImagePayload::Bytes(b"image-payload".to_vec()),
         };
         let mut output = Vec::new();
 
@@ -557,6 +618,54 @@ mod tests {
         assert!(payload < last_restore);
         assert!(output.contains("\x1b[3G"));
         assert_eq!(output.matches("\x1b[1B").count(), 4);
+    }
+
+    #[test]
+    fn kitty_placeholder_image_writes_text_anchored_cells() {
+        let image = TerminalHistoryImage {
+            x: 2,
+            columns: 4,
+            rows: 3,
+            payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
+                image_id: 0x00C0_DE00,
+                transmit: "kitty-transmit".to_string(),
+            },
+        };
+        let mut output = Vec::new();
+
+        write_history_image(&mut output, &image).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let transmit = output.find("kitty-transmit").expect("transmits image");
+        let first_placeholder = output.find('\u{10EEEE}').expect("writes placeholders");
+        assert!(transmit < first_placeholder);
+        assert!(output.contains("\x1b[38;2;192;222;0m"));
+        assert!(output.contains("\u{10EEEE}\u{0305}\u{0305}"));
+        assert!(output.contains("\u{10EEEE}\u{0305}\u{0310}"));
+        assert!(output.contains("\u{10EEEE}\u{030D}\u{0305}"));
+        assert!(output.contains("\u{10EEEE}\u{030E}\u{0310}"));
+        assert_eq!(output.matches('\u{10EEEE}').count(), 12);
+        assert_eq!(output.matches("\r\n").count(), 2);
+    }
+
+    #[test]
+    fn kitty_placeholder_image_writes_columns_after_sixteen() {
+        let image = TerminalHistoryImage {
+            x: 0,
+            columns: 18,
+            rows: 1,
+            payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
+                image_id: 0x00C0_DE00,
+                transmit: "kitty-transmit".to_string(),
+            },
+        };
+        let mut output = Vec::new();
+
+        write_history_image(&mut output, &image).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("\u{10EEEE}\u{0305}\u{0363}"));
+        assert_eq!(output.matches('\u{10EEEE}').count(), 18);
     }
 
     #[test]
@@ -576,7 +685,7 @@ mod tests {
                     x: 0,
                     columns: 4,
                     rows: 3,
-                    payload: TerminalHistoryImagePayload::Text("image-payload".to_string()),
+                    payload: TerminalHistoryImagePayload::Bytes(b"image-payload".to_vec()),
                 }),
                 HistoryInsertItem::Line(Line::from("tail")),
             ],
@@ -585,6 +694,46 @@ mod tests {
         .expect("history items should insert");
 
         assert_eq!(term.visible_history_rows(), 5);
+    }
+
+    #[test]
+    fn kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history() {
+        let width: u16 = 40;
+        let height: u16 = 8;
+        let backend = VT100Backend::new(width, height);
+        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+        let viewport = Rect::new(0, height - 2, width, 2);
+        term.set_viewport_area(viewport);
+
+        insert_history_items_with_wrap_policy(
+            &mut term,
+            vec![HistoryInsertItem::Image(TerminalHistoryImage {
+                x: 0,
+                columns: 4,
+                rows: 3,
+                payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
+                    image_id: 42,
+                    transmit: "kitty-transmit".to_string(),
+                },
+            })],
+            HistoryLineWrapPolicy::PreWrap,
+        )
+        .expect("image insert should succeed");
+
+        let output = String::from_utf8(term.backend().written_bytes().to_vec()).unwrap();
+        assert!(!output.contains("d=I,i=42"));
+        term.backend_mut().clear_written_bytes();
+
+        insert_history_lines(
+            &mut term,
+            (0..7)
+                .map(|idx| Line::from(format!("line {idx}")))
+                .collect(),
+        )
+        .expect("text insert should succeed");
+
+        let output = String::from_utf8(term.backend().written_bytes().to_vec()).unwrap();
+        assert!(output.contains("d=I,i=42"));
     }
 
     #[test]
