@@ -1916,9 +1916,13 @@ fn user_history_cell_emits_local_image_items_for_terminal_history() {
 
     let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
 
-    assert!(display_items.iter().any(
-        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
-    ));
+    assert!(display_items.iter().any(|item| matches!(
+        item,
+        HistoryCellDisplayItem::LocalImage {
+            path,
+            preview_size: ImagePreviewSize::Normal
+        } if path == &image_path
+    )));
     let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
     assert!(rendered.contains("[Image #1]"));
     assert!(rendered.contains("describe this"));
@@ -1927,12 +1931,20 @@ fn user_history_cell_emits_local_image_items_for_terminal_history() {
 #[test]
 fn local_image_history_cell_emits_image_item_in_rich_mode_only() {
     let image_path = PathBuf::from("/tmp/assistant-image.png");
-    let cell = new_local_image(image_path.clone(), Some("diagram".to_string()));
+    let cell = new_local_image(
+        image_path.clone(),
+        Some("diagram".to_string()),
+        ImagePreviewSize::Large,
+    );
 
     let rich_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
-    assert!(rich_items.iter().any(
-        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
-    ));
+    assert!(rich_items.iter().any(|item| matches!(
+        item,
+        HistoryCellDisplayItem::LocalImage {
+            path,
+            preview_size: ImagePreviewSize::Large
+        } if path == &image_path
+    )));
     assert_eq!(
         render_lines(&cell.display_lines(/*width*/ 80)),
         vec!["• [Image: diagram]".to_string()]
@@ -1942,7 +1954,7 @@ fn local_image_history_cell_emits_image_item_in_rich_mode_only() {
     assert!(
         !raw_items
             .iter()
-            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage(_)))
+            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage { .. }))
     );
     assert_eq!(
         render_lines(&cell.raw_lines()),
@@ -1962,7 +1974,7 @@ fn agent_markdown_image_syntax_does_not_emit_local_image_item() {
     assert!(
         !display_items
             .iter()
-            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage(_)))
+            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage { .. }))
     );
 }
 

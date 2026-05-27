@@ -55,9 +55,10 @@ impl App {
     pub(super) fn history_cell_for_local_image_event(
         path: PathBuf,
         caption: Option<String>,
+        preview_size: codex_protocol::items::ImagePreviewSize,
     ) -> Box<dyn HistoryCell> {
         match Self::validate_local_image_path_for_history(&path) {
-            Ok(()) => Box::new(history_cell::new_local_image(path, caption)),
+            Ok(()) => Box::new(history_cell::new_local_image(path, caption, preview_size)),
             Err(err) => Box::new(history_cell::new_warning_event(format!(
                 "Image preview unavailable for {}: {err}",
                 path.display()
@@ -250,8 +251,12 @@ impl App {
             AppEvent::InsertHistoryCell(cell) => {
                 self.insert_history_cell_from_event(tui, cell);
             }
-            AppEvent::InsertLocalImage { path, caption } => {
-                let cell = Self::history_cell_for_local_image_event(path, caption);
+            AppEvent::InsertLocalImage {
+                path,
+                caption,
+                preview_size,
+            } => {
+                let cell = Self::history_cell_for_local_image_event(path, caption, preview_size);
                 self.insert_history_cell_from_event(tui, cell);
             }
             AppEvent::EndInitialHistoryReplayBuffer => {

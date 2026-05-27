@@ -28,6 +28,16 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
             ),
         );
     }
+    properties.insert(
+        "preview_size".to_string(),
+        JsonSchema::string_enum(
+            vec![json!("small"), json!("normal"), json!("large")],
+            Some(
+                "Optional TUI history preview size hint. Supported values are `small`, `normal`, and `large`; omit this field for the default normal preview. This only controls how large the image preview appears in the console history and does not affect the image sent to the model."
+                    .to_string(),
+            ),
+        ),
+    );
     if options.include_environment_id {
         properties.insert(
             "environment_id".to_string(),
@@ -66,4 +76,36 @@ fn view_image_output_schema() -> Value {
         "required": ["image_url", "detail"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_image_schema_exposes_preview_size_but_not_preview_rows() {
+        let ToolSpec::Function(tool) = create_view_image_tool(ViewImageToolOptions {
+            can_request_original_image_detail: false,
+            include_environment_id: false,
+        }) else {
+            panic!("expected function tool");
+        };
+
+        let properties = tool
+            .parameters
+            .properties
+            .expect("view_image parameters should include properties");
+        let preview_size = properties
+            .get("preview_size")
+            .expect("preview_size should be exposed");
+
+        assert_eq!(
+            preview_size.enum_values.as_deref(),
+            Some(&[json!("small"), json!("normal"), json!("large")][..])
+        );
+        assert!(
+            !properties.contains_key("preview_rows"),
+            "numeric rows must stay out of the model-visible tool API"
+        );
+    }
 }

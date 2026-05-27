@@ -644,6 +644,51 @@ pub struct ModelAvailabilityNuxConfig {
 
 /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
+pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS: u16 = 8;
+pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS: u16 = 12;
+pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS: u16 = 20;
+
+const fn default_tui_history_image_preview_small_rows() -> u16 {
+    DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS
+}
+
+const fn default_tui_history_image_preview_normal_rows() -> u16 {
+    DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS
+}
+
+const fn default_tui_history_image_preview_large_rows() -> u16 {
+    DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(default)]
+#[schemars(deny_unknown_fields)]
+pub struct TuiHistoryImagePreview {
+    /// Rows to reserve for `preview_size = "small"`.
+    #[serde(default = "default_tui_history_image_preview_small_rows")]
+    #[schemars(range(min = 1))]
+    pub small_rows: u16,
+
+    /// Rows to reserve for omitted `preview_size` or `preview_size = "normal"`.
+    #[serde(default = "default_tui_history_image_preview_normal_rows")]
+    #[schemars(range(min = 1))]
+    pub normal_rows: u16,
+
+    /// Rows to reserve for `preview_size = "large"`.
+    #[serde(default = "default_tui_history_image_preview_large_rows")]
+    #[schemars(range(min = 1))]
+    pub large_rows: u16,
+}
+
+impl Default for TuiHistoryImagePreview {
+    fn default() -> Self {
+        Self {
+            small_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS,
+            normal_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS,
+            large_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS,
+        }
+    }
+}
 
 /// Collection of settings that are specific to the TUI.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
@@ -741,6 +786,10 @@ pub struct Tui {
     /// Startup tooltip availability NUX state persisted by the TUI.
     #[serde(default)]
     pub model_availability_nux: ModelAvailabilityNuxConfig,
+
+    /// Row counts used by TUI history image previews for `small`, `normal`, and `large`.
+    #[serde(default)]
+    pub history_image_preview: TuiHistoryImagePreview,
 
     /// Trim terminal resize-reflow replay to the most recent rendered terminal rows when the
     /// transcript exceeds this cap. Omit to use Codex's terminal-specific default. Set to `0` to

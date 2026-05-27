@@ -3029,6 +3029,9 @@ pub struct ViewImageToolCallEvent {
     pub call_id: String,
     /// Local filesystem path provided to the tool.
     pub path: AbsolutePathBuf,
+    /// TUI-local preview size hint for the rendered history image.
+    #[serde(default)]
+    pub preview_size: crate::items::ImagePreviewSize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

@@ -1,5 +1,6 @@
 use super::*;
 use codex_app_server_protocol::PluginAvailability;
+use codex_protocol::items::ImagePreviewSize;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -317,7 +318,10 @@ pub(crate) async fn make_chatwidget_manual_with_sender() -> (
 }
 
 type DrainedHistoryLines = Vec<ratatui::text::Line<'static>>;
-type DrainedHistoryEvents = (Vec<DrainedHistoryLines>, Vec<(PathBuf, Option<String>)>);
+type DrainedHistoryEvents = (
+    Vec<DrainedHistoryLines>,
+    Vec<(PathBuf, Option<String>, ImagePreviewSize)>,
+);
 
 pub(super) fn drain_insert_history(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
@@ -339,7 +343,11 @@ pub(super) fn drain_history_events(
                 }
                 out.push(lines)
             }
-            AppEvent::InsertLocalImage { path, caption } => local_images.push((path, caption)),
+            AppEvent::InsertLocalImage {
+                path,
+                caption,
+                preview_size,
+            } => local_images.push((path, caption, preview_size)),
             _ => {}
         }
     }
@@ -690,6 +698,15 @@ pub(super) fn handle_view_image_tool_call(
     call_id: impl Into<String>,
     path: AbsolutePathBuf,
 ) {
+    handle_view_image_tool_call_with_preview_size(chat, call_id, path, ImagePreviewSize::Normal);
+}
+
+pub(super) fn handle_view_image_tool_call_with_preview_size(
+    chat: &mut ChatWidget,
+    call_id: impl Into<String>,
+    path: AbsolutePathBuf,
+    preview_size: ImagePreviewSize,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
@@ -698,6 +715,7 @@ pub(super) fn handle_view_image_tool_call(
             item: AppServerThreadItem::ImageView {
                 id: call_id.into(),
                 path,
+                preview_size,
             },
         }),
         /*replay_kind*/ None,

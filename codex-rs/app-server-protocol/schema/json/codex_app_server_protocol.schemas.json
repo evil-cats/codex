@@ -10153,6 +10153,14 @@
         ],
         "type": "string"
       },
+      "ImagePreviewSize": {
+        "enum": [
+          "small",
+          "normal",
+          "large"
+        ],
+        "type": "string"
+      },
       "InputModality": {
         "description": "Canonical user-input modality tags advertised by a model.",
         "oneOf": [
@@ -16557,6 +16565,14 @@
               },
               "path": {
                 "$ref": "#/definitions/v2/AbsolutePathBuf"
+              },
+              "previewSize": {
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/v2/ImagePreviewSize"
+                  }
+                ],
+                "default": "normal"
               },
               "type": {
                 "enum": [

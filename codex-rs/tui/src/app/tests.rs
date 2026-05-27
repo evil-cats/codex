@@ -87,6 +87,7 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
+use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::NetworkPermissions;
@@ -3911,13 +3912,20 @@ fn local_image_event_cell_accepts_decodable_regular_file() {
     let dir = tempdir().expect("tempdir");
     let image_path = write_test_png(dir.path(), "assistant-image.png");
 
-    let cell =
-        App::history_cell_for_local_image_event(image_path.clone(), Some("diagram".to_string()));
+    let cell = App::history_cell_for_local_image_event(
+        image_path.clone(),
+        Some("diagram".to_string()),
+        ImagePreviewSize::Large,
+    );
     let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
 
-    assert!(display_items.iter().any(
-        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
-    ));
+    assert!(display_items.iter().any(|item| matches!(
+        item,
+        HistoryCellDisplayItem::LocalImage {
+            path,
+            preview_size: ImagePreviewSize::Large
+        } if path == &image_path
+    )));
     assert_eq!(
         lines_to_single_string(&cell.raw_lines()),
         "[Image: diagram]"
@@ -3930,13 +3938,17 @@ fn local_image_event_cell_rejects_invalid_image_without_bitmap_marker() {
     let path = dir.path().join("not-image.txt");
     std::fs::write(&path, "not an image").expect("test file should be written");
 
-    let cell = App::history_cell_for_local_image_event(path.clone(), Some("diagram".to_string()));
+    let cell = App::history_cell_for_local_image_event(
+        path.clone(),
+        Some("diagram".to_string()),
+        ImagePreviewSize::Large,
+    );
     let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
 
     assert!(
         !display_items
             .iter()
-            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage(_)))
+            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage { .. }))
     );
     let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 120));
     assert!(rendered.contains("Image preview unavailable"));
@@ -3953,7 +3965,7 @@ fn rendered_line_text(line: &Line<'static>) -> String {
 fn rendered_item_line_text(item: &HistoryCellDisplayItem) -> Option<String> {
     match item {
         HistoryCellDisplayItem::Line(line) => Some(rendered_line_text(line)),
-        HistoryCellDisplayItem::LocalImage(_) => None,
+        HistoryCellDisplayItem::LocalImage { .. } => None,
     }
 }
 
@@ -4054,15 +4066,23 @@ async fn resize_reflow_preserves_local_image_display_item() {
     let dir = tempdir().expect("tempdir");
     let image_path = write_test_png(dir.path(), "assistant-image.png");
     app.transcript_cells = vec![
-        App::history_cell_for_local_image_event(image_path.clone(), Some("diagram".to_string()))
-            .into(),
+        App::history_cell_for_local_image_event(
+            image_path.clone(),
+            Some("diagram".to_string()),
+            ImagePreviewSize::Large,
+        )
+        .into(),
     ];
 
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
-    assert!(rendered.items.iter().any(
-        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
-    ));
+    assert!(rendered.items.iter().any(|item| matches!(
+        item,
+        HistoryCellDisplayItem::LocalImage {
+            path,
+            preview_size: ImagePreviewSize::Large
+        } if path == &image_path
+    )));
     assert!(
         rendered_item_line_texts(&rendered.items)
             .iter()
@@ -4122,7 +4142,10 @@ async fn initial_replay_buffer_preserves_local_image_marker() {
             .expect("initial replay buffer active"),
         vec![
             HistoryCellDisplayItem::Line(Line::from("[Image: diagram]")),
-            HistoryCellDisplayItem::LocalImage(image_path.clone()),
+            HistoryCellDisplayItem::LocalImage {
+                path: image_path.clone(),
+                preview_size: ImagePreviewSize::Large,
+            },
         ],
         /*max_rows*/ 4,
     );
@@ -4131,9 +4154,13 @@ async fn initial_replay_buffer_preserves_local_image_marker() {
         .initial_history_replay_buffer
         .as_ref()
         .expect("initial replay buffer should remain active");
-    assert!(buffer.retained_items.iter().any(
-        |item| matches!(item, HistoryCellDisplayItem::LocalImage(path) if path == &image_path)
-    ));
+    assert!(buffer.retained_items.iter().any(|item| matches!(
+        item,
+        HistoryCellDisplayItem::LocalImage {
+            path,
+            preview_size: ImagePreviewSize::Large
+        } if path == &image_path
+    )));
 }
 
 #[tokio::test]

@@ -212,7 +212,10 @@ impl UserHistoryCell {
                         .into_iter()
                         .map(HistoryCellDisplayItem::Line),
                 );
-                items.push(HistoryCellDisplayItem::LocalImage(path.clone()));
+                items.push(HistoryCellDisplayItem::LocalImage {
+                    path: path.clone(),
+                    preview_size: ImagePreviewSize::Normal,
+                });
             }
 
             if wrapped_message.is_some() {

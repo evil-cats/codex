@@ -579,6 +579,7 @@ impl ThreadHistoryBuilder {
         let item = ThreadItem::ImageView {
             id: payload.call_id.clone(),
             path: payload.path.clone(),
+            preview_size: payload.preview_size,
         };
         self.upsert_item_in_current_turn(item);
     }

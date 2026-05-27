@@ -37,6 +37,9 @@ use codex_config::permissions_toml::PermissionsToml;
 use codex_config::sandbox_mode_requirement_for_permission_profile;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
+use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS;
+use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS;
+use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS;
 use codex_config::types::History;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
@@ -90,6 +93,7 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchConfig;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
@@ -721,6 +725,9 @@ pub struct Config {
     /// Terminal resize-reflow tuning knobs.
     pub terminal_resize_reflow: TerminalResizeReflowConfig,
 
+    /// TUI history image preview row counts.
+    pub history_image_preview: HistoryImagePreviewConfig,
+
     /// Keybinding overrides for the TUI.
     ///
     /// Precedence is:
@@ -1040,6 +1047,34 @@ pub enum TerminalResizeReflowMaxRows {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TerminalResizeReflowConfig {
     pub max_rows: TerminalResizeReflowMaxRows,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryImagePreviewConfig {
+    pub small_rows: u16,
+    pub normal_rows: u16,
+    pub large_rows: u16,
+}
+
+impl Default for HistoryImagePreviewConfig {
+    fn default() -> Self {
+        Self {
+            small_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS,
+            normal_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS,
+            large_rows: DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS,
+        }
+    }
+}
+
+impl HistoryImagePreviewConfig {
+    pub fn rows_for(self, size: ImagePreviewSize) -> u16 {
+        match size {
+            ImagePreviewSize::Small => self.small_rows,
+            ImagePreviewSize::Normal => self.normal_rows,
+            ImagePreviewSize::Large => self.large_rows,
+        }
+        .max(1)
+    }
 }
 
 impl AuthManagerConfig for Config {
@@ -2259,6 +2294,18 @@ fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalRe
     }
 }
 
+fn resolve_history_image_preview_config(config_toml: &ConfigToml) -> HistoryImagePreviewConfig {
+    let Some(tui) = config_toml.tui.as_ref() else {
+        return HistoryImagePreviewConfig::default();
+    };
+
+    HistoryImagePreviewConfig {
+        small_rows: tui.history_image_preview.small_rows.max(1),
+        normal_rows: tui.history_image_preview.normal_rows.max(1),
+        large_rows: tui.history_image_preview.large_rows.max(1),
+    }
+}
+
 fn multi_agent_v2_toml_config(features: Option<&FeaturesToml>) -> Option<&MultiAgentV2ConfigToml> {
     match features?.multi_agent_v2.as_ref()? {
         FeatureToml::Enabled(_) => None,
@@ -2949,6 +2996,7 @@ impl Config {
             None
         };
         let terminal_resize_reflow = resolve_terminal_resize_reflow_config(&cfg);
+        let history_image_preview = resolve_history_image_preview_config(&cfg);
 
         let agent_roles =
             agent_roles::load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings)
@@ -3599,6 +3647,7 @@ impl Config {
                 .and_then(|t| t.session_picker_view)
                 .unwrap_or_default(),
             terminal_resize_reflow,
+            history_image_preview,
             tui_keymap: cfg
                 .tui
                 .as_ref()

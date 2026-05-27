@@ -295,7 +295,7 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
     .await?;
 
     let call_id = "view-image-call";
-    let arguments = serde_json::json!({ "path": rel_path }).to_string();
+    let arguments = serde_json::json!({ "path": rel_path, "preview_size": "large" }).to_string();
 
     let first_response = sse(vec![
         ev_response_created("resp-1"),
@@ -358,6 +358,10 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         codex_protocol::items::TurnItem::ImageView(item) => {
             assert_eq!(item.id, call_id);
             assert_eq!(item.path, abs_path);
+            assert_eq!(
+                item.preview_size,
+                codex_protocol::items::ImagePreviewSize::Large
+            );
         }
         other => panic!("expected ImageView item, got {other:?}"),
     }
@@ -365,12 +369,20 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         codex_protocol::items::TurnItem::ImageView(item) => {
             assert_eq!(item.id, call_id);
             assert_eq!(item.path, abs_path);
+            assert_eq!(
+                item.preview_size,
+                codex_protocol::items::ImagePreviewSize::Large
+            );
         }
         other => panic!("expected ImageView item, got {other:?}"),
     }
     let legacy_event = legacy_event.expect("legacy view image event emitted");
     assert_eq!(legacy_event.call_id, call_id);
     assert_eq!(legacy_event.path, abs_path);
+    assert_eq!(
+        legacy_event.preview_size,
+        codex_protocol::items::ImagePreviewSize::Large
+    );
 
     let req = mock.single_request();
     let body = req.body_json();

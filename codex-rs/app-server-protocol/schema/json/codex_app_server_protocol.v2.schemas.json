@@ -6633,6 +6633,14 @@
       ],
       "type": "string"
     },
+    "ImagePreviewSize": {
+      "enum": [
+        "small",
+        "normal",
+        "large"
+      ],
+      "type": "string"
+    },
     "InitializeCapabilities": {
       "description": "Client-declared capabilities negotiated during initialize.",
       "properties": {
@@ -14381,6 +14389,14 @@
             },
             "path": {
               "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "previewSize": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImagePreviewSize"
+                }
+              ],
+              "default": "normal"
             },
             "type": {
               "enum": [

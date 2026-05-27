@@ -6,11 +6,20 @@ use super::*;
 pub(crate) struct LocalImageHistoryCell {
     path: PathBuf,
     caption: Option<String>,
+    preview_size: ImagePreviewSize,
 }
 
 impl LocalImageHistoryCell {
-    pub(crate) fn new(path: PathBuf, caption: Option<String>) -> Self {
-        Self { path, caption }
+    pub(crate) fn new(
+        path: PathBuf,
+        caption: Option<String>,
+        preview_size: ImagePreviewSize,
+    ) -> Self {
+        Self {
+            path,
+            caption,
+            preview_size,
+        }
     }
 
     fn fallback_text(&self) -> String {
@@ -57,7 +66,10 @@ impl HistoryCell for LocalImageHistoryCell {
                     .into_iter()
                     .map(HistoryCellDisplayItem::Line)
                     .collect::<Vec<_>>();
-                items.push(HistoryCellDisplayItem::LocalImage(self.path.clone()));
+                items.push(HistoryCellDisplayItem::LocalImage {
+                    path: self.path.clone(),
+                    preview_size: self.preview_size,
+                });
                 items
             }
             HistoryRenderMode::Raw => self
@@ -69,6 +81,10 @@ impl HistoryCell for LocalImageHistoryCell {
     }
 }
 
-pub(crate) fn new_local_image(path: PathBuf, caption: Option<String>) -> LocalImageHistoryCell {
-    LocalImageHistoryCell::new(path, caption)
+pub(crate) fn new_local_image(
+    path: PathBuf,
+    caption: Option<String>,
+    preview_size: ImagePreviewSize,
+) -> LocalImageHistoryCell {
+    LocalImageHistoryCell::new(path, caption, preview_size)
 }

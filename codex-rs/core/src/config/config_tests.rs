@@ -56,6 +56,7 @@ use codex_config::types::SkillsConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::ToolSuggestDiscoverableType;
 use codex_config::types::Tui;
+use codex_config::types::TuiHistoryImagePreview;
 use codex_config::types::TuiKeymap;
 use codex_config::types::TuiNotificationSettings;
 use codex_config::types::TuiPetAnchor;
@@ -72,6 +73,7 @@ use codex_models_manager::bundled_models_response;
 use codex_network_proxy::NetworkMode;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
@@ -677,6 +679,7 @@ fn config_toml_deserializes_model_availability_nux() {
             status_line: None,
             status_line_use_colors: true,
             terminal_title: None,
+            terminal_title_label: None,
             theme: None,
             pet: None,
             pet_anchor: TuiPetAnchor::Composer,
@@ -688,6 +691,7 @@ fn config_toml_deserializes_model_availability_nux() {
                     ("gpt-foo".to_string(), 2),
                 ]),
             },
+            history_image_preview: TuiHistoryImagePreview::default(),
             terminal_resize_reflow_max_rows: None,
         }
     );
@@ -738,6 +742,29 @@ terminal_resize_reflow_max_rows = 9000
             .expect("tui config should deserialize")
             .terminal_resize_reflow_max_rows,
         Some(9000)
+    );
+}
+
+#[test]
+fn config_toml_deserializes_history_image_preview_config() {
+    let toml = r#"
+[tui.history_image_preview]
+small_rows = 6
+normal_rows = 14
+large_rows = 26
+"#;
+    let cfg: ConfigToml = toml::from_str(toml)
+        .expect("TOML deserialization should succeed for history image preview config");
+
+    assert_eq!(
+        cfg.tui
+            .expect("tui config should deserialize")
+            .history_image_preview,
+        TuiHistoryImagePreview {
+            small_rows: 6,
+            normal_rows: 14,
+            large_rows: 26,
+        }
     );
 }
 
@@ -3332,12 +3359,14 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             status_line: None,
             status_line_use_colors: true,
             terminal_title: None,
+            terminal_title_label: None,
             theme: None,
             pet: None,
             pet_anchor: TuiPetAnchor::Composer,
             session_picker_view: None,
             keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
+            history_image_preview: TuiHistoryImagePreview::default(),
             terminal_resize_reflow_max_rows: None,
         }
     );
@@ -3398,6 +3427,57 @@ async fn runtime_config_resolves_terminal_resize_reflow_defaults_and_overrides()
     assert_eq!(
         cfg.terminal_resize_reflow.max_rows,
         TerminalResizeReflowMaxRows::Disabled
+    );
+}
+
+#[tokio::test]
+async fn runtime_config_resolves_history_image_preview_defaults_and_overrides() {
+    let cfg = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load default config");
+
+    assert_eq!(
+        cfg.history_image_preview,
+        HistoryImagePreviewConfig::default()
+    );
+    assert_eq!(
+        cfg.history_image_preview.rows_for(ImagePreviewSize::Normal),
+        12
+    );
+
+    let cfg = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            tui: Some(Tui {
+                history_image_preview: TuiHistoryImagePreview {
+                    small_rows: 5,
+                    normal_rows: 13,
+                    large_rows: 24,
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load overridden config");
+
+    assert_eq!(
+        cfg.history_image_preview.rows_for(ImagePreviewSize::Small),
+        5
+    );
+    assert_eq!(
+        cfg.history_image_preview.rows_for(ImagePreviewSize::Normal),
+        13
+    );
+    assert_eq!(
+        cfg.history_image_preview.rows_for(ImagePreviewSize::Large),
+        24
     );
 }
 

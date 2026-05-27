@@ -131,10 +131,23 @@ pub struct WebSearchItem {
     pub action: WebSearchAction,
 }
 
+#[derive(
+    Debug, Clone, Copy, Default, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq, Hash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagePreviewSize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
 pub struct ImageViewItem {
     pub id: String,
     pub path: AbsolutePathBuf,
+    #[serde(default)]
+    pub preview_size: ImagePreviewSize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
@@ -587,6 +600,7 @@ impl TurnItem {
                 vec![EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
                     call_id: item.id.clone(),
                     path: item.path.clone(),
+                    preview_size: item.preview_size,
                 })]
             }
             TurnItem::ImageGeneration(item) => vec![item.as_legacy_event()],

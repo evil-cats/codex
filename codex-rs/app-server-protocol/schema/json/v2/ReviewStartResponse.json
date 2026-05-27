@@ -429,6 +429,14 @@
       ],
       "type": "string"
     },
+    "ImagePreviewSize": {
+      "enum": [
+        "small",
+        "normal",
+        "large"
+      ],
+      "type": "string"
+    },
     "McpToolCallError": {
       "properties": {
         "message": {
@@ -1173,6 +1181,14 @@
             },
             "path": {
               "$ref": "#/definitions/AbsolutePathBuf"
+            },
+            "previewSize": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImagePreviewSize"
+                }
+              ],
+              "default": "normal"
             },
             "type": {
               "enum": [

@@ -2752,6 +2752,19 @@
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
         },
+        "history_image_preview": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TuiHistoryImagePreview"
+            }
+          ],
+          "default": {
+            "large_rows": 20,
+            "normal_rows": 12,
+            "small_rows": 8
+          },
+          "description": "Row counts used by TUI history image previews for `small`, `normal`, and `large`."
+        },
         "keymap": {
           "allOf": [
             {
@@ -3367,6 +3380,33 @@
             }
           ],
           "description": "Toggle Vim mode for the composer input."
+        }
+      },
+      "type": "object"
+    },
+    "TuiHistoryImagePreview": {
+      "additionalProperties": false,
+      "properties": {
+        "large_rows": {
+          "default": 20,
+          "description": "Rows to reserve for `preview_size = \"large\"`.",
+          "format": "uint16",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "normal_rows": {
+          "default": 12,
+          "description": "Rows to reserve for omitted `preview_size` or `preview_size = \"normal\"`.",
+          "format": "uint16",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "small_rows": {
+          "default": 8,
+          "description": "Rows to reserve for `preview_size = \"small\"`.",
+          "format": "uint16",
+          "minimum": 1.0,
+          "type": "integer"
         }
       },
       "type": "object"

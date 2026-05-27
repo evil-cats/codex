@@ -1,3 +1,4 @@
+use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::items::ImageViewItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
@@ -56,6 +57,7 @@ struct ViewImageArgs {
     #[serde(default)]
     environment_id: Option<String>,
     detail: Option<String>,
+    preview_size: Option<String>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -114,6 +116,7 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
             path,
             environment_id,
             detail,
+            preview_size,
         } = parse_arguments(&arguments)?;
         // `high` is the explicit spelling of the default resized path.
         // Other string values remain invalid rather than being silently reinterpreted.
@@ -124,6 +127,16 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
             Some(detail) => {
                 return Err(FunctionCallError::RespondToModel(format!(
                     "view_image.detail only supports `high` or `original`; omit `detail` for default high resized behavior, got `{detail}`"
+                )));
+            }
+        };
+        let preview_size = match preview_size.as_deref() {
+            None | Some("normal") => ImagePreviewSize::Normal,
+            Some("small") => ImagePreviewSize::Small,
+            Some("large") => ImagePreviewSize::Large,
+            Some(preview_size) => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "view_image.preview_size only supports `small`, `normal`, or `large`; omit `preview_size` for default normal preview, got `{preview_size}`"
                 )));
             }
         };
@@ -193,6 +206,7 @@ impl ToolExecutor<ToolInvocation> for ViewImageHandler {
         let item = TurnItem::ImageView(ImageViewItem {
             id: call_id,
             path: event_path,
+            preview_size,
         });
         session.emit_turn_item_started(turn.as_ref(), &item).await;
         session.emit_turn_item_completed(turn.as_ref(), item).await;
@@ -343,6 +357,34 @@ mod tests {
         assert_eq!(
             message,
             "view_image.detail only supports `high` or `original`; omit `detail` for default high resized behavior, got `low`"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_rejects_unsupported_preview_size() {
+        let (session, turn) = make_session_and_context().await;
+
+        let result = ViewImageHandler::default()
+            .handle(ToolInvocation {
+                session: Arc::new(session),
+                turn: Arc::new(turn),
+                cancellation_token: tokio_util::sync::CancellationToken::new(),
+                tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+                call_id: "call-view-image".to_string(),
+                tool_name: codex_tools::ToolName::plain("view_image"),
+                source: ToolCallSource::Direct,
+                payload: ToolPayload::Function {
+                    arguments: json!({ "path": "image.png", "preview_size": "huge" }).to_string(),
+                },
+            })
+            .await;
+
+        let Err(FunctionCallError::RespondToModel(message)) = result else {
+            panic!("expected unsupported preview_size error");
+        };
+        assert_eq!(
+            message,
+            "view_image.preview_size only supports `small`, `normal`, or `large`; omit `preview_size` for default normal preview, got `huge`"
         );
     }
 

@@ -114,13 +114,15 @@ impl App {
             .into_iter()
             .filter_map(|item| match item {
                 HistoryCellDisplayItem::Line(line) => Some(HistoryInsertItem::Line(line)),
-                HistoryCellDisplayItem::LocalImage(path) => {
+                HistoryCellDisplayItem::LocalImage { path, preview_size } => {
                     let protocol = protocol?;
+                    let target_rows = self.config.history_image_preview.rows_for(preview_size);
                     match crate::pets::prepare_history_image(
                         &path,
                         protocol,
                         max_columns,
                         &cache_root,
+                        target_rows,
                     ) {
                         Ok(image) => Some(HistoryInsertItem::Image(image)),
                         Err(err) => {

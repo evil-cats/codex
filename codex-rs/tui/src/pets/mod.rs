@@ -121,7 +121,6 @@ pub(crate) fn render_pet_picker_preview_image(
     render_pet_image(writer, state, /*image_id*/ 0xC0DF, request)
 }
 
-const HISTORY_IMAGE_TARGET_ROWS: u16 = 12;
 const HISTORY_IMAGE_ROW_HEIGHT_PX: u16 = 15;
 const TERMINAL_CELL_WIDTH_TO_HEIGHT: f64 = 0.52;
 const FIRST_HISTORY_KITTY_IMAGE_ID: u32 = 0x00C0_DE00;
@@ -132,8 +131,10 @@ pub(crate) fn prepare_history_image(
     protocol: ImageProtocol,
     max_columns: u16,
     cache_root: &Path,
+    target_rows: u16,
 ) -> std::result::Result<TerminalHistoryImage, PetImageRenderError> {
-    let size = history_image_size(path, max_columns).map_err(PetImageRenderError::Asset)?;
+    let size =
+        history_image_size(path, max_columns, target_rows).map_err(PetImageRenderError::Asset)?;
     let cache_dir = history_image_cache_dir(path, cache_root);
     let payload = match protocol {
         ImageProtocol::Kitty => {
@@ -196,11 +197,11 @@ struct HistoryImageSize {
     height_px: u16,
 }
 
-fn history_image_size(path: &Path, max_columns: u16) -> Result<HistoryImageSize> {
+fn history_image_size(path: &Path, max_columns: u16, target_rows: u16) -> Result<HistoryImageSize> {
     let (width, height) =
         image::image_dimensions(path).with_context(|| format!("read {}", path.display()))?;
     let max_columns = max_columns.max(1);
-    let target_rows = HISTORY_IMAGE_TARGET_ROWS.max(1);
+    let target_rows = target_rows.max(1);
     let mut rows = target_rows;
     let mut columns = columns_for_image_rows(width, height, rows);
 
@@ -387,6 +388,8 @@ mod tests {
     use super::image_protocol::ImageProtocol;
     use super::*;
 
+    const TEST_HISTORY_IMAGE_TARGET_ROWS: u16 = 12;
+
     fn write_test_png(path: &std::path::Path, width: u32, height: u32) {
         let image = image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 255, 255]));
         image.save(path).unwrap();
@@ -495,13 +498,33 @@ mod tests {
         let frame = dir.path().join("wide.png");
         write_test_png(&frame, /*width*/ 400, /*height*/ 100);
 
-        let size = history_image_size(&frame, /*max_columns*/ 20).unwrap();
+        let size = history_image_size(
+            &frame,
+            /*max_columns*/ 20,
+            TEST_HISTORY_IMAGE_TARGET_ROWS,
+        )
+        .unwrap();
 
         assert!(size.columns <= 20);
-        assert!(size.rows < HISTORY_IMAGE_TARGET_ROWS);
+        assert!(size.rows < TEST_HISTORY_IMAGE_TARGET_ROWS);
         assert_eq!(
             size.height_px,
             size.rows.saturating_mul(HISTORY_IMAGE_ROW_HEIGHT_PX)
+        );
+    }
+
+    #[test]
+    fn history_image_size_uses_requested_target_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("square.png");
+        write_test_png(&frame, /*width*/ 100, /*height*/ 100);
+
+        let size = history_image_size(&frame, /*max_columns*/ 80, /*target_rows*/ 20).unwrap();
+
+        assert_eq!(size.rows, 20);
+        assert_eq!(
+            size.height_px,
+            20u16.saturating_mul(HISTORY_IMAGE_ROW_HEIGHT_PX)
         );
     }
 
@@ -516,6 +539,7 @@ mod tests {
             ImageProtocol::Kitty,
             /*max_columns*/ 40,
             &dir.path().join("cache"),
+            TEST_HISTORY_IMAGE_TARGET_ROWS,
         )
         .unwrap();
 
@@ -541,6 +565,7 @@ mod tests {
             ImageProtocol::Kitty,
             /*max_columns*/ 40,
             &dir.path().join("cache"),
+            TEST_HISTORY_IMAGE_TARGET_ROWS,
         )
         .unwrap();
 

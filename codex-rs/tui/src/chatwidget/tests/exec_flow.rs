@@ -860,7 +860,31 @@ async fn view_image_tool_call_emits_local_image_event() {
         local_images,
         vec![(
             image_path.as_path().to_path_buf(),
-            Some("example.png".to_string())
+            Some("example.png".to_string()),
+            ImagePreviewSize::Normal,
+        )]
+    );
+}
+
+#[tokio::test]
+async fn view_image_tool_call_preserves_preview_size_hint() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let image_path = chat.config.cwd.join("diagram.png");
+
+    handle_view_image_tool_call_with_preview_size(
+        &mut chat,
+        "call-image",
+        image_path.clone(),
+        ImagePreviewSize::Large,
+    );
+
+    let (_cells, local_images) = drain_history_events(&mut rx);
+    assert_eq!(
+        local_images,
+        vec![(
+            image_path.as_path().to_path_buf(),
+            Some("diagram.png".to_string()),
+            ImagePreviewSize::Large,
         )]
     );
 }
@@ -886,7 +910,8 @@ async fn image_generation_call_with_saved_path_emits_local_image_event() {
         local_images,
         vec![(
             image_path.as_path().to_path_buf(),
-            Some("A tiny blue square".to_string())
+            Some("A tiny blue square".to_string()),
+            ImagePreviewSize::Normal,
         )]
     );
 }

@@ -4,29 +4,43 @@
 //! events as transcript cells.
 
 use super::*;
+use codex_protocol::items::ImagePreviewSize;
 
 impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
-    pub(super) fn on_view_image_tool_call(&mut self, path: AbsolutePathBuf) {
+    pub(super) fn on_view_image_tool_call(
+        &mut self,
+        path: AbsolutePathBuf,
+        preview_size: ImagePreviewSize,
+    ) {
         self.flush_answer_stream_with_separator();
         self.insert_local_image_history(
             path.as_path().to_path_buf(),
             Some(display_path_for(path.as_path(), &self.config.cwd)),
+            preview_size,
         );
         self.request_redraw();
     }
 
-    fn insert_local_image_history(&mut self, path: PathBuf, caption: Option<String>) {
+    fn insert_local_image_history(
+        &mut self,
+        path: PathBuf,
+        caption: Option<String>,
+        preview_size: ImagePreviewSize,
+    ) {
         if !self.has_active_stream_tail() {
             self.flush_active_cell();
         }
         self.transcript.needs_final_message_separator = true;
         self.transcript.had_work_activity = true;
-        self.app_event_tx
-            .send(AppEvent::InsertLocalImage { path, caption });
+        self.app_event_tx.send(AppEvent::InsertLocalImage {
+            path,
+            caption,
+            preview_size,
+        });
     }
 
     pub(super) fn on_image_generation_begin(&mut self) {
@@ -44,7 +58,11 @@ impl ChatWidget {
             let caption = revised_prompt
                 .filter(|prompt| !prompt.trim().is_empty())
                 .unwrap_or(call_id);
-            self.insert_local_image_history(saved_path.as_path().to_path_buf(), Some(caption));
+            self.insert_local_image_history(
+                saved_path.as_path().to_path_buf(),
+                Some(caption),
+                ImagePreviewSize::Normal,
+            );
         } else {
             self.add_to_history(history_cell::new_image_generation_call(
                 call_id,

@@ -60,6 +60,7 @@ use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyAmendment;
+use codex_protocol::items::ImagePreviewSize;
 #[cfg(test)]
 use codex_protocol::mcp::Resource;
 #[cfg(test)]
@@ -145,14 +146,17 @@ pub(crate) enum HistoryRenderMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HistoryCellDisplayItem {
     Line(Line<'static>),
-    LocalImage(PathBuf),
+    LocalImage {
+        path: PathBuf,
+        preview_size: ImagePreviewSize,
+    },
 }
 
 impl HistoryCellDisplayItem {
     fn line(self) -> Option<Line<'static>> {
         match self {
             Self::Line(line) => Some(line),
-            Self::LocalImage(_) => None,
+            Self::LocalImage { .. } => None,
         }
     }
 }

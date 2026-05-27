@@ -9,10 +9,10 @@
 | Поле | Значение |
 | --- | --- |
 | Назначение | Локальные пользовательские, ассистентские и tool-generated изображения рендерятся в истории TUI как терминальные превью с текстовым fallback. |
-| Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path, `view_image`, `ImageGeneration.saved_path` и item-level replay/reflow. |
-| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image`, `ImageGeneration.saved_path`, replay/reflow, подготовка через `/pets`, PNG-нормализация и Unicode placeholders для Kitty, точечные тесты. |
-| Открыто / отложено | Managed ownership оригинальных изображений после resume не реализован; если source path недоступен, остается fallback. При экстремально узком окне preview может не поместиться. Настраиваемые per-image preview sizes вынесены в [follow-up:FU-2026-006]. |
-| Следующий шаг | По запросу: вернуться к [follow-up:FU-2026-006] для `small` / `normal` / `large` preview sizes и config rows. |
+| Текущее состояние | Реализовано для пользовательских вложений, обычной вставки в историю, controlled `InsertLocalImage` path, `view_image`, `ImageGeneration.saved_path`, item-level replay/reflow и per-image `preview_size`. |
+| Готово / реализовано | Элемент отображения `LocalImage`, `LocalImageHistoryCell`, `AppEvent::InsertLocalImage`, validation, `view_image`, `ImageGeneration.saved_path`, replay/reflow, `preview_size = small | normal | large`, config rows, подготовка через `/pets`, PNG-нормализация и Unicode placeholders для Kitty, точечные тесты. |
+| Открыто / отложено | Managed ownership оригинальных изображений после resume не реализован; если source path недоступен, остается fallback. При экстремально узком окне preview может не поместиться. |
+| Следующий шаг | По запросу: managed ownership оригиналов после resume или отдельная геометрия для экстремально узких окон. |
 
 ## Карта деталей
 
@@ -43,9 +43,18 @@
 пользовательских вложений или приходит через controlled app event для
 ассистентских/tool-generated изображений. В `Rich` mode ячейка для вставки в
 историю отдаёт обычные текстовые строки и дополнительный маркер
-`HistoryCellDisplayItem::LocalImage(path)`. Слой `App` превращает этот маркер в
-`HistoryInsertItem::Image`, используя тот же стек подготовки terminal-image, что
-и `/pets`, но с другим способом привязки к истории для Kitty.
+`HistoryCellDisplayItem::LocalImage { path, preview_size }`. Слой `App`
+резолвит `preview_size` в rows через `[tui.history_image_preview]` и превращает
+этот маркер в `HistoryInsertItem::Image`, используя тот же стек подготовки
+terminal-image, что и `/pets`, но с другим способом привязки к истории для
+Kitty.
+
+`preview_size` проходит только через trusted structured path. Для `view_image`
+модель может указать `small`, `normal` или `large`; отсутствие значения означает
+`normal`. Числовые rows не являются model-visible API: `small_rows`,
+`normal_rows` и `large_rows` задаются в config и применяются внутри TUI.
+Текстовый fallback остается обычным `[Image]` / `[Image: <caption>]` /
+`[Image #n]` и не показывает служебный size hint.
 
 Для Kitty и KittyLocalFile изображения сначала нормализуются в PNG-preview в
 `CODEX_HOME/cache/tui-history-images`, потому что Kitty payload объявляется как
@@ -64,37 +73,40 @@ history paths сохраняют `HistoryCellDisplayItem::LocalImage` до гр�
 ## Карта кода
 
 - [`codex-rs/tui/src/history_cell/mod.rs`][code:history-cell]
-  - `HistoryCellDisplayItem::LocalImage`: маркер для bitmap-preview,
-    поддержанного terminal protocol, вне ratatui `Line`.
+  - `HistoryCellDisplayItem::LocalImage { path, preview_size }`: маркер для
+    bitmap-preview, поддержанного terminal protocol, вне ratatui `Line`.
   - `HistoryCell::display_items_for_mode`: `Rich` mode может вернуть строки и
     маркеры изображений.
 - [`codex-rs/tui/src/history_cell/messages.rs`][code:history-cell-messages]
-  - `UserHistoryCell.local_image_paths`: источник локальных путей вложений и
-    fallback-меток `[Image #n]`.
+  - `UserHistoryCell.local_image_paths`: источник локальных путей вложений,
+    fallback-меток `[Image #n]` и дефолтного `preview_size = normal`.
 - [`codex-rs/tui/src/history_cell/local_image.rs`][code:local-image-cell]
-  - `LocalImageHistoryCell`: controlled cell для ассистента/инструментов с fallback
-    `[Image]` / `[Image: <caption>]` и marker `LocalImage(path)` в `Rich`.
+  - `LocalImageHistoryCell`: controlled cell для ассистента/инструментов с
+    fallback `[Image]` / `[Image: <caption>]` и marker
+    `LocalImage { path, preview_size }` в `Rich`.
 - [`codex-rs/tui/src/app_event.rs`][code:app-event]
-  - `AppEvent::InsertLocalImage { path, caption }`: trusted app-layer event для
-    локальных preview с исходным файлом.
+  - `AppEvent::InsertLocalImage { path, caption, preview_size }`: trusted
+    app-layer event для локальных preview с исходным файлом и размером preview.
 - [`codex-rs/tui/src/app/event_dispatch.rs`][code:event-dispatch]
   - validation для `InsertLocalImage`: `regular file` и decode через `image`
     crate перед созданием bitmap marker.
 - [`codex-rs/tui/src/chatwidget/tool_lifecycle.rs`][code:tool-lifecycle]
   - `ChatWidget::on_view_image_tool_call`: первый production caller, который
-    отправляет `AppEvent::InsertLocalImage` вместо legacy text-only cell.
+    отправляет `AppEvent::InsertLocalImage` с `preview_size` вместо legacy
+    text-only cell.
   - `ChatWidget::on_image_generation_end`: отправляет `ImageGeneration.saved_path`
     через `AppEvent::InsertLocalImage`; если path отсутствует, сохраняет
     text-only history cell.
 - [`codex-rs/tui/src/app/resize_reflow.rs`][code:resize-reflow]
   - `App::prepare_history_insert_items`: в best-effort-режиме превращает
-    маркер `LocalImage` в `HistoryInsertItem::Image`.
+    маркер `LocalImage` в `HistoryInsertItem::Image`, предварительно резолвя
+    `preview_size` в rows через runtime config.
   - Resize reflow и initial/thread-switch replay работают на уровне
     `HistoryCellDisplayItem`, а не только `Line`, чтобы не терять bitmap marker
     до финальной подготовки terminal image.
 - [`codex-rs/tui/src/pets/mod.rs`][code:pets-mod]
   - `prepare_history_image`: готовит payload для Kitty, KittyLocalFile или
-    Sixel и размер preview.
+    Sixel и размер preview по переданному `target_rows`.
 - [`codex-rs/tui/src/pets/image_protocol.rs`][code:image-protocol]
   - `png_frame`, `sixel_frame`: создают cache assets для terminal protocols.
   - `kitty_transmit_png_with_virtual_placement`,
@@ -119,17 +131,19 @@ history paths сохраняют `HistoryCellDisplayItem::LocalImage` до гр�
   |
   +-- UserHistoryCell.local_image_paths
   |
-  +-- AppEvent::InsertLocalImage
+  +-- AppEvent::InsertLocalImage { preview_size }
   |
   v
 Rich mode display_items_for_mode(width)
   |
   +-- Line("[Image #n]" / "[Image: caption]") fallback
   |
-  +-- HistoryCellDisplayItem::LocalImage(path)
+  +-- HistoryCellDisplayItem::LocalImage { path, preview_size }
           |
           v
      App::prepare_history_insert_items
+          |
+          +-- Config.history_image_preview.rows_for(preview_size)
           |
           v
      pets::prepare_history_image
@@ -153,10 +167,12 @@ flowchart TD
     Generated["ImageGeneration.saved_path"]
     ViewImage["view_image path"]
     UserCell["UserHistoryCell.local_image_paths"]
+    PreviewSize["preview_size small/normal/large"]
     AppEvent["AppEvent::InsertLocalImage"]
     Display["display_items_for_mode(width, Rich)"]
     Fallback["Line: [Image #n]"]
-    Marker["HistoryCellDisplayItem::LocalImage(path)"]
+    Marker["HistoryCellDisplayItem::LocalImage(path, preview_size)"]
+    Config["Config.history_image_preview.rows_for"]
     Prepare["App::prepare_history_insert_items"]
     Pets["pets::prepare_history_image"]
     Cache["CODEX_HOME/cache/tui-history-images"]
@@ -167,12 +183,15 @@ flowchart TD
     Attachment --> UserCell
     Generated --> AppEvent
     ViewImage --> AppEvent
+    ViewImage --> PreviewSize
+    PreviewSize --> AppEvent
     UserCell --> Display
     AppEvent --> Display
     Display --> Fallback
     Display --> Marker
     Marker --> Prepare
-    Prepare --> Pets
+    Prepare --> Config
+    Config --> Pets
     Pets --> Cache
     Pets --> Item
     Item --> Writer
@@ -183,13 +202,23 @@ flowchart TD
 ## Контракты
 
 - `HistoryCell::display_items_for_mode(width, HistoryRenderMode::Rich)` может
-  вернуть `HistoryCellDisplayItem::LocalImage(path)` только рядом с текстовой
-  строкой fallback.
-- `AppEvent::InsertLocalImage { path, caption }` является controlled boundary
-  для ассистентских/инструментальных local images: path должен быть regular
-  file и успешно декодироваться через `image` crate до создания marker.
+  вернуть `HistoryCellDisplayItem::LocalImage { path, preview_size }` только
+  рядом с текстовой строкой fallback.
+- `AppEvent::InsertLocalImage { path, caption, preview_size }` является
+  controlled boundary для ассистентских/инструментальных local images: path
+  должен быть regular file и успешно декодироваться через `image` crate до
+  создания marker, а `preview_size` должен приходить из structured source.
 - `ThreadItem::ImageView` / `view_image` является первым production source для
-  `InsertLocalImage`; caption строится из `display_path_for(path, cwd)`.
+  `InsertLocalImage`; caption строится из `display_path_for(path, cwd)`, а
+  `preview_size` передается из `ImageViewItem`.
+- `view_image.preview_size` принимает только `small`, `normal`, `large`;
+  отсутствие значения резолвится в `normal`. Числовой `preview_rows` не входит
+  в model-visible tool schema.
+- `[tui.history_image_preview]` задает `small_rows`, `normal_rows`,
+  `large_rows`; runtime `Config.history_image_preview.rows_for(preview_size)`
+  возвращает не меньше одной строки.
+- Текстовый fallback не должен содержать `preview_size`, `small`, `normal` или
+  `large` как служебный marker.
 - `ImageGeneration.saved_path` является controlled source для
   `InsertLocalImage`: core сохраняет artifact под
   `CODEX_HOME/generated_images/<session>/<call>.png`; caption строится из
@@ -221,6 +250,10 @@ flowchart TD
   отображение: image должен быть привязан к scrollback через Unicode placeholders.
 - Не читать локальные пути из произвольного Markdown/plain text как trusted
   image source.
+- Не читать `preview_size` из произвольного Markdown/plain text.
+- Не показывать `preview_size` в fallback label, Raw/copy или логах истории.
+- Не добавлять `preview_rows` в model-visible `view_image` API; числовые rows
+  остаются config/detail renderer'а.
 - Всегда сохранять fallback `[Image #n]` рядом с bitmap preview.
 - Для Kitty и KittyLocalFile history previews сначала делать PNG-preview cache,
   потому что payload отправляется как PNG (`f=100`).
@@ -238,11 +271,12 @@ flowchart TD
 - Корень cache: `CODEX_HOME/cache/tui-history-images`.
 - Generated image artifacts, которые могут стать source для TUI preview, лежат
   под `CODEX_HOME/generated_images/<session>/<call>.png`.
-- Целевая высота preview: `HISTORY_IMAGE_TARGET_ROWS = 12`; ширина
-  ограничивается текущей шириной терминала через `max_columns = width - 4`.
-- Настраиваемые per-image размеры preview (`small` / `normal` / `large`) и
-  config rows отложены в [follow-up:FU-2026-006]. Дефолт должен сохранить
-  текущее поведение: `normal = 12 rows`.
+- Целевая высота preview выбирается по `preview_size` через
+  `[tui.history_image_preview]`: `small_rows = 8`, `normal_rows = 12`,
+  `large_rows = 20` по умолчанию. Ширина ограничивается текущей шириной
+  терминала через `max_columns = width - 4`.
+- `normal = 12 rows` сохраняет прежнее поведение для пользовательских локальных
+  вложений, `ImageGeneration.saved_path` и `view_image` без `preview_size`.
 - Обычная вставка в историю, resize reflow, initial replay, thread-switch tail
   replay и overlay-deferred paths могут вставить bitmap preview.
 - В Kitty обычный `a=T` screen placement подходит для ambient `/pets`, но не для
@@ -305,6 +339,12 @@ flowchart TD
 
   Проверяет: preview не выходит за доступную ширину history.
 
+- Выбранная высота preview:
+  `cargo test -p codex-tui history_image_size`
+
+  Проверяет: preview использует запрошенный `target_rows` и всё ещё clamp'ит
+  wide images по доступной ширине.
+
 - Controlled cell для ассистента/инструментов:
   `cargo test -p codex-tui local_image`
 
@@ -317,6 +357,25 @@ flowchart TD
 
   Проверяет: `ThreadItem::ImageView` отправляет `InsertLocalImage` и не создает
   legacy text-only history cell.
+
+- Production caller `view_image` с size hint:
+  `cargo test -p codex-tui view_image_tool_call_preserves_preview_size_hint`
+
+  Проверяет: `ThreadItem::ImageView.preview_size` доходит до
+  `InsertLocalImage`.
+
+- Config и tool API:
+  `cargo test -p codex-core history_image_preview`
+  `cargo test -p codex-core view_image`
+
+  Проверяет: config defaults/overrides для `[tui.history_image_preview]`,
+  `view_image.preview_size`, ошибку для invalid size и отсутствие
+  model-visible `preview_rows` в schema.
+
+- App-server protocol:
+  `cargo test -p codex-app-server-protocol`
+
+  Проверяет: v2 `ThreadItem::ImageView.previewSize` и schema fixtures.
 
 - Production caller `ImageGeneration.saved_path`:
   `env RUST_MIN_STACK=8388608 cargo test -p codex-tui image_generation_call`
@@ -358,7 +417,7 @@ flowchart TD
 - Этап 005: [stage:PLAN-TUI-ASSISTANT-IMAGES-001:005]
 - Закрытая работа по resize/reflow: [follow-up:FU-2026-001]
 - Закрытая работа по контролируемому пути источника: [follow-up:FU-2026-002]
-- Настраиваемые размеры preview: [follow-up:FU-2026-006]
+- Закрытая работа по настраиваемым размерам preview: [follow-up:FU-2026-006]
 - Отложенные работы: [follow-ups:image-history]
 - Коммиты реализации: `96feb7e0d Add terminal image previews to TUI history`,
   `483c08245 Normalize history images for Kitty previews`
@@ -385,7 +444,7 @@ flowchart TD
 [details:verification]: #проверки
 [follow-up:FU-2026-001]: ../../follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md
 [follow-up:FU-2026-002]: ../../follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md
-[follow-up:FU-2026-006]: ../../follow-ups/FU-2026-006-tui-history-image-preview-size.md
+[follow-up:FU-2026-006]: ../../follow-ups/archive/2026/FU-2026-006-tui-history-image-preview-size.md
 [follow-ups:image-history]: ../../follow-ups/README.md
 [plan:PLAN-TUI-ASSISTANT-IMAGES-001]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/plan.md
 [stage:PLAN-TUI-ASSISTANT-IMAGES-001:002]: ../../plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/stages/002-local-image-history-cell.md

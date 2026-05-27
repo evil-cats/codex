@@ -1,12 +1,12 @@
 ---
 id: FU-2026-006
-status: accepted
+status: done
 priority: medium
 kind: enhancement
 tags: [codex, tui, images, view-image, config, mermaid]
 created: 2026-05-27
 updated: 2026-05-27
-review_at: перед следующим этапом TUI history image preview sizing
+review_at: реализация structured preview_size для TUI history image previews
 architecture_refs:
   - docs/architecture/features/tui-history-image-previews.md
   - codex-rs/core/src/tools/handlers/view_image.rs
@@ -16,8 +16,8 @@ architecture_refs:
   - codex-rs/tui/src/app/resize_reflow.rs
   - codex-rs/tui/src/pets/mod.rs
 invalid_if:
-  - TUI history image previews остаются fixed-size и не получают per-image size hints
-  - Mermaid/image preview выводится отдельным viewer path, не через history image preview
+  - preview_size удален из trusted image path
+  - TUI history image previews снова используют только fixed-size rows без config
 ---
 
 # FU-2026-006: настраиваемые размеры TUI history image preview
@@ -26,12 +26,12 @@ invalid_if:
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `accepted` |
+| Статус | `done` |
 | Суть | Добавить структурный `preview_size` со значениями `small`, `normal`, `large` для локальных image previews и вынести rows для этих размеров в config. |
 | Почему важно | Mermaid-диаграммы и другие wide/diagram images лучше читать крупным preview, но обычные картинки должны сохранить текущий дефолт `normal = 12 rows`. |
-| Когда вернуться | Перед следующим этапом TUI history image preview sizing или перед расширением `view_image` для управляемого размера preview. |
-| Когда закрыть | Если preview остается fixed-size или Mermaid/images переходят на отдельный viewer path вне history image preview. |
-| Следующий шаг | Спроектировать минимальный patch через trusted structured event path, обновить config schema и добавить sizing tests. |
+| Когда вернулись | При реализации structured `preview_size` для `view_image` и TUI history previews. |
+| Итог | Реализованы `preview_size = small | normal | large`, config rows, schema fixtures, app-server v2 propagation и TUI sizing по resolved rows. |
+| Следующий шаг | Нет; карточка закрыта. |
 | Связи | [feature:tui-history-image-previews], [code:view-image-handler], [code:config-types], [code:pets-mod] |
 
 ## Наблюдение
@@ -63,20 +63,20 @@ hint также не должен попадать в видимый fallback: �
 
 ## Что нужно сделать
 
-- Добавить enum размера preview: `small`, `normal`, `large`; если
+- [x] Добавить enum размера preview: `small`, `normal`, `large`; если
   `preview_size` не задан, использовать `normal`.
-- Провести size hint через trusted path:
+- [x] Провести size hint через trusted path:
   `view_image(..., preview_size = "large")` -> `ImageViewItem` ->
   `AppEvent::InsertLocalImage` -> `LocalImageHistoryCell` ->
   `HistoryCellDisplayItem::LocalImage`.
-- Не парсить локальные пути или размер из произвольного текста вида
+- [x] Не парсить локальные пути или размер из произвольного текста вида
   `[Image:large: /tmp/file.png]`.
-- Не показывать size hint в fallback label. Видимый fallback должен оставаться
+- [x] Не показывать size hint в fallback label. Видимый fallback должен оставаться
   обычным `[Image]`, `[Image: <caption>]` или `[Image: <path>]`, чтобы
   служебный `preview_size` не торчал в консольной истории, Raw/copy и логах.
-- Не добавлять `preview_rows` в model-visible `view_image` API. Числовые rows
+- [x] Не добавлять `preview_rows` в model-visible `view_image` API. Числовые rows
   должны быть только config/input для вычисления размера renderer'ом.
-- Вынести rows в config с дефолтами:
+- [x] Вынести rows в config с дефолтами:
 
   ```toml
   [tui.history_image_preview]
@@ -85,12 +85,12 @@ hint также не должен попадать в видимый fallback: �
   large_rows = 20
   ```
 
-- Разрешать отсутствие секции config: дефолты должны давать текущее поведение
+- [x] Разрешать отсутствие секции config: дефолты должны давать текущее поведение
   `normal = 12 rows`.
-- Передавать resolved rows в `pets::prepare_history_image` вместо fixed
+- [x] Передавать resolved rows в `pets::prepare_history_image` вместо fixed
   `HISTORY_IMAGE_TARGET_ROWS`.
-- Обновить `ConfigToml` / runtime `Config` / schema fixtures.
-- Добавить тесты:
+- [x] Обновить `ConfigToml` / runtime `Config` / schema fixtures.
+- [x] Добавить тесты:
   - parsing/defaults для `[tui.history_image_preview]`;
   - `view_image` принимает и валидирует `preview_size`;
   - `view_image` schema не включает публичный `preview_rows`;
@@ -99,17 +99,34 @@ hint также не должен попадать в видимый fallback: �
   - TUI sizing использует `large` rows и сохраняет `normal` по умолчанию;
   - invalid size дает понятную ошибку.
 
+## Итог
+
+Закрыто реализацией structured preview sizing:
+
+- `ImagePreviewSize` добавлен в protocol items, `ImageViewItem`, legacy
+  `ViewImageToolCallEvent` и app-server v2 `ThreadItem::ImageView`.
+- `view_image` принимает опциональный `preview_size` (`small`, `normal`,
+  `large`) и отвергает другие значения с понятной ошибкой.
+- `view_image` schema показывает `preview_size`, но не раскрывает renderer-only
+  `preview_rows`.
+- `LocalImageHistoryCell`, `AppEvent::InsertLocalImage` и
+  `HistoryCellDisplayItem::LocalImage` несут size hint как trusted data, не
+  через текст fallback.
+- `[tui.history_image_preview]` задает `small_rows`, `normal_rows`,
+  `large_rows`; runtime `Config` резолвит rows через `rows_for`.
+- `pets::prepare_history_image` больше не использует fixed target rows:
+  `resize_reflow` передает rows, выбранные по `preview_size`.
+- Config schema и app-server schema fixtures обновлены.
+
 ## Когда вернуться
 
-Перед следующим этапом TUI history image preview sizing, особенно если снова
-тестируем Mermaid, generated diagrams или хотим дать ассистенту управлять
-размером конкретного preview без глобального изменения всех картинок.
+Карточка закрыта после реализации structured `preview_size` и config rows.
 
 ## Когда закрыть как неактуальное
 
-Если TUI history image previews сознательно остаются fixed-size или если для
-Mermaid/diagram output появляется отдельный viewer path, который не использует
-history image preview.
+Карточка закрыта как реализованная. Она стала бы неактуальной, если бы проект
+закрепил fixed-size previews или перенес Mermaid/diagram output в отдельный
+viewer path без history image preview.
 
 ## Связи
 
@@ -122,11 +139,11 @@ history image preview.
 - History insert preparation: [code:resize-reflow]
 - Image sizing/preparation: [code:pets-mod]
 
-[code:config-types]: ../../codex-rs/config/src/types.rs
-[code:history-cell]: ../../codex-rs/tui/src/history_cell/mod.rs
-[code:pets-mod]: ../../codex-rs/tui/src/pets/mod.rs
-[code:protocol-items]: ../../codex-rs/protocol/src/items.rs
-[code:resize-reflow]: ../../codex-rs/tui/src/app/resize_reflow.rs
-[code:view-image-handler]: ../../codex-rs/core/src/tools/handlers/view_image.rs
-[code:view-image-spec]: ../../codex-rs/core/src/tools/handlers/view_image_spec.rs
-[feature:tui-history-image-previews]: ../architecture/features/tui-history-image-previews.md
+[code:config-types]: ../../../../codex-rs/config/src/types.rs
+[code:history-cell]: ../../../../codex-rs/tui/src/history_cell/mod.rs
+[code:pets-mod]: ../../../../codex-rs/tui/src/pets/mod.rs
+[code:protocol-items]: ../../../../codex-rs/protocol/src/items.rs
+[code:resize-reflow]: ../../../../codex-rs/tui/src/app/resize_reflow.rs
+[code:view-image-handler]: ../../../../codex-rs/core/src/tools/handlers/view_image.rs
+[code:view-image-spec]: ../../../../codex-rs/core/src/tools/handlers/view_image_spec.rs
+[feature:tui-history-image-previews]: ../../../architecture/features/tui-history-image-previews.md
