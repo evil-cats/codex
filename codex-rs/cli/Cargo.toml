@@ -1,6 +1,6 @@
 [package]
 name = "codex-cli"
-version = "0.133.0+hermione"
+version = "0.134.0+hermione"
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
