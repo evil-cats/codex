@@ -70,6 +70,7 @@ use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_features::NetworkProxyConfigToml;
 use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_install_context::InstallContext;
 use codex_login::AuthManagerConfig;
 use codex_mcp::McpConfig;
 use codex_memories_read::memory_root;
@@ -589,8 +590,8 @@ pub struct Config {
     /// of the legacy `sandbox_mode` syntax.
     pub explicit_permission_profile_mode: bool,
 
-    /// User-defined permission profile IDs available from effective config.
-    pub custom_permission_profile_ids: Vec<String>,
+    /// User-defined permission profiles available from effective config.
+    pub custom_permission_profiles: Vec<CustomPermissionProfileSummary>,
 
     /// Configures who approval requests are routed to for review once they have
     /// been escalated. This does not disable separate safety checks such as
@@ -1370,6 +1371,7 @@ impl Config {
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
+            prefix_mcp_tool_names: self.prefix_mcp_tool_names(),
             client_elicitation_capability: if self.features.enabled(Feature::AuthElicitation) {
                 ElicitationCapability {
                     form: Some(FormElicitationCapability::default()),
@@ -1384,6 +1386,10 @@ impl Config {
             plugin_ids_by_mcp_server_name,
             plugin_capability_summaries: loaded_plugins.capability_summaries().to_vec(),
         }
+    }
+
+    pub(crate) fn prefix_mcp_tool_names(&self) -> bool {
+        !self.features.enabled(Feature::NonPrefixedMcpToolNames)
     }
 
     pub async fn rebuild_preserving_session_layers(
@@ -1429,11 +1435,18 @@ impl Config {
             .effective_config()
             .try_into()
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let default_zsh_path = refreshed_config
+            .zsh_path
+            .clone()
+            .map(AbsolutePathBuf::try_from)
+            .transpose()?;
+
         Self::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             cfg,
             ConfigOverrides {
                 cwd: Some(self.cwd.to_path_buf()),
+                default_zsh_path,
                 ..Default::default()
             },
             refreshed_config.codex_home.clone(),
@@ -1926,6 +1939,12 @@ pub struct AgentRoleConfig {
     pub nickname_candidates: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomPermissionProfileSummary {
+    pub id: String,
+    pub description: Option<String>,
+}
+
 fn resolve_tool_suggest_config(
     config_toml: &ConfigToml,
     config_layer_stack: &ConfigLayerStack,
@@ -2165,7 +2184,7 @@ pub struct ConfigOverrides {
     pub codex_self_exe: Option<PathBuf>,
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     pub main_execve_wrapper_exe: Option<PathBuf>,
-    pub zsh_path: Option<PathBuf>,
+    pub default_zsh_path: Option<AbsolutePathBuf>,
     pub base_instructions: Option<String>,
     pub developer_instructions: Option<String>,
     pub personality: Option<Personality>,
@@ -2529,7 +2548,7 @@ impl Config {
             codex_self_exe,
             codex_linux_sandbox_exe,
             main_execve_wrapper_exe,
-            zsh_path: zsh_path_override,
+            default_zsh_path,
             base_instructions,
             developer_instructions,
             personality,
@@ -2674,11 +2693,18 @@ impl Config {
                 permission_config_syntax,
                 Some(PermissionConfigSyntax::Profiles)
             );
-        let custom_permission_profile_ids = cfg
+        let custom_permission_profiles = cfg
             .permissions
             .as_ref()
             .map_or_else(Vec::new, |permissions| {
-                permissions.entries.keys().cloned().collect()
+                permissions
+                    .entries
+                    .iter()
+                    .map(|(id, profile)| CustomPermissionProfileSummary {
+                        id: id.clone(),
+                        description: profile.description.clone(),
+                    })
+                    .collect()
             });
         let using_implicit_builtin_profile = permission_config_syntax.is_none()
             && effective_permission_selection.selected_profile_id.is_none();
@@ -3288,7 +3314,9 @@ impl Config {
         )
         .await?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
-        let zsh_path = zsh_path_override.or(cfg.zsh_path.map(Into::into));
+        let zsh_path = default_zsh_path
+            .or_else(|| InstallContext::current().bundled_zsh_path())
+            .map(AbsolutePathBuf::into_path_buf);
 
         let review_model = override_review_model.or(cfg.review_model);
 
@@ -3451,7 +3479,7 @@ impl Config {
                 windows_sandbox_private_desktop,
             },
             explicit_permission_profile_mode,
-            custom_permission_profile_ids,
+            custom_permission_profiles,
             approvals_reviewer: constrained_approvals_reviewer.value(),
             enforce_residency: enforce_residency.value,
             notify: cfg.notify,

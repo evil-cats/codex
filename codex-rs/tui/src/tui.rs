@@ -42,6 +42,7 @@ use crate::custom_terminal;
 use crate::custom_terminal::Terminal as CustomTerminal;
 use crate::insert_history::HistoryInsertItem;
 use crate::insert_history::HistoryLineWrapPolicy;
+use crate::insert_history::InsertHistoryMode;
 use crate::notifications::DesktopNotificationBackend;
 use crate::notifications::detect_backend;
 use crate::tui::event_stream::EventBroker;
@@ -57,6 +58,7 @@ mod frame_requester;
 #[cfg(unix)]
 mod job_control;
 mod keyboard_modes;
+mod terminal_stderr;
 
 /// Target frame interval for UI redraw scheduling.
 pub(crate) const TARGET_FRAME_INTERVAL: Duration = frame_rate_limiter::MIN_FRAME_INTERVAL;
@@ -67,6 +69,7 @@ pub type Terminal = CustomTerminal<CrosstermBackend<Stdout>>;
 pub(crate) struct InitializedTerminal {
     pub(crate) terminal: Terminal,
     pub(crate) enhanced_keys_supported: bool,
+    pub(crate) stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
 
 pub(crate) fn running_in_vscode_terminal() -> bool {
@@ -282,7 +285,16 @@ pub fn restore() -> Result<()> {
 /// Uses a stronger keyboard reset than [`restore`] so the parent shell recovers even if a
 /// terminal missed the stack pop that normally pairs with [`set_modes`].
 pub fn restore_after_exit() -> Result<()> {
-    restore_common(RawModeRestore::Disable, KeyboardRestore::ResetAfterExit)
+    let mut first_error =
+        restore_common(RawModeRestore::Disable, KeyboardRestore::ResetAfterExit).err();
+    if let Err(err) = terminal_stderr::finish() {
+        first_error.get_or_insert(err);
+    }
+
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 /// Restore the terminal to its original state, but keep raw mode enabled.
@@ -426,9 +438,11 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
         !keyboard_modes::keyboard_enhancement_disabled() && detect_keyboard_enhancement_supported();
 
     let tui = CustomTerminal::with_options_and_cursor_position(backend, cursor_pos)?;
+    let stderr_guard = terminal_stderr::TerminalStderrGuard::install()?;
     Ok(InitializedTerminal {
         terminal: tui,
         enhanced_keys_supported,
+        stderr_guard,
     })
 }
 
@@ -488,8 +502,12 @@ pub struct Tui {
     enhanced_keys_supported: bool,
     notification_backend: Option<DesktopNotificationBackend>,
     notification_condition: NotificationCondition,
+    // Raw terminal-wrapped history needs a non-scroll-region insertion path in Zellij.
+    is_zellij: bool,
     // When false, enter_alt_screen() becomes a no-op.
     alt_screen_enabled: bool,
+    // Keeps unmanaged process stderr writes out of the inline viewport.
+    _stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
 
 struct PendingHistoryItems {
@@ -510,13 +528,18 @@ where
 }
 
 impl Tui {
-    pub fn new(terminal: Terminal, enhanced_keys_supported: bool) -> Self {
+    pub(crate) fn new(
+        terminal: Terminal,
+        enhanced_keys_supported: bool,
+        stderr_guard: terminal_stderr::TerminalStderrGuard,
+    ) -> Self {
         let (draw_tx, _) = broadcast::channel(1);
         let frame_requester = FrameRequester::new(draw_tx.clone());
 
         // Cache this to avoid contention with the event reader.
         supports_color::on_cached(supports_color::Stream::Stdout);
         let _ = crate::terminal_palette::default_colors();
+        let is_zellij = codex_terminal_detection::terminal_info().is_zellij();
 
         Self {
             frame_requester,
@@ -534,7 +557,9 @@ impl Tui {
             enhanced_keys_supported,
             notification_backend: Some(detect_backend(NotificationMethod::default())),
             notification_condition: NotificationCondition::default(),
+            is_zellij,
             alt_screen_enabled: true,
+            _stderr_guard: stderr_guard,
         }
     }
 
@@ -578,8 +603,8 @@ impl Tui {
     /// Temporarily restore terminal state to run an external interactive program `f`.
     ///
     /// This pauses crossterm's stdin polling by dropping the underlying event stream, restores
-    /// terminal modes (optionally keeping raw mode enabled), then re-applies Codex TUI modes and
-    /// flushes pending stdin input before resuming events.
+    /// terminal modes and stderr (optionally keeping raw mode enabled), then re-applies Codex TUI
+    /// modes and stderr suppression before resuming events.
     pub async fn with_restored<R, F, Fut>(&mut self, mode: RestoreMode, f: F) -> R
     where
         F: FnOnce() -> Fut,
@@ -597,9 +622,15 @@ impl Tui {
         if let Err(err) = mode.restore() {
             tracing::warn!("failed to restore terminal modes before external program: {err}");
         }
+        if let Err(err) = terminal_stderr::pause() {
+            tracing::warn!("failed to restore terminal stderr before external program: {err}");
+        }
 
         let output = f().await;
 
+        if let Err(err) = terminal_stderr::resume() {
+            tracing::warn!("failed to suppress terminal stderr after external program: {err}");
+        }
         if let Err(err) = set_modes() {
             tracing::warn!("failed to re-enable terminal modes after external program: {err}");
         }
@@ -783,15 +814,28 @@ impl Tui {
     fn flush_pending_history_lines(
         terminal: &mut Terminal,
         pending_history_lines: &mut Vec<PendingHistoryItems>,
+        is_zellij: bool,
     ) -> Result<()> {
         if pending_history_lines.is_empty() {
             return Ok(());
         }
 
         for batch in pending_history_lines.iter() {
-            crate::insert_history::insert_history_items_with_wrap_policy(
+            let mode = if is_zellij
+                && batch.wrap_policy == HistoryLineWrapPolicy::Terminal
+                && batch
+                    .items
+                    .iter()
+                    .all(|item| matches!(item, HistoryInsertItem::Line(_)))
+            {
+                InsertHistoryMode::ZellijRaw
+            } else {
+                InsertHistoryMode::Standard
+            };
+            crate::insert_history::insert_history_items_with_mode_and_wrap_policy(
                 terminal,
                 batch.items.clone(),
+                mode,
                 batch.wrap_policy,
             )?;
         }
@@ -848,7 +892,11 @@ impl Tui {
                 terminal.set_viewport_area(area);
             }
 
-            Self::flush_pending_history_lines(terminal, &mut self.pending_history_lines)?;
+            Self::flush_pending_history_lines(
+                terminal,
+                &mut self.pending_history_lines,
+                self.is_zellij,
+            )?;
 
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.
             #[cfg(unix)]
@@ -954,7 +1002,11 @@ impl Tui {
             let terminal = &mut self.terminal;
             let needs_full_repaint =
                 Self::update_inline_viewport_for_resize_reflow(terminal, height)?;
-            Self::flush_pending_history_lines(terminal, &mut self.pending_history_lines)?;
+            Self::flush_pending_history_lines(
+                terminal,
+                &mut self.pending_history_lines,
+                self.is_zellij,
+            )?;
 
             if needs_full_repaint {
                 terminal.invalidate_viewport();
