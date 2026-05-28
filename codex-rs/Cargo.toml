@@ -506,7 +506,7 @@ inherits = "release"
 # Local optimized builds should keep using multiple cores during the final
 # optimization stages. The canonical release profile above favors size.
 lto = "thin"
-codegen-units = 16
+codegen-units = 32
 
 [profile.profiling]
 inherits = "release"
