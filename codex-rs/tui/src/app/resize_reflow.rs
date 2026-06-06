@@ -77,10 +77,14 @@ impl App {
         cell: &dyn HistoryCell,
         width: u16,
     ) -> Vec<HistoryCellDisplayItem> {
-        let mut display = cell.display_items_for_mode(width, self.chat_widget.history_render_mode());
+        let mut display =
+            cell.display_items_for_mode(width, self.chat_widget.history_render_mode());
         if !display.is_empty() && !cell.is_stream_continuation() {
             if self.has_emitted_history_lines {
-                display.insert(/*index*/ 0, HistoryCellDisplayItem::from(Line::from("")));
+                display.insert(
+                    /*index*/ 0,
+                    HistoryCellDisplayItem::from(Line::from("")),
+                );
             } else {
                 self.has_emitted_history_lines = true;
             }
@@ -580,10 +584,7 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             cell_displays.push_front(ReflowCellDisplay {
-                items: cell.display_items_for_mode(
-                    width,
-                    self.chat_widget.history_render_mode(),
-                ),
+                items: cell.display_items_for_mode(width, self.chat_widget.history_render_mode()),
                 is_stream_continuation: cell.is_stream_continuation(),
             });
         }

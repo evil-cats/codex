@@ -278,10 +278,7 @@ impl App {
         let was_backtrack = self.backtrack.overlay_preview_active;
         if !self.deferred_history_lines.is_empty() {
             let items = std::mem::take(&mut self.deferred_history_lines);
-            tui.insert_history_items_with_wrap_policy(
-                items,
-                self.history_line_wrap_policy(),
-            );
+            tui.insert_history_items_with_wrap_policy(items, self.history_line_wrap_policy());
         }
         self.overlay = None;
         self.backtrack.overlay_preview_active = false;
