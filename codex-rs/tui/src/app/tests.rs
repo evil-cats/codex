@@ -19,14 +19,11 @@ use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryCellDisplayItem;
-use crate::history_cell::HistoryRenderMode;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_session_info;
-use crate::insert_history::HistoryInsertItem;
 use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
-use base64::Engine;
 
 use crate::app_command::AppCommand as Op;
 use crate::diff_model::FileChange;
@@ -87,7 +84,6 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
-use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::NetworkPermissions;
@@ -113,8 +109,6 @@ macro_rules! assert_app_snapshot {
         });
     };
 }
-
-const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 fn test_absolute_path(path: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(PathBuf::from(path)).expect("absolute test path")
@@ -154,6 +148,7 @@ async fn handle_mcp_inventory_result_respects_origin_thread() {
     app.handle_mcp_inventory_result(
         Ok(vec![McpServerStatus {
             name: "docs".to_string(),
+            server_info: None,
             tools: HashMap::new(),
             resources: Vec::new(),
             resource_templates: Vec::new(),
@@ -345,6 +340,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
             TurnStatus::Completed,
             vec![ThreadItem::UserMessage {
                 id: "user-1".to_string(),
+                client_id: None,
                 content: vec![AppServerUserInput::Text {
                     text: "earlier prompt".to_string(),
                     text_elements: Vec::new(),
@@ -1825,7 +1821,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("Permissions updated to Auto-review"));
+    assert!(rendered.contains("Permissions updated to Approve for me"));
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
     assert!(config.contains("guardian_approval = true"));
@@ -1920,7 +1916,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("Permissions updated to Default"));
+    assert!(rendered.contains("Permissions updated to Ask for approval"));
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
     assert!(!config.contains("guardian_approval = true"));
@@ -2544,6 +2540,7 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
             thread_id: thread_id.to_string(),
             turn_id: "turn-approval".to_string(),
             item_id: "call-approval".to_string(),
+            environment_id: Some("remote".to_string()),
             started_at_ms: 0,
             cwd: test_absolute_path("/tmp"),
             reason: Some("Need access to .git".to_string()),
@@ -2562,7 +2559,9 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
     };
 
     let Some(ThreadInteractiveRequest::Approval(ApprovalRequest::Permissions {
-        permissions, ..
+        environment_id,
+        permissions,
+        ..
     })) = app
         .interactive_request_for_thread_request(thread_id, &request)
         .await
@@ -2570,6 +2569,7 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
         panic!("expected permissions approval request");
     };
 
+    assert_eq!(environment_id.as_deref(), Some("remote"));
     assert_eq!(
         permissions,
         RequestPermissionProfile {
@@ -2772,6 +2772,7 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
                 id: agent_thread_id.to_string(),
                 session_id: agent_thread_id.to_string(),
                 forked_from_id: None,
+                parent_thread_id: None,
                 preview: "agent thread".to_string(),
                 ephemeral: false,
                 model_provider: "agent-provider".to_string(),
@@ -2861,6 +2862,7 @@ async fn inactive_thread_started_notification_preserves_primary_model_when_path_
                 id: agent_thread_id.to_string(),
                 session_id: agent_thread_id.to_string(),
                 forked_from_id: None,
+                parent_thread_id: None,
                 preview: "agent thread".to_string(),
                 ephemeral: false,
                 model_provider: "agent-provider".to_string(),
@@ -2919,6 +2921,7 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
         id: read_thread_id.to_string(),
         session_id: read_thread_id.to_string(),
         forked_from_id: None,
+        parent_thread_id: None,
         preview: "read thread".to_string(),
         ephemeral: false,
         model_provider: "read-provider".to_string(),
@@ -3270,6 +3273,7 @@ async fn side_thread_snapshot_hides_forked_parent_transcript() {
         TurnStatus::Completed,
         vec![ThreadItem::UserMessage {
             id: "parent-user".to_string(),
+            client_id: None,
             content: vec![AppServerUserInput::Text {
                 text: "parent prompt should stay hidden".to_string(),
                 text_elements: Vec::new(),
@@ -3909,83 +3913,19 @@ fn enable_terminal_resize_reflow(app: &mut App) {
         .expect("feature should be configurable");
 }
 
-fn write_test_png(dir: &Path, name: &str) -> PathBuf {
-    let path = dir.join(name);
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(SMALL_PNG_BASE64)
-        .expect("test PNG should decode");
-    std::fs::write(&path, bytes).expect("test PNG should be written");
-    path
-}
-
 fn plain_line_cell(text: impl Into<String>) -> Arc<dyn HistoryCell> {
     Arc::new(PlainHistoryCell::new(vec![Line::from(text.into())])) as Arc<dyn HistoryCell>
 }
 
-#[test]
-fn local_image_event_cell_accepts_decodable_regular_file() {
-    let dir = tempdir().expect("tempdir");
-    let image_path = write_test_png(dir.path(), "assistant-image.png");
-
-    let cell = App::history_cell_for_local_image_event(
-        image_path.clone(),
-        Some("diagram".to_string()),
-        ImagePreviewSize::Large,
-    );
-    let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
-
-    assert!(display_items.iter().any(|item| matches!(
-        item,
-        HistoryCellDisplayItem::LocalImage {
-            path,
-            preview_size: ImagePreviewSize::Large
-        } if path == &image_path
-    )));
-    assert_eq!(
-        lines_to_single_string(&cell.raw_lines()),
-        "[Image: diagram]"
-    );
-}
-
-#[test]
-fn local_image_event_cell_rejects_invalid_image_without_bitmap_marker() {
-    let dir = tempdir().expect("tempdir");
-    let path = dir.path().join("not-image.txt");
-    std::fs::write(&path, "not an image").expect("test file should be written");
-
-    let cell = App::history_cell_for_local_image_event(
-        path.clone(),
-        Some("diagram".to_string()),
-        ImagePreviewSize::Large,
-    );
-    let display_items = cell.display_items_for_mode(/*width*/ 80, HistoryRenderMode::Rich);
-
-    assert!(
-        !display_items
-            .iter()
-            .any(|item| matches!(item, HistoryCellDisplayItem::LocalImage { .. }))
-    );
-    let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 120));
-    assert!(rendered.contains("Image preview unavailable"));
-    assert!(rendered.contains(&path.display().to_string()));
-}
-
-fn rendered_line_text(line: &Line<'static>) -> String {
-    line.spans
+fn rendered_line_text(item: &HistoryCellDisplayItem) -> String {
+    let HistoryCellDisplayItem::Line(line) = item else {
+        panic!("expected a line item");
+    };
+    line.line
+        .spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
-}
-
-fn rendered_item_line_text(item: &HistoryCellDisplayItem) -> Option<String> {
-    match item {
-        HistoryCellDisplayItem::Line(line) => Some(rendered_line_text(line)),
-        HistoryCellDisplayItem::LocalImage { .. } => None,
-    }
-}
-
-fn rendered_item_line_texts(items: &[HistoryCellDisplayItem]) -> Vec<String> {
-    items.iter().filter_map(rendered_item_line_text).collect()
 }
 
 #[tokio::test]
@@ -4000,7 +3940,11 @@ async fn capped_resize_reflow_renders_recent_suffix_only() {
 
     assert_eq!(rendered.items.len(), 5);
     assert_eq!(
-        rendered_item_line_texts(&rendered.items),
+        rendered
+            .items
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
         vec![
             "cell 17".to_string(),
             String::new(),
@@ -4022,8 +3966,8 @@ async fn uncapped_resize_reflow_renders_all_cells_when_row_cap_absent() {
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
     assert_eq!(rendered.items.len(), 39);
-    assert_eq!(rendered_item_line_texts(&rendered.items)[0], "cell 0");
-    assert_eq!(rendered_item_line_texts(&rendered.items)[38], "cell 19");
+    assert_eq!(rendered_line_text(&rendered.items[0]), "cell 0");
+    assert_eq!(rendered_line_text(&rendered.items[38]), "cell 19");
 }
 
 #[tokio::test]
@@ -4063,7 +4007,11 @@ async fn uncapped_resize_reflow_renders_all_cells_under_row_limit() {
     let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
 
     assert_eq!(
-        rendered_item_line_texts(&rendered.items),
+        rendered
+            .items
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
         vec![
             "cell 0".to_string(),
             String::new(),
@@ -4071,37 +4019,6 @@ async fn uncapped_resize_reflow_renders_all_cells_under_row_limit() {
             String::new(),
             "cell 2".to_string(),
         ]
-    );
-}
-
-#[tokio::test]
-async fn resize_reflow_preserves_local_image_display_item() {
-    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
-    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
-    let dir = tempdir().expect("tempdir");
-    let image_path = write_test_png(dir.path(), "assistant-image.png");
-    app.transcript_cells = vec![
-        App::history_cell_for_local_image_event(
-            image_path.clone(),
-            Some("diagram".to_string()),
-            ImagePreviewSize::Large,
-        )
-        .into(),
-    ];
-
-    let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
-
-    assert!(rendered.items.iter().any(|item| matches!(
-        item,
-        HistoryCellDisplayItem::LocalImage {
-            path,
-            preview_size: ImagePreviewSize::Large
-        } if path == &image_path
-    )));
-    assert!(
-        rendered_item_line_texts(&rendered.items)
-            .iter()
-            .any(|line| line.contains("[Image: diagram]"))
     );
 }
 
@@ -4117,9 +4034,7 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
             app.initial_history_replay_buffer
                 .as_mut()
                 .expect("initial replay buffer active"),
-            vec![HistoryCellDisplayItem::Line(Line::from(format!(
-                "line {index}"
-            )))],
+            vec![Line::from(format!("line {index}")).into()],
             /*max_rows*/ 3,
         );
     }
@@ -4132,7 +4047,7 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
         buffer
             .retained_items
             .iter()
-            .filter_map(rendered_item_line_text)
+            .map(rendered_line_text)
             .collect::<Vec<_>>(),
         vec![
             "line 2".to_string(),
@@ -4140,42 +4055,6 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
             "line 4".to_string(),
         ]
     );
-}
-
-#[tokio::test]
-async fn initial_replay_buffer_preserves_local_image_marker() {
-    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
-    enable_terminal_resize_reflow(&mut app);
-    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(4);
-    let dir = tempdir().expect("tempdir");
-    let image_path = write_test_png(dir.path(), "assistant-image.png");
-
-    app.begin_initial_history_replay_buffer();
-    App::buffer_initial_history_replay_display_items(
-        app.initial_history_replay_buffer
-            .as_mut()
-            .expect("initial replay buffer active"),
-        vec![
-            HistoryCellDisplayItem::Line(Line::from("[Image: diagram]")),
-            HistoryCellDisplayItem::LocalImage {
-                path: image_path.clone(),
-                preview_size: ImagePreviewSize::Large,
-            },
-        ],
-        /*max_rows*/ 4,
-    );
-
-    let buffer = app
-        .initial_history_replay_buffer
-        .as_ref()
-        .expect("initial replay buffer should remain active");
-    assert!(buffer.retained_items.iter().any(|item| matches!(
-        item,
-        HistoryCellDisplayItem::LocalImage {
-            path,
-            preview_size: ImagePreviewSize::Large
-        } if path == &image_path
-    )));
 }
 
 #[tokio::test]
@@ -4504,6 +4383,32 @@ fn active_turn_not_steerable_turn_error_extracts_structured_server_error() {
 }
 
 #[test]
+fn session_start_error_surfaces_archived_guidance_without_rollout_path() {
+    let thread_id =
+        ThreadId::from_string("019e72f4-e09a-70f2-b2c2-a153a57b8cc0").expect("thread id");
+    let target_session = SessionTarget {
+        path: Some(std::path::PathBuf::from(
+            "/Users/me/.codex/archived_sessions/rollout.jsonl",
+        )),
+        thread_id,
+    };
+    let expected = format!(
+        "session {thread_id} is archived. Run `codex unarchive {thread_id}` to unarchive it first."
+    );
+
+    for action in ["resume", "fork"] {
+        let err = color_eyre::eyre::eyre!(
+            "thread/{action} failed during TUI bootstrap: thread/{action} failed: {expected} (code -32600)"
+        );
+
+        assert_eq!(
+            session_start_error(action, &target_session, err).to_string(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn active_turn_steer_race_detects_missing_active_turn() {
     let error = TypedRequestError::Server {
         method: "turn/steer".to_string(),
@@ -4741,6 +4646,61 @@ async fn backtrack_remote_image_only_selection_clears_existing_composer_draft() 
 }
 
 #[tokio::test]
+async fn cancelled_turn_edit_restores_prompt_and_rolls_back_latest_turn() {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    app.transcript_cells = vec![Arc::new(UserHistoryCell {
+        message: "original".to_string(),
+        text_elements: Vec::new(),
+        local_image_paths: Vec::new(),
+        remote_image_urls: Vec::new(),
+    }) as Arc<dyn HistoryCell>];
+    let prompt = crate::chatwidget::UserMessage {
+        text: "edit me".to_string(),
+        local_images: Vec::new(),
+        remote_image_urls: vec!["https://example.com/edit.png".to_string()],
+        text_elements: Vec::new(),
+        mention_bindings: Vec::new(),
+    };
+
+    app.apply_cancelled_turn_edit(prompt);
+
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "edit me");
+    assert_snapshot!(
+        "cancelled_turn_edit_restores_composer",
+        app.chat_widget.composer_text_with_pending()
+    );
+    assert_eq!(
+        app.chat_widget.remote_image_urls(),
+        vec!["https://example.com/edit.png".to_string()]
+    );
+    assert_matches!(op_rx.try_recv(), Ok(Op::ThreadRollback { num_turns: 1 }));
+}
+
+#[tokio::test]
+async fn first_cancelled_turn_edit_restores_prompt_without_local_history() {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let prompt = crate::chatwidget::UserMessage {
+        text: "edit first prompt".to_string(),
+        local_images: Vec::new(),
+        remote_image_urls: vec!["https://example.com/edit.png".to_string()],
+        text_elements: Vec::new(),
+        mention_bindings: Vec::new(),
+    };
+
+    app.apply_cancelled_turn_edit(prompt);
+
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "edit first prompt"
+    );
+    assert_eq!(
+        app.chat_widget.remote_image_urls(),
+        vec!["https://example.com/edit.png".to_string()]
+    );
+    assert_matches!(op_rx.try_recv(), Ok(Op::ThreadRollback { num_turns: 1 }));
+}
+
+#[tokio::test]
 async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
 
@@ -4824,6 +4784,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                     items_view: codex_app_server_protocol::TurnItemsView::Full,
                     items: vec![ThreadItem::UserMessage {
                         id: "user-1".to_string(),
+                        client_id: None,
                         content: vec![AppServerUserInput::Text {
                             text: "first prompt".to_string(),
                             text_elements: Vec::new(),
@@ -4841,6 +4802,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                     items: vec![
                         ThreadItem::UserMessage {
                             id: "user-2".to_string(),
+                            client_id: None,
                             content: vec![AppServerUserInput::Text {
                                 text: "third prompt".to_string(),
                                 text_elements: Vec::new(),
@@ -4988,6 +4950,7 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
         TurnStatus::Completed,
         vec![ThreadItem::UserMessage {
             id: "user-1".to_string(),
+            client_id: None,
             content: vec![AppServerUserInput::Text {
                 text: "restored prompt".to_string(),
                 text_elements: Vec::new(),
@@ -5061,7 +5024,7 @@ async fn queued_rollback_syncs_overlay_and_clears_deferred_history() {
         app.transcript_cells.clone(),
         app.keymap.pager.clone(),
     ));
-    app.deferred_history_lines = vec![HistoryInsertItem::Line(Line::from("stale buffered line"))];
+    app.deferred_history_lines = vec![Line::from("stale buffered line").into()];
     app.backtrack.overlay_preview_active = true;
     app.backtrack.nth_user_message = 1;
 
@@ -5114,6 +5077,7 @@ async fn thread_rollback_response_discards_queued_active_thread_events() {
                 id: thread_id.to_string(),
                 session_id: thread_id.to_string(),
                 forked_from_id: None,
+                parent_thread_id: None,
                 preview: String::new(),
                 ephemeral: false,
                 model_provider: "openai".to_string(),
@@ -5595,7 +5559,7 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
         app.transcript_cells.clone(),
         crate::keymap::RuntimeKeymap::defaults().pager,
     ));
-    app.deferred_history_lines = vec![HistoryInsertItem::Line(Line::from("stale buffered line"))];
+    app.deferred_history_lines = vec![Line::from("stale buffered line").into()];
     app.has_emitted_history_lines = true;
     app.backtrack.primed = true;
     app.backtrack.overlay_preview_active = true;

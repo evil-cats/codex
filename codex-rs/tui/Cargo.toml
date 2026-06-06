@@ -1,6 +1,6 @@
 [package]
 name = "codex-tui"
-version = "0.135.0+hermione"
+version = "0.137.0+hermione"
 edition.workspace = true
 license.workspace = true
 autobins = false
@@ -31,7 +31,7 @@ codex-app-server-client = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-install-context = { workspace = true }
-codex-cloud-requirements = { workspace = true }
+codex-cloud-config = { workspace = true }
 codex-config = { workspace = true }
 codex-connectors = { workspace = true }
 codex-core-plugins = { workspace = true }

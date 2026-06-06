@@ -45,6 +45,7 @@ use crate::insert_history::HistoryLineWrapPolicy;
 use crate::insert_history::InsertHistoryMode;
 use crate::notifications::DesktopNotificationBackend;
 use crate::notifications::detect_backend;
+use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::tui::event_stream::EventBroker;
 use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
@@ -739,12 +740,23 @@ impl Tui {
         wrap_policy: HistoryLineWrapPolicy,
     ) {
         self.insert_history_items_with_wrap_policy(
+            lines.into_iter().map(HistoryInsertItem::from).collect(),
+            wrap_policy,
+        );
+    }
+
+    pub(crate) fn insert_history_hyperlink_lines_with_wrap_policy(
+        &mut self,
+        lines: Vec<HyperlinkLine>,
+        wrap_policy: HistoryLineWrapPolicy,
+    ) {
+        self.insert_history_items_with_wrap_policy(
             lines.into_iter().map(HistoryInsertItem::Line).collect(),
             wrap_policy,
         );
     }
 
-    pub fn insert_history_items_with_wrap_policy(
+    pub(crate) fn insert_history_items_with_wrap_policy(
         &mut self,
         items: Vec<HistoryInsertItem>,
         wrap_policy: HistoryLineWrapPolicy,

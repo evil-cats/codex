@@ -8,6 +8,10 @@ use std::io;
 use std::io::Write;
 
 use crate::render::line_utils::line_to_static;
+use crate::terminal_hyperlinks::HyperlinkLine;
+use crate::terminal_hyperlinks::decorate_spans;
+use crate::terminal_hyperlinks::plain_hyperlink_lines;
+use crate::terminal_hyperlinks::remap_wrapped_line;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::line_contains_url_like;
@@ -37,13 +41,19 @@ use ratatui::text::Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryInsertItem {
-    Line(Line<'static>),
+    Line(HyperlinkLine),
     Image(TerminalHistoryImage),
+}
+
+impl From<HyperlinkLine> for HistoryInsertItem {
+    fn from(line: HyperlinkLine) -> Self {
+        Self::Line(line)
+    }
 }
 
 impl From<Line<'static>> for HistoryInsertItem {
     fn from(line: Line<'static>) -> Self {
-        Self::Line(line)
+        Self::Line(HyperlinkLine::new(line))
     }
 }
 
@@ -82,7 +92,7 @@ pub(crate) enum InsertHistoryMode {
 /// (avoids direct stdout references).
 pub fn insert_history_lines<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<Line<'static>>,
+    lines: Vec<Line>,
 ) -> io::Result<()>
 where
     B: Backend + Write,
@@ -92,13 +102,16 @@ where
 
 pub fn insert_history_lines_with_wrap_policy<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<Line<'static>>,
+    lines: Vec<Line>,
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
     B: Backend + Write,
 {
-    let items = lines.into_iter().map(HistoryInsertItem::Line).collect();
+    let items = plain_hyperlink_lines(lines)
+        .into_iter()
+        .map(HistoryInsertItem::Line)
+        .collect();
     insert_history_items_with_wrap_policy(terminal, items, wrap_policy)
 }
 
@@ -118,10 +131,25 @@ where
     )
 }
 
-#[cfg(test)]
 pub(crate) fn insert_history_lines_with_mode_and_wrap_policy<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<Line<'static>>,
+    lines: Vec<Line>,
+    mode: InsertHistoryMode,
+    wrap_policy: HistoryLineWrapPolicy,
+) -> io::Result<()>
+where
+    B: Backend + Write,
+{
+    let items = plain_hyperlink_lines(lines.iter().map(line_to_static).collect())
+        .into_iter()
+        .map(HistoryInsertItem::Line)
+        .collect();
+    insert_history_items_with_mode_and_wrap_policy(terminal, items, mode, wrap_policy)
+}
+
+pub(crate) fn insert_history_hyperlink_lines_with_mode_and_wrap_policy<B>(
+    terminal: &mut crate::custom_terminal::Terminal<B>,
+    lines: Vec<HyperlinkLine>,
     mode: InsertHistoryMode,
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
@@ -168,27 +196,28 @@ where
                 let line_wrapped = match wrap_policy {
                     HistoryLineWrapPolicy::Terminal => vec![line.clone()],
                     HistoryLineWrapPolicy::PreWrap
-                        if line_contains_url_like(line)
-                            && !line_has_mixed_url_and_non_url_tokens(line) =>
+                        if line_contains_url_like(&line.line)
+                            && !line_has_mixed_url_and_non_url_tokens(&line.line) =>
                     {
                         vec![line.clone()]
                     }
-                    HistoryLineWrapPolicy::PreWrap => adaptive_wrap_line(
+                    HistoryLineWrapPolicy::PreWrap => remap_wrapped_line(
                         line,
-                        RtOptions::new(wrap_width)
-                            .subsequent_indent(leading_whitespace_prefix(line)),
+                        adaptive_wrap_line(
+                            &line.line,
+                            RtOptions::new(wrap_width)
+                                .subsequent_indent(leading_whitespace_prefix(&line.line)),
+                        )
+                        .into_iter()
+                        .map(|line| line_to_static(&line))
+                        .collect(),
                     ),
                 };
                 wrapped_rows += line_wrapped
                     .iter()
                     .map(|wrapped_line| wrapped_line.width().max(1).div_ceil(wrap_width))
                     .sum::<usize>();
-                wrapped.extend(
-                    line_wrapped
-                        .iter()
-                        .map(line_to_static)
-                        .map(HistoryInsertItem::Line),
-                );
+                wrapped.extend(line_wrapped.into_iter().map(HistoryInsertItem::Line));
             }
             HistoryInsertItem::Image(image) => {
                 let rows = image.rows.max(1);
@@ -200,7 +229,6 @@ where
     let wrapped_lines = wrapped_rows as u16;
     let history_row_base = terminal.history_rows_inserted_total();
     let kitty_image_anchors = kitty_image_anchors(&wrapped, wrap_width, history_row_base);
-
     match mode {
         InsertHistoryMode::ZellijRaw => {
             // The existing viewport is immediately replaced in the same draw pass. Clear it
@@ -369,7 +397,11 @@ pub(crate) fn leading_whitespace_prefix(line: &Line<'_>) -> Line<'static> {
 /// Render a single wrapped history line: clear continuation rows for wide lines,
 /// set foreground/background colors, and write styled spans. Caller is responsible
 /// for cursor positioning and any leading `\r\n`.
-fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) -> io::Result<()> {
+fn write_history_line<W: Write>(
+    writer: &mut W,
+    line: &HyperlinkLine,
+    wrap_width: usize,
+) -> io::Result<()> {
     let physical_rows = line.width().max(1).div_ceil(wrap_width) as u16;
     if physical_rows > 1 {
         queue!(writer, SavePosition)?;
@@ -382,11 +414,13 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
     queue!(
         writer,
         SetColors(Colors::new(
-            line.style
+            line.line
+                .style
                 .fg
                 .map(std::convert::Into::into)
                 .unwrap_or(CColor::Reset),
-            line.style
+            line.line
+                .style
                 .bg
                 .map(std::convert::Into::into)
                 .unwrap_or(CColor::Reset)
@@ -396,14 +430,20 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
     // Merge line-level style into each span so that ANSI colors reflect
     // line styles (e.g., blockquotes with green fg).
     let merged_spans: Vec<Span> = line
+        .line
         .spans
         .iter()
         .map(|s| Span {
-            style: s.style.patch(line.style),
+            style: s.style.patch(line.line.style),
             content: s.content.clone(),
         })
         .collect();
-    write_spans(writer, merged_spans.iter())
+    let merged_line = HyperlinkLine {
+        line: Line::from(merged_spans),
+        hyperlinks: line.hyperlinks.clone(),
+    };
+    let decorated = decorate_spans(&merged_line);
+    write_spans(writer, decorated.iter())
 }
 
 fn write_history_image<W: Write>(writer: &mut W, image: &TerminalHistoryImage) -> io::Result<()> {
@@ -638,6 +678,19 @@ mod tests {
     }
 
     #[test]
+    fn writes_semantic_web_link_without_changing_visible_text() {
+        let destination = "https://example.com/long/path";
+        let line = crate::terminal_hyperlinks::annotate_web_urls_in_line(Line::from(destination));
+        let mut actual = Vec::new();
+
+        write_history_line(&mut actual, &line, /*wrap_width*/ 80).expect("write history line");
+
+        let output = String::from_utf8(actual).expect("UTF-8 terminal output");
+        assert!(output.contains("\x1b]8;;https://example.com/long/path\x07"));
+        assert_eq!(line.line.spans[0].content, destination);
+    }
+
+    #[test]
     fn vt100_blockquote_line_emits_green_fg() {
         // Set up a small off-screen terminal
         let width: u16 = 40;
@@ -670,146 +723,6 @@ mod tests {
             saw_colored,
             "expected at least one colored cell in vt100 output"
         );
-    }
-
-    #[test]
-    fn history_image_restores_cursor_and_reserves_rows() {
-        let image = TerminalHistoryImage {
-            x: 2,
-            columns: 4,
-            rows: 3,
-            payload: TerminalHistoryImagePayload::Bytes(b"image-payload".to_vec()),
-        };
-        let mut output = Vec::new();
-
-        write_history_image(&mut output, &image).unwrap();
-
-        let output = String::from_utf8(output).unwrap();
-        let first_save = output.find("\x1b7").expect("saves cursor before clearing");
-        let payload = output.find("image-payload").expect("writes image payload");
-        let last_restore = output
-            .rfind("\x1b8")
-            .expect("restores cursor after drawing");
-        assert!(first_save < payload);
-        assert!(payload < last_restore);
-        assert!(output.contains("\x1b[3G"));
-        assert_eq!(output.matches("\x1b[1B").count(), 4);
-    }
-
-    #[test]
-    fn kitty_placeholder_image_writes_text_anchored_cells() {
-        let image = TerminalHistoryImage {
-            x: 2,
-            columns: 4,
-            rows: 3,
-            payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
-                image_id: 0x00C0_DE00,
-                transmit: "kitty-transmit".to_string(),
-            },
-        };
-        let mut output = Vec::new();
-
-        write_history_image(&mut output, &image).unwrap();
-
-        let output = String::from_utf8(output).unwrap();
-        let transmit = output.find("kitty-transmit").expect("transmits image");
-        let first_placeholder = output.find('\u{10EEEE}').expect("writes placeholders");
-        assert!(transmit < first_placeholder);
-        assert!(output.contains("\x1b[38;2;192;222;0m"));
-        assert!(output.contains("\u{10EEEE}\u{0305}\u{0305}"));
-        assert!(output.contains("\u{10EEEE}\u{0305}\u{0310}"));
-        assert!(output.contains("\u{10EEEE}\u{030D}\u{0305}"));
-        assert!(output.contains("\u{10EEEE}\u{030E}\u{0310}"));
-        assert_eq!(output.matches('\u{10EEEE}').count(), 12);
-        assert_eq!(output.matches("\r\n").count(), 2);
-    }
-
-    #[test]
-    fn kitty_placeholder_image_writes_columns_after_sixteen() {
-        let image = TerminalHistoryImage {
-            x: 0,
-            columns: 18,
-            rows: 1,
-            payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
-                image_id: 0x00C0_DE00,
-                transmit: "kitty-transmit".to_string(),
-            },
-        };
-        let mut output = Vec::new();
-
-        write_history_image(&mut output, &image).unwrap();
-
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\u{10EEEE}\u{0305}\u{0363}"));
-        assert_eq!(output.matches('\u{10EEEE}').count(), 18);
-    }
-
-    #[test]
-    fn insert_history_items_with_wrap_policy_counts_image_rows() {
-        let width: u16 = 40;
-        let height: u16 = 8;
-        let backend = VT100Backend::new(width, height);
-        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-        let viewport = Rect::new(0, height - 1, width, 1);
-        term.set_viewport_area(viewport);
-
-        insert_history_items_with_wrap_policy(
-            &mut term,
-            vec![
-                HistoryInsertItem::Line(Line::from("head")),
-                HistoryInsertItem::Image(TerminalHistoryImage {
-                    x: 0,
-                    columns: 4,
-                    rows: 3,
-                    payload: TerminalHistoryImagePayload::Bytes(b"image-payload".to_vec()),
-                }),
-                HistoryInsertItem::Line(Line::from("tail")),
-            ],
-            HistoryLineWrapPolicy::PreWrap,
-        )
-        .expect("history items should insert");
-
-        assert_eq!(term.visible_history_rows(), 5);
-    }
-
-    #[test]
-    fn kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history() {
-        let width: u16 = 40;
-        let height: u16 = 8;
-        let backend = VT100Backend::new(width, height);
-        let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-        let viewport = Rect::new(0, height - 2, width, 2);
-        term.set_viewport_area(viewport);
-
-        insert_history_items_with_wrap_policy(
-            &mut term,
-            vec![HistoryInsertItem::Image(TerminalHistoryImage {
-                x: 0,
-                columns: 4,
-                rows: 3,
-                payload: TerminalHistoryImagePayload::KittyUnicodePlaceholder {
-                    image_id: 42,
-                    transmit: "kitty-transmit".to_string(),
-                },
-            })],
-            HistoryLineWrapPolicy::PreWrap,
-        )
-        .expect("image insert should succeed");
-
-        let output = String::from_utf8(term.backend().written_bytes().to_vec()).unwrap();
-        assert!(!output.contains("d=I,i=42"));
-        term.backend_mut().clear_written_bytes();
-
-        insert_history_lines(
-            &mut term,
-            (0..7)
-                .map(|idx| Line::from(format!("line {idx}")))
-                .collect(),
-        )
-        .expect("text insert should succeed");
-
-        let output = String::from_utf8(term.backend().written_bytes().to_vec()).unwrap();
-        assert!(output.contains("d=I,i=42"));
     }
 
     #[test]

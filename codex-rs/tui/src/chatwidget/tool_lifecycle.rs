@@ -8,6 +8,7 @@ use codex_protocol::items::ImagePreviewSize;
 
 impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+        self.record_visible_turn_activity();
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
@@ -16,10 +17,14 @@ impl ChatWidget {
         path: AbsolutePathBuf,
         preview_size: ImagePreviewSize,
     ) {
+        self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
         self.insert_local_image_history(
             path.as_path().to_path_buf(),
-            Some(display_path_for(path.as_path(), &self.config.cwd)),
+            Some(crate::diff_render::display_path_for(
+                path.as_path(),
+                &self.config.cwd,
+            )),
             preview_size,
         );
         self.request_redraw();
@@ -44,6 +49,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_image_generation_begin(&mut self) {
+        self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
     }
 
@@ -98,6 +104,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_web_search_begin(&mut self, call_id: String) {
+        self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
         self.transcript.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
@@ -144,6 +151,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_collab_agent_tool_call(&mut self, item: ThreadItem) {
+        self.record_visible_turn_activity();
         let ThreadItem::CollabAgentToolCall {
             id, tool, status, ..
         } = &item
@@ -188,6 +196,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_mcp_tool_call_started_now(&mut self, item: ThreadItem) {
+        self.record_visible_turn_activity();
         let ThreadItem::McpToolCall {
             id,
             server,

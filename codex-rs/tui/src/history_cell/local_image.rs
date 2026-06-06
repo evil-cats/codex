@@ -64,7 +64,7 @@ impl HistoryCell for LocalImageHistoryCell {
                 let mut items = self
                     .display_lines(width)
                     .into_iter()
-                    .map(HistoryCellDisplayItem::Line)
+                    .map(HistoryCellDisplayItem::from)
                     .collect::<Vec<_>>();
                 items.push(HistoryCellDisplayItem::LocalImage {
                     path: self.path.clone(),
@@ -75,7 +75,7 @@ impl HistoryCell for LocalImageHistoryCell {
             HistoryRenderMode::Raw => self
                 .raw_lines()
                 .into_iter()
-                .map(HistoryCellDisplayItem::Line)
+                .map(HistoryCellDisplayItem::from)
                 .collect(),
         }
     }

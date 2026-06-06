@@ -39,8 +39,8 @@ struct ReflowCellDisplay {
 
 /// Rendered transcript items ready to be replayed into terminal scrollback.
 ///
-/// Callers should keep treating `transcript_cells` as the source of truth; the
-/// items here are a transient render product for a single terminal width.
+/// Callers should keep treating `transcript_cells` as the source of truth; the items here are a
+/// transient render product for a single terminal width.
 pub(super) struct ReflowRenderResult {
     pub(super) items: Vec<HistoryCellDisplayItem>,
 }
@@ -77,11 +77,10 @@ impl App {
         cell: &dyn HistoryCell,
         width: u16,
     ) -> Vec<HistoryCellDisplayItem> {
-        let mode = self.chat_widget.history_render_mode();
-        let mut display = cell.display_items_for_mode(width, mode);
+        let mut display = cell.display_items_for_mode(width, self.chat_widget.history_render_mode());
         if !display.is_empty() && !cell.is_stream_continuation() {
             if self.has_emitted_history_lines {
-                display.insert(0, HistoryCellDisplayItem::Line(Line::from("")));
+                display.insert(/*index*/ 0, HistoryCellDisplayItem::from(Line::from("")));
             } else {
                 self.has_emitted_history_lines = true;
             }
@@ -241,20 +240,25 @@ impl App {
             return;
         }
 
-        let max_rows = self.resize_reflow_max_rows();
-        if let Some(buffer) = &mut self.initial_history_replay_buffer {
-            if let Some(max_rows) = max_rows {
+        if self.initial_history_replay_buffer.is_none() {
+            return;
+        }
+
+        if let Some(max_rows) = self.resize_reflow_max_rows() {
+            if let Some(buffer) = &mut self.initial_history_replay_buffer {
                 Self::buffer_initial_history_replay_display_items(buffer, display, max_rows);
-            } else if self.overlay.is_some() {
-                let insert_items = self.prepare_history_insert_items(display, width);
-                self.deferred_history_lines.extend(insert_items);
-            } else {
-                let insert_items = self.prepare_history_insert_items(display, width);
-                tui.insert_history_items_with_wrap_policy(
-                    insert_items,
-                    self.history_line_wrap_policy(),
-                );
             }
+            return;
+        }
+
+        let insert_items = self.prepare_history_insert_items(display, width);
+        if self.overlay.is_some() {
+            self.deferred_history_lines.extend(insert_items);
+        } else {
+            tui.insert_history_items_with_wrap_policy(
+                insert_items,
+                self.history_line_wrap_policy(),
+            );
         }
     }
 
@@ -510,6 +514,36 @@ impl App {
         Ok(terminal_width)
     }
 
+    /// Rebuild scrollback after rollback removes transcript cells.
+    ///
+    /// Unlike resize reflow, rollback must clear the terminal even when no cells remain. Otherwise
+    /// the cancelled user prompt stays visible in scrollback despite being removed from the source
+    /// transcript.
+    pub(super) fn rebuild_transcript_after_backtrack(&mut self, tui: &mut tui::Tui) -> Result<()> {
+        let terminal_width = tui.terminal.size()?.width;
+        let width = self.chat_widget.history_wrap_width(terminal_width);
+        let reflowed_items = if self.transcript_cells.is_empty() {
+            self.reset_history_emission_state();
+            Vec::new()
+        } else {
+            self.render_transcript_lines_for_reflow(width).items
+        };
+
+        tui.clear_pending_history_lines();
+        self.clear_terminal_for_resize_replay(tui)?;
+
+        self.deferred_history_lines.clear();
+        let insert_items = self.prepare_history_insert_items(reflowed_items, width);
+        if !insert_items.is_empty() {
+            tui.insert_history_items_with_wrap_policy(
+                insert_items,
+                self.history_line_wrap_policy(),
+            );
+        }
+
+        Ok(())
+    }
+
     /// Render transcript cells for the current resize rebuild.
     ///
     /// Rendering walks backward from the transcript tail so row-capped sessions avoid formatting the
@@ -546,7 +580,10 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             cell_displays.push_front(ReflowCellDisplay {
-                items: cell.display_items_for_mode(width, self.chat_widget.history_render_mode()),
+                items: cell.display_items_for_mode(
+                    width,
+                    self.chat_widget.history_render_mode(),
+                ),
                 is_stream_continuation: cell.is_stream_continuation(),
             });
         }
@@ -556,7 +593,7 @@ impl App {
         for display in cell_displays {
             if !display.items.is_empty() && !display.is_stream_continuation {
                 if has_emitted_history_lines {
-                    reflowed_items.push(HistoryCellDisplayItem::Line(Line::from("")));
+                    reflowed_items.push(HistoryCellDisplayItem::from(Line::from("")));
                 } else {
                     has_emitted_history_lines = true;
                 }
