@@ -748,6 +748,9 @@ pub struct Config {
     /// message when blocked on the user.
     pub tui_terminal_title: Option<Vec<String>>,
 
+    /// Optional static label surfaced by terminal-title item `session-label`.
+    pub tui_terminal_title_label: Option<String>,
+
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
 
@@ -3695,6 +3698,10 @@ impl Config {
                 .map(|t| t.status_line_use_colors)
                 .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
+            tui_terminal_title_label: cfg
+                .tui
+                .as_ref()
+                .and_then(|t| t.terminal_title_label.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
             tui_pet_anchor: cfg

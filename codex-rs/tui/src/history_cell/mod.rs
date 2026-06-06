@@ -12,7 +12,6 @@
 
 use crate::diff_model::FileChange;
 use crate::diff_render::create_diff_summary;
-use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
 use crate::exec_cell::TOOL_CALL_MAX_LINES;
@@ -168,6 +167,15 @@ impl From<HyperlinkLine> for HistoryCellDisplayItem {
 impl From<Line<'static>> for HistoryCellDisplayItem {
     fn from(line: Line<'static>) -> Self {
         Self::Line(HyperlinkLine::new(line))
+    }
+}
+
+impl HistoryCellDisplayItem {
+    pub(crate) fn line(self) -> Option<Line<'static>> {
+        match self {
+            Self::Line(line) => Some(line.line),
+            Self::LocalImage { .. } => None,
+        }
     }
 }
 

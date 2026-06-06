@@ -108,7 +108,7 @@ impl HistoryCell for UserHistoryCell {
             HistoryRenderMode::Raw => self
                 .raw_lines()
                 .into_iter()
-                .map(HistoryCellDisplayItem::Line)
+                .map(HistoryCellDisplayItem::from)
                 .collect(),
         }
     }
@@ -180,7 +180,7 @@ impl UserHistoryCell {
         }
 
         let mut items: Vec<HistoryCellDisplayItem> =
-            vec![HistoryCellDisplayItem::Line(Line::from("").style(style))];
+            vec![HistoryCellDisplayItem::from(Line::from("").style(style))];
 
         if attachment_count > 0 {
             for index in 1..=self.remote_image_urls.len() {
@@ -192,7 +192,7 @@ impl UserHistoryCell {
                 items.extend(
                     prefix_lines(wrapped_label, "  ".into(), "  ".into())
                         .into_iter()
-                        .map(HistoryCellDisplayItem::Line),
+                        .map(HistoryCellDisplayItem::from),
                 );
             }
 
@@ -210,7 +210,7 @@ impl UserHistoryCell {
                 items.extend(
                     prefix_lines(wrapped_label, "  ".into(), "  ".into())
                         .into_iter()
-                        .map(HistoryCellDisplayItem::Line),
+                        .map(HistoryCellDisplayItem::from),
                 );
                 items.push(HistoryCellDisplayItem::LocalImage {
                     path: path.clone(),
@@ -219,7 +219,7 @@ impl UserHistoryCell {
             }
 
             if wrapped_message.is_some() {
-                items.push(HistoryCellDisplayItem::Line(Line::from("").style(style)));
+                items.push(HistoryCellDisplayItem::from(Line::from("").style(style)));
             }
         }
 
@@ -227,11 +227,11 @@ impl UserHistoryCell {
             items.extend(
                 prefix_lines(wrapped_message, "› ".bold().dim(), "  ".into())
                     .into_iter()
-                    .map(HistoryCellDisplayItem::Line),
+                    .map(HistoryCellDisplayItem::from),
             );
         }
 
-        items.push(HistoryCellDisplayItem::Line(Line::from("").style(style)));
+        items.push(HistoryCellDisplayItem::from(Line::from("").style(style)));
         items
     }
 }

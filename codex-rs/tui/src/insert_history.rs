@@ -108,7 +108,7 @@ pub fn insert_history_lines_with_wrap_policy<B>(
 where
     B: Backend + Write,
 {
-    let items = plain_hyperlink_lines(lines)
+    let items = plain_hyperlink_lines(lines.iter().map(line_to_static).collect())
         .into_iter()
         .map(HistoryInsertItem::Line)
         .collect();
