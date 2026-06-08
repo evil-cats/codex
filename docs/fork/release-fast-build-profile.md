@@ -1,0 +1,258 @@
+---
+id: fork-release-fast-build-profile
+status: active
+created: 2026-06-08
+updated: 2026-06-08
+source_scope: rust-v0.137.0..HEAD
+---
+
+# Release-fast build profile
+
+## Обзор
+
+Эта карточка фиксирует fork-доработку Hermione, которая добавляет быстрый
+optimized build path: Cargo profile `release-fast` и `just build-fast-release`.
+
+Эта доработка нужна для локальных и remote сборок fork binary, когда full
+upstream `release` profile слишком дорогой из-за fat LTO и single codegen unit.
+
+| Поле | Значение |
+| --- | --- |
+| Статус | `active` |
+| Основные commits | `6be4eae58`, `f2797c6e8` |
+| Migration repair commits | `46cdb741f`, `671afe3ee` |
+| Cargo profile | `[profile.release-fast]` |
+| Just target | `just build-fast-release` |
+| Remote build path в текущем workflow | `f-ms-dev:/home/slader/Projects/codex` |
+| Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
+
+## Зачем это нужно
+
+Upstream `release` profile оптимизирован под размер shipped artifact:
+
+- `lto = "fat"`;
+- `codegen-units = 1`;
+- strip symbols.
+
+Для локальной Hermione-разработки это слишком медленно. Нужен профиль, который
+оставляет optimized binary, но использует thin LTO и больше codegen units.
+
+## Карта файлов
+
+| Файл | Роль |
+| --- | --- |
+| `codex-rs/Cargo.toml` | Добавляет `[profile.release-fast]` |
+| `justfile` | Добавляет `build-fast-release` |
+| `codex-rs/core/src/config/mod.rs` | Migration repair: восстановлен `Config.tui_terminal_title_label` для release-fast build после merge |
+| `codex-rs/tui/src/history_cell/messages.rs` | Migration repair: `Line` -> `HyperlinkLine` conversions |
+| `codex-rs/tui/src/history_cell/mod.rs` | Migration repair: вспомогательная функция для line-only extraction из `HistoryCellDisplayItem` |
+| `codex-rs/tui/src/insert_history.rs` | Migration repair: перевод borrowed/non-static lines в static перед hyperlink wrapping |
+| `codex-rs/tui/src/app/resize_reflow.rs` | `671afe3ee`: rustfmt-style wrapping после migration |
+| `codex-rs/tui/src/app_backtrack.rs` | `671afe3ee`: rustfmt-style wrapping после migration |
+
+## Итоговый контракт
+
+### Build profile
+
+`codex-rs/Cargo.toml` должен содержать:
+
+```toml
+[profile.release-fast]
+inherits = "release"
+# Local optimized builds should keep using multiple cores during the final
+# optimization stages. The canonical release profile above favors size.
+lto = "thin"
+codegen-units = 32
+```
+
+История:
+
+- `6be4eae58` добавил profile с `codegen-units = 16`;
+- `f2797c6e8` поднял значение до `32`;
+- текущее значение для Hermione fork: `32`.
+
+### Just target
+
+Root `justfile` должен содержать:
+
+```just
+build-fast-release:
+    cargo build -p codex-cli --profile release-fast
+```
+
+Build artifact:
+
+```text
+codex-rs/target/release-fast/codex
+```
+
+### Remote-only workflow
+
+В текущих договорённостях с пользователем Rust/Cargo/`just` для этого
+репозитория запускаются только на:
+
+```text
+f-ms-dev:/home/slader/Projects/codex
+```
+
+`release-fast` разрешён пользователем как compile-check. Тесты и debug-команды
+требуют отдельного согласия.
+
+## Пошаговое воспроизведение
+
+### 1. Добавить profile
+
+В root workspace `codex-rs/Cargo.toml` рядом с `[profile.release]` добавить
+`[profile.release-fast]`, наследующий `release`.
+
+Не менять upstream `release`: он остаётся canonical profile для size-oriented
+release artifact.
+
+### 2. Добавить just target
+
+В root `justfile` добавить:
+
+```just
+build-fast-release:
+    cargo build -p codex-cli --profile release-fast
+```
+
+Target должен жить рядом с release/build commands, чтобы команда была видна в
+обычном build workflow.
+
+### 3. Проверить build на remote
+
+Если пользователь разрешил compile-check, синхронизировать changes на
+`f-ms-dev:/home/slader/Projects/codex` и запускать:
+
+```bash
+just build-fast-release
+```
+
+Ожидаемый результат: successful optimized build в `target/release-fast/codex`.
+
+### 4. При migration на новый upstream проверить не только build profile
+
+На merge `0.137.0` простой перенос profile был недостаточен: `release-fast`
+поймал regressions, которые были не видны при поверхностной проверке fork
+patches.
+
+Обязательно проверить:
+
+- `Config.tui_terminal_title_label` присутствует в effective `Config` и
+  заполняется из `cfg.tui.terminal_title_label`;
+- `HistoryCellDisplayItem::Line` после upstream changes несёт актуальный тип
+  (`HyperlinkLine` в `0.137.0`), и Hermione local image code конвертирует
+  plain `Line` правильно;
+- `insert_history_lines_with_wrap_policy` переводит non-static `Line` в static
+  до `plain_hyperlink_lines(...)`, если upstream API этого требует.
+
+## Migration repair: `0.137.0`
+
+Commit `46cdb741f Fix Hermione 0.137 release-fast build` сделал два вида
+ремонта.
+
+Первый ремонт: terminal title config.
+
+- В `codex-rs/core/src/config/mod.rs` восстановлено поле:
+
+  ```rust
+  pub tui_terminal_title_label: Option<String>,
+  ```
+
+- В config loading добавлено:
+
+  ```rust
+  tui_terminal_title_label: cfg
+      .tui
+      .as_ref()
+      .and_then(|t| t.terminal_title_label.clone()),
+  ```
+
+Это закрывало merge-regression: TOML type уже знал
+`tui.terminal_title_label`, но effective runtime `Config` потерял это значение.
+
+Второй ремонт: TUI history line type.
+
+- Upstream изменил `HistoryCellDisplayItem::Line` так, что он несёт
+  `HyperlinkLine`, а не plain `Line`.
+- `UserHistoryCell` должен создавать display items через
+  `HistoryCellDisplayItem::from(Line::from(...))`.
+- В `HistoryCellDisplayItem` нужна вспомогательная функция:
+
+  ```rust
+  pub(crate) fn line(self) -> Option<Line<'static>>
+  ```
+
+  Он возвращает `Some(line.into())` для line item и `None` для `LocalImage`.
+
+- `insert_history_lines_with_wrap_policy` должен использовать `line_to_static`
+  перед `plain_hyperlink_lines`.
+
+Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно содержит:
+
+- large `Cargo.lock` formatting/version normalization;
+- small rustfmt-style layout changes in `resize_reflow.rs` and
+  `app_backtrack.rs`;
+- visible semantic intent: сохранить build после migration, а не добавить
+  новую feature.
+
+## Регрессионное покрытие
+
+У commits `6be4eae58`, `f2797c6e8`, `46cdb741f`, `671afe3ee` не было
+отдельных тестовых additions, закрепляющих именно profile. Поэтому проверка
+этой доработки в основном build-oriented:
+
+- `just build-fast-release`;
+- optional install verification:
+
+  ```text
+  codex-rs/target/release-fast/codex --version
+  ```
+
+- для migration repair: targeted TUI/config tests, если пользователь разрешил.
+
+Исторически commit `697bad938` позже указывал `just build-fast-release` как
+выполненную verification-команду, но эта карточка не утверждает, что этот build
+запускался в текущем turn.
+
+## Проверки
+
+Для повторения:
+
+1. На `f-ms-dev:/home/slader/Projects/codex`:
+   - `just build-fast-release`;
+   - при install: проверить `codex --version` или целевой binary path.
+2. Локально без Rust/Cargo:
+   - `rg -n "release-fast|build-fast-release|codegen-units = 32" codex-rs/Cargo.toml justfile`;
+   - `git diff --check`.
+
+## Ограничения
+
+- Не заменять upstream `release` profile: он нужен для canonical release
+  artifact.
+- Не запускать `cargo build --release` для обычной Hermione compile-check:
+  это возвращает дорогой fat LTO path.
+- Не запускать Rust/Cargo/`just` локально в текущем workflow; использовать
+  `f-ms-dev`, если пользователь разрешил.
+- Не считать successful merge достаточным: `release-fast` compile-check нужен
+  после migration.
+
+## Риски
+
+- Если `release-fast` не наследует `release`, build может отличаться слишком
+  сильно от shipped optimized behavior.
+- Если `codegen-units` снова станет `1`, profile потеряет смысл.
+- При upstream migration compile errors могут проявляться в unrelated-looking
+  Hermione patches: terminal title, TUI images, history cells. Карточка
+  фиксирует это как обязательную проверочную развилку.
+
+## Сводка покрытия
+
+| Пункт | Статус | Где отражено |
+| --- | --- | --- |
+| Добавить `[profile.release-fast]` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Использовать thin LTO и `codegen-units = 32` | перенесено | "Итоговый контракт" |
+| Добавить `just build-fast-release` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Сохранить remote-only Rust/Cargo/`just` workflow | перенесено | "Итоговый контракт", "Проверки", "Ограничения" |
+| Зафиксировать `0.137.0` migration repair | перенесено | "Migration repair: `0.137.0`" |
