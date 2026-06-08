@@ -1,5 +1,17 @@
 # Rust/codex-rs
 
+## Fork workflow
+
+Перед изменениями, коммитом, переносом fork-доработки, удаленной сборкой или
+работой с `docs/fork/` прочитай `FORK.md` в корне репозитория и соблюдай его.
+
+`FORK.md` является владельцем правил обслуживания Hermione fork: синхронизации
+кодовых fork-доработок с карточками `docs/fork/`, проверки покрытия перед
+коммитом и подготовки удаленного checkout перед сборкой. Не дублируй эти
+правила в `AGENTS.md`.
+
+## Rust code
+
 In the codex-rs folder where the rust code lives:
 
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
