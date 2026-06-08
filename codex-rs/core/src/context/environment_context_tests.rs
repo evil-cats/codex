@@ -60,6 +60,35 @@ fn serialize_workspace_write_environment_context() {
 }
 
 #[test]
+fn serialize_environment_context_with_project_name() {
+    let mut context = EnvironmentContext::new(
+        vec![EnvironmentContextEnvironment {
+            id: "local".to_string(),
+            cwd: test_path_buf("/repo").abs(),
+            shell: fake_shell_name(),
+        }],
+        Some("2026-02-26".to_string()),
+        Some("America/Los_Angeles".to_string()),
+        /*network*/ None,
+        /*subagents*/ None,
+    );
+    context.project_name = Some("repo & docs".to_string());
+
+    let expected = format!(
+        r#"<environment_context>
+  <cwd>{}</cwd>
+  <shell>bash</shell>
+  <project_name>repo &amp; docs</project_name>
+  <current_date>2026-02-26</current_date>
+  <timezone>America/Los_Angeles</timezone>
+</environment_context>"#,
+        test_path_buf("/repo").display()
+    );
+
+    assert_eq!(context.render(), expected);
+}
+
+#[test]
 fn serialize_environment_context_with_network() {
     let network = NetworkContext::new(
         vec!["api.example.com".to_string(), "*.openai.com".to_string()],
@@ -209,6 +238,80 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
         ),
         "{context}"
     );
+}
+
+#[test]
+fn turn_context_item_project_name_uses_workspace_root_name() {
+    let repo = test_abs_path("/repo");
+    let item = TurnContextItem {
+        turn_id: None,
+        cwd: test_path_buf("/repo/nested"),
+        workspace_roots: Some(vec![repo]),
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        permission_profile: Some(workspace_write_permission_profile_with_private_denials()),
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        multi_agent_version: None,
+        realtime_active: None,
+        effort: None,
+        summary: codex_protocol::config_types::ReasoningSummary::Auto,
+    };
+
+    let context = EnvironmentContext::from_turn_context_item(&item, fake_shell_name()).render();
+
+    assert!(
+        context.contains("<project_name>repo</project_name>"),
+        "{context}"
+    );
+}
+
+#[test]
+fn diff_environment_context_includes_changed_project_name() {
+    let item = TurnContextItem {
+        turn_id: None,
+        cwd: test_path_buf("/old-repo"),
+        workspace_roots: Some(vec![test_abs_path("/old-repo")]),
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        permission_profile: Some(workspace_write_permission_profile_with_private_denials()),
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        multi_agent_version: None,
+        realtime_active: None,
+        effort: None,
+        summary: codex_protocol::config_types::ReasoningSummary::Auto,
+    };
+    let mut after = EnvironmentContext::new(
+        vec![EnvironmentContextEnvironment {
+            id: "local".to_string(),
+            cwd: test_abs_path("/old-repo"),
+            shell: fake_shell_name(),
+        }],
+        /*current_date*/ None,
+        /*timezone*/ None,
+        /*network*/ None,
+        /*subagents*/ None,
+    );
+    after.project_name = Some("new-repo".to_string());
+
+    let diff = EnvironmentContext::diff_from_turn_context_item(&item, &after).render();
+
+    assert!(
+        diff.contains("<project_name>new-repo</project_name>"),
+        "{diff}"
+    );
+    assert!(!diff.contains("<project_name>old-repo</project_name>"));
 }
 
 #[test]

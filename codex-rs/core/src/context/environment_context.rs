@@ -18,6 +18,7 @@ use super::ContextualUserFragment;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EnvironmentContext {
     pub(crate) environments: EnvironmentContextEnvironments,
+    pub(crate) project_name: Option<String>,
     pub(crate) current_date: Option<String>,
     pub(crate) timezone: Option<String>,
     pub(crate) network: Option<NetworkContext>,
@@ -337,6 +338,7 @@ impl EnvironmentContext {
     ) -> Self {
         Self {
             environments: EnvironmentContextEnvironments::from_vec(environments),
+            project_name: None,
             current_date,
             timezone,
             network,
@@ -347,6 +349,7 @@ impl EnvironmentContext {
 
     fn new_with_environments(
         environments: EnvironmentContextEnvironments,
+        project_name: Option<String>,
         current_date: Option<String>,
         timezone: Option<String>,
         network: Option<NetworkContext>,
@@ -355,6 +358,7 @@ impl EnvironmentContext {
     ) -> Self {
         Self {
             environments,
+            project_name,
             current_date,
             timezone,
             network,
@@ -368,6 +372,7 @@ impl EnvironmentContext {
     /// include the shell, and then it is not configurable from turn to turn.
     pub(crate) fn equals_except_shell(&self, other: &EnvironmentContext) -> bool {
         self.environments.equals_except_shell(&other.environments)
+            && self.project_name == other.project_name
             && self.current_date == other.current_date
             && self.timezone == other.timezone
             && self.network == other.network
@@ -397,6 +402,12 @@ impl EnvironmentContext {
             }
             EnvironmentContextEnvironments::None => EnvironmentContextEnvironments::None,
         };
+        let before_project_name = Self::project_name_from_turn_context_item(before);
+        let project_name = if before_project_name != after.project_name {
+            after.project_name.clone()
+        } else {
+            before_project_name
+        };
         let network = if before_network != after.network {
             after.network.clone()
         } else {
@@ -409,6 +420,7 @@ impl EnvironmentContext {
         };
         EnvironmentContext::new_with_environments(
             environments,
+            project_name,
             after.current_date.clone(),
             after.timezone.clone(),
             network,
@@ -418,6 +430,7 @@ impl EnvironmentContext {
     }
 
     pub(crate) fn from_turn_context(turn_context: &TurnContext, shell: &Shell) -> Self {
+        let workspace_roots = turn_context.config.effective_workspace_roots();
         let mut context = Self::new(
             EnvironmentContextEnvironment::from_turn_environments(
                 &turn_context.environments.turn_environments,
@@ -428,9 +441,10 @@ impl EnvironmentContext {
             Self::network_from_turn_context(turn_context),
             /*subagents*/ None,
         );
+        context.project_name = project_name_from_workspace_roots(&workspace_roots);
         context.filesystem = Some(FileSystemContext::from_permission_profile(
             &turn_context.permission_profile,
-            &turn_context.config.effective_workspace_roots(),
+            &workspace_roots,
         ));
         context
     }
@@ -443,14 +457,19 @@ impl EnvironmentContext {
             Ok(cwd) => cwd,
             Err(_) => AbsolutePathBuf::resolve_path_against_base(&turn_context_item.cwd, "/"),
         };
+        let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item);
         Self::new_with_environments(
             EnvironmentContextEnvironments::from_vec(vec![EnvironmentContextEnvironment::legacy(
                 cwd, shell,
             )]),
+            project_name_from_workspace_roots(&workspace_roots),
             turn_context_item.current_date.clone(),
             turn_context_item.timezone.clone(),
             Self::network_from_turn_context_item(turn_context_item),
-            Self::filesystem_from_turn_context_item(turn_context_item),
+            Some(FileSystemContext::from_permission_profile(
+                &turn_context_item.permission_profile(),
+                &workspace_roots,
+            )),
             /*subagents*/ None,
         )
     }
@@ -497,6 +516,12 @@ impl EnvironmentContext {
         ))
     }
 
+    fn project_name_from_turn_context_item(turn_context_item: &TurnContextItem) -> Option<String> {
+        project_name_from_workspace_roots(&workspace_roots_from_turn_context_item(
+            turn_context_item,
+        ))
+    }
+
     fn filesystem_from_turn_context_item(
         turn_context_item: &TurnContextItem,
     ) -> Option<FileSystemContext> {
@@ -520,6 +545,15 @@ fn workspace_roots_from_turn_context_item(
         Ok(cwd) => vec![cwd],
         Err(_) => Vec::new(),
     }
+}
+
+fn project_name_from_workspace_roots(workspace_roots: &[AbsolutePathBuf]) -> Option<String> {
+    workspace_roots.first().map(|root| {
+        root.as_path()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned())
+    })
 }
 
 impl ContextualUserFragment for EnvironmentContext {
@@ -562,6 +596,11 @@ impl ContextualUserFragment for EnvironmentContext {
                 lines.push("  </environments>".to_string());
             }
             EnvironmentContextEnvironments::None => {}
+        }
+        if let Some(project_name) = &self.project_name {
+            let mut line = "  ".to_string();
+            push_text_element(&mut line, "project_name", project_name);
+            lines.push(line);
         }
         if let Some(current_date) = &self.current_date {
             lines.push(format!("  <current_date>{current_date}</current_date>"));
