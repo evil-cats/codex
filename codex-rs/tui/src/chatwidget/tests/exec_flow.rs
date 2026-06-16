@@ -897,6 +897,7 @@ async fn image_generation_call_with_saved_path_emits_local_image_event() {
     handle_image_generation_end(
         &mut chat,
         "call-image-generation",
+        "completed",
         Some("A tiny blue square".into()),
         Some(image_path.clone()),
     );
@@ -923,6 +924,7 @@ async fn image_generation_call_adds_history_cell() {
     handle_image_generation_end(
         &mut chat,
         "call-image-generation",
+        "completed",
         Some("A tiny blue square".into()),
         None,
     );
@@ -931,6 +933,21 @@ async fn image_generation_call_adds_history_cell() {
     assert_eq!(cells.len(), 1, "expected a single history cell");
     let combined = lines_to_single_string(&cells[0]);
     assert_chatwidget_snapshot!("image_generation_call_history_snapshot", combined);
+
+    handle_image_generation_end(
+        &mut chat,
+        "call-image-generation-failed",
+        "failed",
+        Some("A tiny blue square".into()),
+        /*saved_path*/ None,
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected a single failure history cell");
+    assert_chatwidget_snapshot!(
+        "failed_image_generation_call_history_snapshot",
+        lines_to_single_string(&cells[0])
+    );
 }
 
 #[tokio::test]

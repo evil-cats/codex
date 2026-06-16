@@ -207,6 +207,7 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
         network: None,
         file_system_sandbox_policy: None,
         model: "gpt-5".to_string(),
+        comp_hash: None,
         personality: None,
         collaboration_mode: None,
         multi_agent_version: None,
@@ -260,6 +261,7 @@ fn turn_context_item_project_name_uses_workspace_root_name() {
         multi_agent_version: None,
         realtime_active: None,
         effort: None,
+        comp_hash: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     };
 
@@ -290,6 +292,7 @@ fn diff_environment_context_includes_changed_project_name() {
         multi_agent_version: None,
         realtime_active: None,
         effort: None,
+        comp_hash: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     };
     let mut after = EnvironmentContext::new(

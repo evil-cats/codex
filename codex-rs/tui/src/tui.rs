@@ -45,7 +45,6 @@ use crate::insert_history::HistoryLineWrapPolicy;
 use crate::insert_history::InsertHistoryMode;
 use crate::notifications::DesktopNotificationBackend;
 use crate::notifications::detect_backend;
-use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::tui::event_stream::EventBroker;
 use crate::tui::event_stream::TuiEventStream;
 #[cfg(unix)]
@@ -438,6 +437,9 @@ pub(crate) fn init() -> Result<InitializedTerminal> {
     let enhanced_keys_supported =
         !keyboard_modes::keyboard_enhancement_disabled() && detect_keyboard_enhancement_supported();
 
+    #[cfg(windows)]
+    probe_windows_default_colors();
+
     let tui = CustomTerminal::with_options_and_cursor_position(backend, cursor_pos)?;
     let stderr_guard = terminal_stderr::TerminalStderrGuard::install()?;
     Ok(InitializedTerminal {
@@ -457,9 +459,31 @@ fn cursor_position_with_crossterm(backend: &mut CrosstermBackend<Stdout>) -> Pos
 
 #[cfg(not(unix))]
 fn detect_keyboard_enhancement_supported() -> bool {
-    // Non-Unix startup keeps the existing crossterm path because the bounded probe implementation
-    // relies on Unix file descriptors and `/dev/tty` semantics.
+    // Non-Unix startup keeps the existing crossterm keyboard probe path because it already knows
+    // how to interpret platform-specific event sources.
     supports_keyboard_enhancement().unwrap_or(/*default*/ false)
+}
+
+#[cfg(windows)]
+fn probe_windows_default_colors() {
+    let started_at = std::time::Instant::now();
+    match crate::terminal_probe::default_colors(crate::terminal_probe::DEFAULT_TIMEOUT) {
+        Ok(colors) => {
+            tracing::info!(
+                duration_ms = %started_at.elapsed().as_millis(),
+                default_colors = colors.is_some(),
+                "terminal default color probe completed"
+            );
+            crate::terminal_palette::set_default_colors_from_startup_probe(colors);
+        }
+        Err(err) => {
+            tracing::warn!(
+                duration_ms = %started_at.elapsed().as_millis(),
+                "terminal default color probe failed: {err}"
+            );
+            crate::terminal_palette::set_default_colors_from_startup_probe(/*colors*/ None);
+        }
+    }
 }
 
 fn set_panic_hook() {
@@ -741,17 +765,6 @@ impl Tui {
     ) {
         self.insert_history_items_with_wrap_policy(
             lines.into_iter().map(HistoryInsertItem::from).collect(),
-            wrap_policy,
-        );
-    }
-
-    pub(crate) fn insert_history_hyperlink_lines_with_wrap_policy(
-        &mut self,
-        lines: Vec<HyperlinkLine>,
-        wrap_policy: HistoryLineWrapPolicy,
-    ) {
-        self.insert_history_items_with_wrap_policy(
-            lines.into_iter().map(HistoryInsertItem::Line).collect(),
             wrap_policy,
         );
     }

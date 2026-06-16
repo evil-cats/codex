@@ -66,7 +66,6 @@ enum SystemTimeResponse {
     Full(SystemTimeFullResponse),
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for SystemTimeHandler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain(GET_SYSTEM_TIME_TOOL_NAME)
@@ -76,33 +75,32 @@ impl ToolExecutor<ToolInvocation> for SystemTimeHandler {
         create_get_system_time_tool()
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(async move {
+            let ToolInvocation { payload, .. } = invocation;
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "{GET_SYSTEM_TIME_TOOL_NAME} handler received unsupported payload"
-                )));
-            }
-        };
+            let arguments = match payload {
+                ToolPayload::Function { arguments } => arguments,
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "{GET_SYSTEM_TIME_TOOL_NAME} handler received unsupported payload"
+                    )));
+                }
+            };
 
-        let args: SystemTimeArgs = parse_arguments(&arguments)?;
-        let response = system_time_response(args)?;
-        let content = serde_json::to_string(&response).map_err(|err| {
-            FunctionCallError::Fatal(format!(
-                "failed to serialize {GET_SYSTEM_TIME_TOOL_NAME} response: {err}"
-            ))
-        })?;
+            let args: SystemTimeArgs = parse_arguments(&arguments)?;
+            let response = system_time_response(args)?;
+            let content = serde_json::to_string(&response).map_err(|err| {
+                FunctionCallError::Fatal(format!(
+                    "failed to serialize {GET_SYSTEM_TIME_TOOL_NAME} response: {err}"
+                ))
+            })?;
 
-        Ok(boxed_tool_output(FunctionToolOutput::from_text(
-            content,
-            Some(true),
-        )))
+            Ok(boxed_tool_output(FunctionToolOutput::from_text(
+                content,
+                Some(true),
+            )))
+        })
     }
 }
 
@@ -186,7 +184,7 @@ fn parse_requested_offset(offset: Option<&str>) -> Result<RequestedOffset, Funct
         "" | "local" => Ok(RequestedOffset::Local),
         "utc" => Ok(RequestedOffset::Fixed {
             label: "utc".to_string(),
-            offset: FixedOffset::east_opt(0).expect("zero UTC offset should be valid"),
+            offset: Utc.fix(),
         }),
         _ => parse_fixed_offset(trimmed)
             .map(|fixed_offset| RequestedOffset::Fixed {

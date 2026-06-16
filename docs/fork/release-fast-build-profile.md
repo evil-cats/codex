@@ -2,8 +2,8 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-06-08
-source_scope: rust-v0.137.0..HEAD
+updated: 2026-06-16
+source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
 # Release-fast build profile
@@ -13,8 +13,11 @@ source_scope: rust-v0.137.0..HEAD
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет быстрый
 optimized build path: Cargo profile `release-fast` и `just build-fast-release`.
 
-Эта доработка нужна для локальных и remote сборок fork binary, когда full
-upstream `release` profile слишком дорогой из-за fat LTO и single codegen unit.
+Эта доработка нужна для remote сборок fork binary, когда нужен быстрый
+optimized compile-check с более высокой параллельностью финальных стадий. В
+`0.140.0` upstream `release` уже использует thin LTO, но остается canonical
+release profile; Hermione сохраняет отдельный named profile с
+`codegen-units = 32`.
 
 | Поле | Значение |
 | --- | --- |
@@ -28,14 +31,17 @@ upstream `release` profile слишком дорогой из-за fat LTO и si
 
 ## Зачем это нужно
 
-Upstream `release` profile оптимизирован под размер shipped artifact:
+Исторически upstream `release` profile был оптимизирован под размер shipped
+artifact:
 
 - `lto = "fat"`;
 - `codegen-units = 1`;
 - strip symbols.
 
-Для локальной Hermione-разработки это слишком медленно. Нужен профиль, который
-оставляет optimized binary, но использует thin LTO и больше codegen units.
+В `0.140.0` upstream `release` уже перешёл на `lto = "thin"` и
+`codegen-units = 4`. Для Hermione workflow всё равно нужен отдельный профиль:
+он сохраняет optimized binary, но делает compile-check быстрее и явно
+отделяет fork build path от canonical release artifact.
 
 ## Карта файлов
 
@@ -197,6 +203,31 @@ Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно �
 - visible semantic intent: сохранить build после migration, а не добавить
   новую feature.
 
+## Migration check: `0.140.0`
+
+Во время переноса на `rust-v0.140.0` upstream `[profile.release]` уже содержит:
+
+```toml
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"
+```
+
+Hermione fork всё равно должен сохранять отдельный профиль:
+
+```toml
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 32
+```
+
+Это не откат upstream release profile, а отдельный remote compile-check path.
+В `0.140.0` migration локально подтверждены code anchors
+`[profile.release-fast]`, `codegen-units = 32` и `just build-fast-release`;
+remote build на `f-ms-dev` выполнен через `just build-fast-release`.
+
 ## Регрессионное покрытие
 
 У commits `6be4eae58`, `f2797c6e8`, `46cdb741f`, `671afe3ee` не было
@@ -214,7 +245,8 @@ Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно �
 
 Исторически commit `697bad938` позже указывал `just build-fast-release` как
 выполненную verification-команду, но эта карточка не утверждает, что этот build
-запускался в текущем turn.
+запускался в текущем turn. Для переноса на `0.140.0` текущий запуск выполнен на
+`f-ms-dev`.
 
 ## Проверки
 
@@ -232,7 +264,7 @@ Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно �
 - Не заменять upstream `release` profile: он нужен для canonical release
   artifact.
 - Не запускать `cargo build --release` для обычной Hermione compile-check:
-  это возвращает дорогой fat LTO path.
+  это проверяет canonical release path, а не быстрый fork build path.
 - Не запускать Rust/Cargo/`just` локально в текущем workflow; использовать
   `f-ms-dev`, если пользователь разрешил.
 - Не считать successful merge достаточным: `release-fast` compile-check нужен
@@ -256,3 +288,4 @@ Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно �
 | Добавить `just build-fast-release` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Сохранить remote-only Rust/Cargo/`just` workflow | перенесено | "Итоговый контракт", "Проверки", "Ограничения" |
 | Зафиксировать `0.137.0` migration repair | перенесено | "Migration repair: `0.137.0`" |
+| Проверить перенос profile на `0.140.0` | перенесено и собрано на `f-ms-dev` | "Migration check: `0.140.0`" |

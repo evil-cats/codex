@@ -131,6 +131,7 @@ where
     )
 }
 
+#[cfg(test)]
 pub(crate) fn insert_history_lines_with_mode_and_wrap_policy<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
     lines: Vec<Line>,
@@ -144,19 +145,6 @@ where
         .into_iter()
         .map(HistoryInsertItem::Line)
         .collect();
-    insert_history_items_with_mode_and_wrap_policy(terminal, items, mode, wrap_policy)
-}
-
-pub(crate) fn insert_history_hyperlink_lines_with_mode_and_wrap_policy<B>(
-    terminal: &mut crate::custom_terminal::Terminal<B>,
-    lines: Vec<HyperlinkLine>,
-    mode: InsertHistoryMode,
-    wrap_policy: HistoryLineWrapPolicy,
-) -> io::Result<()>
-where
-    B: Backend + Write,
-{
-    let items = lines.into_iter().map(HistoryInsertItem::Line).collect();
     insert_history_items_with_mode_and_wrap_policy(terminal, items, mode, wrap_policy)
 }
 
