@@ -25,7 +25,21 @@ fn thread_info_tool_declares_optional_thread_id() {
     assert_eq!(tool.name, GET_THREAD_INFO_TOOL_NAME);
     assert_eq!(parameters.required, Some(Vec::new()));
     assert_eq!(parameters.additional_properties, Some(false.into()));
+    assert!(tool.description.contains("Returns thread_id, session_id"));
+    assert!(
+        tool.description
+            .contains("thread_id identifies the persisted thread/rollout")
+    );
+    assert!(
+        tool.description
+            .contains("session_id identifies the shared root-agent session tree")
+    );
+    assert!(
+        tool.description
+            .contains("Use thread_id to inspect a specific rollout")
+    );
     assert!(description.contains("Defaults to the current thread"));
+    assert!(description.contains("specific JSONL rollout"));
 }
 
 #[test]

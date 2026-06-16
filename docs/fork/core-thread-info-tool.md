@@ -110,16 +110,27 @@ Input schema содержит один необязательный параме
 
 | Параметр | Тип | Встроенное значение | Контракт |
 | --- | --- | --- | --- |
-| `thread_id` | string | текущий `Session::thread_id()` | UUID concrete thread; пустая строка является model-facing ошибкой |
+| `thread_id` | string | текущий `Session::thread_id()` | UUID конкретного thread; пустая строка является model-facing ошибкой. Описание параметра явно говорит, что `thread_id` нужно передавать для метаданных конкретного JSONL rollout |
 
 Output schema содержит объект с required ключами:
 
 | Поле | Тип | Контракт |
 | --- | --- | --- |
-| `thread_id` | string | Concrete Codex thread id для возвращенного thread |
-| `session_id` | string или null | Shared root-agent session tree id, если его удалось определить |
-| `rollout_path` | string или null | Local path к rollout JSONL, если backing store локальный и путь доступен |
-| `agent_name` | string или null | Role/name subagent или configured profile name текущего root thread, если доступно |
+| `thread_id` | string | Идентификатор сохраненного thread, который указывает на возвращенный rollout JSONL |
+| `session_id` | string или null | Общий идентификатор root-agent session tree; равен `thread_id` для root session и может отличаться для subagent threads; `null`, если его нельзя определить |
+| `rollout_path` | string или null | Локальный путь к JSONL rollout для этого thread, или `null`, если путь недоступен |
+| `agent_name` | string или null | Имя роли агента для subagents или имя profile/config для root session; `null`, если имя недоступно |
+
+Описание tool, видимое модели, должно явно объяснять агенту:
+
+- tool возвращает `thread_id`, `session_id`, `rollout_path` и `agent_name`;
+- `thread_id` идентифицирует сохраненный thread/rollout и является ключом к
+  конкретному JSONL-логу;
+- `session_id` идентифицирует общее root-agent session tree; для root session
+  он равен `thread_id`, а для subagent threads может отличаться;
+- `thread_id` используется, когда нужно посмотреть конкретный rollout;
+- `session_id` используется, когда нужно сгруппировать связанные root и
+  subagent threads.
 
 ### Runtime-разбор аргументов
 
@@ -363,6 +374,7 @@ binary, используй обычный fork workflow для remote release-fa
 | Переименование `session` в `thread` после уточнения модели | перенесено в карточку |
 | Различие `thread_id` и `session_id` | перенесено в карточку |
 | `thread_id` как однозначный ключ rollout filename | перенесено в карточку |
+| Видимое модели описание различает `thread_id` для JSONL rollout и `session_id` для группировки дерева | перенесено в карточку и закреплено spec-тестом |
 | `agent_name` из subagent config `name` через `agent_role` | перенесено в карточку |
 | `agent_name` текущего root из profile/config `name` | перенесено в карточку |
 | Remote build только на `f-ms-dev`, без разработки на mirror | перенесено в карточку |
