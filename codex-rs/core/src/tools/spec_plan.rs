@@ -24,6 +24,7 @@ use crate::tools::handlers::ShellCommandHandler;
 use crate::tools::handlers::ShellCommandHandlerOptions;
 use crate::tools::handlers::SystemTimeHandler;
 use crate::tools::handlers::TestSyncHandler;
+use crate::tools::handlers::ThreadInfoHandler;
 use crate::tools::handlers::ToolSearchHandler;
 use crate::tools::handlers::ViewImageHandler;
 use crate::tools::handlers::WriteStdinHandler;
@@ -643,6 +644,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
 
     planned_tools.add(PlanHandler);
     planned_tools.add(SystemTimeHandler);
+    planned_tools.add(ThreadInfoHandler);
 
     if turn_context.config.experimental_request_user_input_enabled {
         planned_tools.add_with_exposure(

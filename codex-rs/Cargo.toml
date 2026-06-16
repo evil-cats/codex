@@ -524,6 +524,11 @@ inherits = "release"
 # optimization stages. The canonical release profile above favors size.
 lto = "thin"
 codegen-units = 32
+# This profile is used for Hermione's local install artifact. Upstream release
+# keeps line tables for symbolication before packaging; release-fast should be
+# ready to install directly after the remote build.
+debug = "none"
+strip = "symbols"
 
 [profile.profiling]
 inherits = "release"

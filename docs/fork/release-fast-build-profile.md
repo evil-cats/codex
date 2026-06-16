@@ -16,8 +16,10 @@ optimized build path: Cargo profile `release-fast` и `just build-fast-release`.
 Эта доработка нужна для remote сборок fork binary, когда нужен быстрый
 optimized compile-check с более высокой параллельностью финальных стадий. В
 `0.140.0` upstream `release` уже использует thin LTO, но остается canonical
-release profile; Hermione сохраняет отдельный named profile с
-`codegen-units = 32`.
+release profile для workflow, где binary остается пригодным для symbolication
+до упаковки. Hermione сохраняет отдельный named profile с
+`codegen-units = 32`, без debug symbols и с явным strip, потому что этот
+профиль используется для установки `codex-hermione` после удаленной сборки.
 
 | Поле | Значение |
 | --- | --- |
@@ -27,21 +29,35 @@ release profile; Hermione сохраняет отдельный named profile с
 | Cargo profile | `[profile.release-fast]` |
 | Just target | `just build-fast-release` |
 | Remote build path в текущем workflow | `f-ms-dev:/home/slader/Projects/codex` |
+| Артефакт установки | `codex-rs/target/release-fast/codex`, stripped |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
 ## Зачем это нужно
 
-Исторически upstream `release` profile был оптимизирован под размер shipped
-artifact:
+Исторически upstream `release` profile был оптимизирован под размер
+поставляемого артефакта:
 
 - `lto = "fat"`;
 - `codegen-units = 1`;
 - strip symbols.
 
 В `0.140.0` upstream `release` уже перешёл на `lto = "thin"` и
-`codegen-units = 4`. Для Hermione workflow всё равно нужен отдельный профиль:
-он сохраняет optimized binary, но делает compile-check быстрее и явно
-отделяет fork build path от canonical release artifact.
+`codegen-units = 4`, но также стал профилем для symbolication:
+
+- `debug = "line-tables-only"`;
+- `split-debuginfo = "off"`;
+- `strip = false`.
+
+Такой upstream release profile уместен для workflow упаковки, где symbols
+архивируются или обрабатываются отдельно. Для Hermione install workflow это
+лишнее: `just build-fast-release` используется как быстрый путь удаленной
+сборки, а его результат напрямую копируется в локальный `codex-hermione`.
+
+Если `release-fast` просто наследует upstream-настройки `debug` и `strip`,
+binary становится unstripped и может вырасти примерно до гигабайтного размера.
+Поэтому Hermione `release-fast` обязан явно переопределять настройки символов
+и давать stripped-артефакт, готовый к установке без ручного `strip` после
+сборки.
 
 ## Карта файлов
 
@@ -69,13 +85,21 @@ inherits = "release"
 # optimization stages. The canonical release profile above favors size.
 lto = "thin"
 codegen-units = 32
+# This profile is used for Hermione's local install artifact. Upstream release
+# keeps line tables for symbolication before packaging; release-fast should be
+# ready to install directly after the remote build.
+debug = "none"
+strip = "symbols"
 ```
 
 История:
 
 - `6be4eae58` добавил profile с `codegen-units = 16`;
 - `f2797c6e8` поднял значение до `32`;
-- текущее значение для Hermione fork: `32`.
+- `0.140.0` upstream изменил `[profile.release]` на профиль для symbolication с
+  `debug = "line-tables-only"` и `strip = false`;
+- текущее значение для Hermione fork: `codegen-units = 32`,
+  `debug = "none"` и `strip = "symbols"`.
 
 ### Just target
 
@@ -86,11 +110,15 @@ build-fast-release:
     cargo build -p codex-cli --profile release-fast
 ```
 
-Build artifact:
+Артефакт сборки:
 
 ```text
 codex-rs/target/release-fast/codex
 ```
+
+Этот артефакт должен быть stripped. Проверочная команда `file` не должна
+показывать `with debug_info, not stripped` для результата
+`just build-fast-release`.
 
 ### Remote-only workflow
 
@@ -101,8 +129,10 @@ codex-rs/target/release-fast/codex
 f-ms-dev:/home/slader/Projects/codex
 ```
 
-`release-fast` разрешён пользователем как compile-check. Тесты и debug-команды
-требуют отдельного согласия.
+`release-fast` разрешён пользователем как compile-check и путь сборки для
+установки.
+Тесты и debug-команды требуют отдельного согласия, если они не были явно
+оговорены в текущей задаче.
 
 ## Пошаговое воспроизведение
 
@@ -111,8 +141,9 @@ f-ms-dev:/home/slader/Projects/codex
 В root workspace `codex-rs/Cargo.toml` рядом с `[profile.release]` добавить
 `[profile.release-fast]`, наследующий `release`.
 
-Не менять upstream `release`: он остаётся canonical profile для size-oriented
-release artifact.
+Не менять upstream `release`: он остаётся canonical profile для upstream
+workflow упаковки. Hermione `release-fast` должен переопределять только
+fork-specific настройки артефакта установки.
 
 ### 2. Добавить just target
 
@@ -135,7 +166,9 @@ Target должен жить рядом с release/build commands, чтобы к
 just build-fast-release
 ```
 
-Ожидаемый результат: successful optimized build в `target/release-fast/codex`.
+Ожидаемый результат: успешная optimized сборка в
+`target/release-fast/codex`. Артефакт должен быть stripped без дополнительного
+ручного `strip`.
 
 ### 4. При migration на новый upstream проверить не только build profile
 
@@ -210,8 +243,10 @@ Commit `671afe3ee Update 0.137 lockfile formatting` дополнительно �
 ```toml
 [profile.release]
 lto = "thin"
+debug = "line-tables-only"
+split-debuginfo = "off"
+strip = false
 codegen-units = 4
-strip = "symbols"
 ```
 
 Hermione fork всё равно должен сохранять отдельный профиль:
@@ -221,12 +256,15 @@ Hermione fork всё равно должен сохранять отдельны
 inherits = "release"
 lto = "thin"
 codegen-units = 32
+debug = "none"
+strip = "symbols"
 ```
 
-Это не откат upstream release profile, а отдельный remote compile-check path.
-В `0.140.0` migration локально подтверждены code anchors
-`[profile.release-fast]`, `codegen-units = 32` и `just build-fast-release`;
-remote build на `f-ms-dev` выполнен через `just build-fast-release`.
+Это не откат upstream release profile, а отдельный remote compile-check и путь
+сборки для установки. В `0.140.0` migration локально подтверждены code anchors
+`[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`,
+`strip = "symbols"` и `just build-fast-release`; remote build на `f-ms-dev`
+выполняется через `just build-fast-release`.
 
 ## Регрессионное покрытие
 
@@ -235,11 +273,15 @@ remote build на `f-ms-dev` выполнен через `just build-fast-releas
 этой доработки в основном build-oriented:
 
 - `just build-fast-release`;
-- optional install verification:
+- проверка артефакта:
 
   ```text
+  file codex-rs/target/release-fast/codex
   codex-rs/target/release-fast/codex --version
   ```
+
+  `file` должен показывать stripped binary, а `--version` должен возвращать
+  ожидаемую Hermione version metadata.
 
 - для migration repair: targeted TUI/config tests, если пользователь разрешил.
 
@@ -254,20 +296,23 @@ remote build на `f-ms-dev` выполнен через `just build-fast-releas
 
 1. На `f-ms-dev:/home/slader/Projects/codex`:
    - `just build-fast-release`;
+   - `file codex-rs/target/release-fast/codex`;
    - при install: проверить `codex --version` или целевой binary path.
 2. Локально без Rust/Cargo:
-   - `rg -n "release-fast|build-fast-release|codegen-units = 32" codex-rs/Cargo.toml justfile`;
+   - `rg -n "release-fast|build-fast-release|codegen-units = 32|debug = \"none\"|strip = \"symbols\"" codex-rs/Cargo.toml justfile`;
    - `git diff --check`.
 
 ## Ограничения
 
-- Не заменять upstream `release` profile: он нужен для canonical release
-  artifact.
+- Не заменять upstream `release` profile: он нужен для canonical
+  release-артефакта.
 - Не запускать `cargo build --release` для обычной Hermione compile-check:
   это проверяет canonical release path, а не быстрый fork build path.
+- Не полагаться на ручной `strip` после сборки: он легко теряется при переносе
+  и не должен быть частью обычного install workflow.
 - Не запускать Rust/Cargo/`just` локально в текущем workflow; использовать
   `f-ms-dev`, если пользователь разрешил.
-- Не считать successful merge достаточным: `release-fast` compile-check нужен
+- Не считать успешный merge достаточным: `release-fast` compile-check нужен
   после migration.
 
 ## Риски
@@ -275,6 +320,9 @@ remote build на `f-ms-dev` выполнен через `just build-fast-releas
 - Если `release-fast` не наследует `release`, build может отличаться слишком
   сильно от shipped optimized behavior.
 - Если `codegen-units` снова станет `1`, profile потеряет смысл.
+- Если `debug` и `strip` снова будут только наследоваться из upstream
+  `release`, артефакт установки может стать unstripped и вырасти до
+  непрактичного размера.
 - При upstream migration compile errors могут проявляться в unrelated-looking
   Hermione patches: terminal title, TUI images, history cells. Карточка
   фиксирует это как обязательную проверочную развилку.
@@ -285,7 +333,8 @@ remote build на `f-ms-dev` выполнен через `just build-fast-releas
 | --- | --- | --- |
 | Добавить `[profile.release-fast]` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Использовать thin LTO и `codegen-units = 32` | перенесено | "Итоговый контракт" |
+| Зафиксировать stripped-артефакт, готовый к установке | перенесено | "Обзор", "Зачем это нужно", "Итоговый контракт", "Проверки" |
 | Добавить `just build-fast-release` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Сохранить remote-only Rust/Cargo/`just` workflow | перенесено | "Итоговый контракт", "Проверки", "Ограничения" |
 | Зафиксировать `0.137.0` migration repair | перенесено | "Migration repair: `0.137.0`" |
-| Проверить перенос profile на `0.140.0` | перенесено и собрано на `f-ms-dev` | "Migration check: `0.140.0`" |
+| Проверить перенос profile на `0.140.0` | перенесено; сборка на `f-ms-dev` должна подтвердить stripped-артефакт | "Migration check: `0.140.0`", "Проверки" |
