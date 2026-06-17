@@ -44,7 +44,7 @@ const PROXY_ENV_KEYS: &[&str] = &[
 
 fn create_env_from_core_vars() -> HashMap<String, String> {
     let policy = ShellEnvironmentPolicy::default();
-    create_env(&policy, /*thread_id*/ None)
+    create_env(&policy, /*thread_id*/ None, /*agent_name*/ None)
 }
 
 fn strip_proxy_env(env: &mut HashMap<String, String>) {

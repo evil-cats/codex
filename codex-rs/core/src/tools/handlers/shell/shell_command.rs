@@ -3,6 +3,7 @@ use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::ToolName;
 
+use crate::agent::agent_name::current_agent_name;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
@@ -94,13 +95,18 @@ impl ShellCommandHandler {
         let command = Self::base_command(shell.as_ref(), &params.command, use_login_shell);
         #[allow(deprecated)]
         let cwd = turn_context.resolve_path(params.workdir.clone());
+        let agent_name = current_agent_name(turn_context);
 
         Ok(ExecParams {
             command,
             cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
+            env: create_env(
+                &turn_context.shell_environment_policy,
+                Some(thread_id),
+                agent_name.as_deref(),
+            ),
             network: turn_context.network.clone(),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,

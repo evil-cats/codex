@@ -4,6 +4,7 @@ Module: runtimes
 Concrete ToolRuntime implementations for specific tools. Each runtime stays
 small and focused and reuses the orchestrator for approvals + sandbox + retry.
 */
+use crate::exec_env::CODEX_AGENT_ENV_VAR;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::path_utils;
 use crate::sandboxing::SandboxPermissions;
@@ -242,8 +243,8 @@ pub(crate) fn disable_powershell_profile_for_elevated_windows_sandbox(
 /// `explicit_env_overrides` contains policy-driven shell env overrides that
 /// should win after the snapshot is sourced, while `env` is the full live exec
 /// environment. We need access to both so snapshot restore logic can preserve
-/// runtime-only vars like `CODEX_THREAD_ID` without pretending they came from
-/// the explicit override policy.
+/// runtime-only vars like `CODEX_THREAD_ID` and `CODEX_AGENT` without pretending
+/// they came from the explicit override policy.
 ///
 /// `runtime_path_prepends` contains Codex-owned PATH entries already applied to
 /// the live `env`; snapshot wrapping replays them after restoring the snapshot
@@ -291,8 +292,10 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
         .map(|arg| format!(" '{}'", shell_single_quote(arg)))
         .collect::<String>();
     let mut override_env = explicit_env_overrides.clone();
-    if let Some(thread_id) = env.get(CODEX_THREAD_ID_ENV_VAR) {
-        override_env.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.clone());
+    for runtime_key in [CODEX_AGENT_ENV_VAR, CODEX_THREAD_ID_ENV_VAR] {
+        if let Some(runtime_value) = env.get(runtime_key) {
+            override_env.insert(runtime_key.to_string(), runtime_value.clone());
+        }
     }
     let (override_captures, override_exports) = build_override_exports(&override_env);
     let (proxy_captures, proxy_exports) = build_proxy_env_exports();

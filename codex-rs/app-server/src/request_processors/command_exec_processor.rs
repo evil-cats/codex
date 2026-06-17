@@ -150,6 +150,7 @@ impl CommandExecRequestProcessor {
         let mut env = create_env(
             &self.config.permissions.shell_environment_policy,
             /*thread_id*/ None,
+            /*agent_name*/ None,
         );
         if let Some(env_overrides) = env_overrides {
             for (key, value) in env_overrides {

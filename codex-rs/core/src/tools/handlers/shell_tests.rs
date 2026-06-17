@@ -6,6 +6,7 @@ use core_test_support::PathBufExt;
 use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 
+use crate::agent::agent_name::current_agent_name;
 use crate::exec_env::create_env;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::tests::make_session_and_context;
@@ -93,6 +94,7 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
     let expected_env = create_env(
         &turn_context.shell_environment_policy,
         Some(session.thread_id),
+        current_agent_name(&turn_context).as_deref(),
     );
 
     let params = ShellCommandToolCallParams {

@@ -21,7 +21,7 @@ fn test_core_inherit_defaults_keep_sensitive_vars() {
 
     let policy = ShellEnvironmentPolicy::default(); // inherit All, default excludes ignored
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -48,7 +48,7 @@ fn test_core_inherit_with_default_excludes_enabled() {
         ..Default::default()
     };
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -71,7 +71,7 @@ fn test_include_only() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -92,7 +92,7 @@ fn test_set_overrides() {
     policy.r#set.insert("NEW_VAR".to_string(), "42".to_string());
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -108,7 +108,7 @@ fn populate_env_inserts_thread_id() {
     let vars = make_vars(&[("PATH", "/usr/bin")]);
     let policy = ShellEnvironmentPolicy::default();
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -119,10 +119,35 @@ fn populate_env_inserts_thread_id() {
 }
 
 #[test]
+fn populate_env_inserts_agent_name_after_policy_filters() {
+    let vars = make_vars(&[
+        ("PATH", "/usr/bin"),
+        (CODEX_AGENT_ENV_VAR, "from-parent-env"),
+    ]);
+    let policy = ShellEnvironmentPolicy {
+        ignore_default_excludes: true,
+        include_only: vec![EnvironmentVariablePattern::new_case_insensitive("PATH")],
+        ..Default::default()
+    };
+    let thread_id = ThreadId::new();
+    let result = populate_env(vars, &policy, Some(thread_id), Some("Hermione"));
+
+    let mut expected: HashMap<String, String> = hashmap! {
+        "PATH".to_string() => "/usr/bin".to_string(),
+        CODEX_AGENT_ENV_VAR.to_string() => "Hermione".to_string(),
+    };
+    expected.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
+
+    assert_eq!(result, expected);
+}
+
+#[test]
 fn populate_env_omits_thread_id_when_missing() {
     let vars = make_vars(&[("PATH", "/usr/bin")]);
     let policy = ShellEnvironmentPolicy::default();
-    let result = populate_env(vars, &policy, /*thread_id*/ None);
+    let result = populate_env(
+        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
+    );
 
     let expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -142,7 +167,12 @@ fn test_inherit_all() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars.clone(), &policy, Some(thread_id));
+    let result = populate_env(
+        vars.clone(),
+        &policy,
+        Some(thread_id),
+        /*agent_name*/ None,
+    );
     let mut expected: HashMap<String, String> = vars.into_iter().collect();
     expected.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
     assert_eq!(result, expected);
@@ -159,7 +189,7 @@ fn test_inherit_all_with_default_excludes() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
     };
@@ -184,7 +214,7 @@ fn test_core_inherit_respects_case_insensitive_names_on_windows() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
     let mut expected: HashMap<String, String> = hashmap! {
         "Path".to_string() => "C:\\Windows\\System32".to_string(),
         "PathExt".to_string() => ".COM;.EXE;.BAT;.CMD".to_string(),
@@ -206,7 +236,9 @@ fn create_env_inserts_pathext_on_windows_when_missing() {
         ..Default::default()
     };
 
-    let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
+    let result = create_env_from_vars(
+        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
+    );
 
     let expected: HashMap<String, String> = hashmap! {
         "PATHEXT".to_string() => ".COM;.EXE;.BAT;.CMD".to_string(),
@@ -225,7 +257,9 @@ fn create_env_preserves_existing_pathext_case_insensitively_on_windows() {
         ..Default::default()
     };
 
-    let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
+    let result = create_env_from_vars(
+        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
+    );
 
     let pathext_vars = result
         .iter()
@@ -250,7 +284,7 @@ fn test_inherit_none() {
         .insert("ONLY_VAR".to_string(), "yes".to_string());
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id));
+    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
     let mut expected: HashMap<String, String> = hashmap! {
         "ONLY_VAR".to_string() => "yes".to_string(),
     };

@@ -219,6 +219,7 @@ async fn run_command_under_sandbox(
     let env = create_env(
         &config.permissions.shell_environment_policy,
         /*thread_id*/ None,
+        /*agent_name*/ None,
     );
 
     // Special-case Windows sandbox: execute and exit the process to emulate inherited stdio.

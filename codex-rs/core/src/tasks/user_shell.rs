@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
 
+use crate::agent::agent_name::current_agent_name;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::StdoutStream;
 use crate::exec::execute_exec_request;
@@ -130,9 +131,11 @@ pub(crate) async fn execute_user_shell_command(
     let use_login_shell = true;
     let session_shell = session.user_shell();
     let display_command = session_shell.derive_exec_args(&command, use_login_shell);
+    let agent_name = current_agent_name(turn_context.as_ref());
     let mut exec_env_map = create_env(
         &turn_context.shell_environment_policy,
         Some(session.thread_id),
+        agent_name.as_deref(),
     );
     if exec_env_map.contains_key(PROXY_ACTIVE_ENV_KEY) {
         strip_managed_proxy_env(&mut exec_env_map);

@@ -11,7 +11,9 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::agent_name::current_agent_name;
 use crate::codex_thread::BackgroundTerminalInfo;
+use crate::exec_env::CODEX_AGENT_ENV_VAR;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
@@ -1030,12 +1032,16 @@ impl UnifiedExecProcessManager {
         let local_policy_env = create_env(
             &context.turn.shell_environment_policy,
             /*thread_id*/ None,
+            /*agent_name*/ None,
         );
         let mut env = local_policy_env.clone();
         env.insert(
             CODEX_THREAD_ID_ENV_VAR.to_string(),
             context.session.thread_id.to_string(),
         );
+        if let Some(agent_name) = current_agent_name(context.turn.as_ref()) {
+            env.insert(CODEX_AGENT_ENV_VAR.to_string(), agent_name);
+        }
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {
             policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy),

@@ -44,7 +44,7 @@ const BWRAP_UNAVAILABLE_ERR: &str = "bubblewrap is unavailable: no system bwrap 
 
 fn create_env_from_core_vars() -> HashMap<String, String> {
     let policy = ShellEnvironmentPolicy::default();
-    create_env(&policy, /*thread_id*/ None)
+    create_env(&policy, /*thread_id*/ None, /*agent_name*/ None)
 }
 
 fn codex_linux_sandbox_exe() -> PathBuf {

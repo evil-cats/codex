@@ -640,6 +640,7 @@ mod tests {
             ],
             &policy,
             /*thread_id*/ None,
+            /*agent_name*/ None,
         );
 
         assert_eq!(env.get("PATH").map(String::as_str), Some("/remote/bin"));

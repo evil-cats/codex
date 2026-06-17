@@ -27,6 +27,7 @@ source_scope: working-tree
 | Основной идентификатор лога | `thread_id` |
 | Путь к JSONL | поле ответа `rollout_path` |
 | Имя агента | поле ответа `agent_name` |
+| Общий helper имени агента | `codex-rs/core/src/agent/agent_name.rs` |
 | Удаленный host сборки | `f-ms-dev:/home/slader/Projects/codex` |
 
 Главное runtime-поведение:
@@ -77,14 +78,17 @@ source_scope: working-tree
 
 | Файл | Ответственность |
 | --- | --- |
-| `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime-обработчик: разбор `thread_id`, чтение текущей или persisted thread metadata, materialize текущего rollout, вычисление `agent_name`, model-facing ошибки |
+| `codex-rs/core/src/agent/agent_name.rs` | Общий helper для вычисления `agent_name`: текущий root через config/profile, текущий subagent через `SessionSource`, persisted thread через сохраненные поля |
+| `codex-rs/core/src/agent/agent_name_tests.rs` | Unit tests для root/subagent/persisted fallback-контракта `agent_name` |
+| `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime-обработчик: разбор `thread_id`, чтение текущей или persisted thread metadata, materialize текущего rollout, использование общего helper-а `agent_name`, model-facing ошибки |
 | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` | Описание Responses API tool: имя, описание, input schema, output schema |
-| `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing и helper-контракта `agent_name` |
+| `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing `thread_id` |
 | `codex-rs/core/src/tools/handlers/thread_info_spec_tests.rs` | Unit tests для spec-контракта: optional `thread_id` и nullable output fields |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `thread_info` и `thread_info_spec`, экспортирует `ThreadInfoHandler` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `docs/fork/core-thread-info-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
+| `docs/fork/codex-agent-env-var.md` | Связанная fork-карточка: `CODEX_AGENT` использует тот же helper и тот же контракт `agent_name` для CLI-окружения |
 
 Намеренно не менялись:
 
@@ -160,7 +164,7 @@ persisted хранилище.
 - `thread_id` = `Session::thread_id()`;
 - `session_id` = `Session::session_id()`;
 - `rollout_path` = результат `current_rollout_path()`;
-- `agent_name`:
+- `agent_name` вычисляется через `codex-rs/core/src/agent/agent_name.rs`:
   - для subagent: из `SessionSource::SubAgent(ThreadSpawn.agent_role)`,
     затем leaf `agent_path`, затем `agent_nickname`;
   - для root: из top-level `name` merged config, затем active profile name.
@@ -241,7 +245,7 @@ tool от неограниченного чтения и поврежденно�
 }
 ```
 
-### Другой persisted thread
+### Пример другого persisted thread
 
 Вход:
 
@@ -276,7 +280,10 @@ tool текущего runtime, а не app-server API и не extension tool.
 - для текущего root thread использовать live config, потому что именно она
   достоверно содержит active profile `name`;
 - для subagents использовать `agent_role`, потому что parser agent TOML берет
-  `name` и сохраняет его как role/name metadata.
+  `name` и сохраняет его как role/name metadata;
+- держать вычисление имени агента в общем helper-е
+  `codex-rs/core/src/agent/agent_name.rs`, потому что `get_thread_info` и
+  runtime-переменная `CODEX_AGENT` должны отвечать одинаково для текущего turn.
 
 Отклоненные альтернативы:
 
@@ -297,15 +304,17 @@ tool текущего runtime, а не app-server API и не extension tool.
 2. Проверить, как в новом upstream устроены `ToolExecutor`, `ToolInvocation`,
    `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`.
 3. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
-4. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
-5. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
+4. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
+   используется связанной доработкой `CODEX_AGENT`.
+5. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
+6. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
    `SystemTimeHandler` или ближайшим актуальным core utility block.
-6. Перенести tests для spec и runtime helper contracts.
-7. Если upstream поменял model-visible prompt tool list tests, обновить
+7. Перенести tests для spec и runtime-контрактов helper-а.
+8. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.
-8. Запустить форматирование и проверки на `f-ms-dev`, затем синхронизировать
+9. Запустить форматирование и проверки на `f-ms-dev`, затем синхронизировать
    remote-generated изменения обратно в локальный checkout.
-9. Сверить diff с этой карточкой: все описанные поля, ошибки, fallbacks и
+10. Сверить diff с этой карточкой: все описанные поля, ошибки, fallbacks и
    bounded parent-chain logic должны остаться на месте.
 
 ## Проверки
@@ -320,6 +329,7 @@ tool текущего runtime, а не app-server API и не extension tool.
 | --- | --- | --- |
 | `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |
 | `just test -p codex-core thread_info` | `f-ms-dev`, `codex-rs/` | Проходят unit tests `thread_info*` |
+| `just test -p codex-core agent_name` | `f-ms-dev`, `codex-rs/` | Проходят unit tests общего helper-а `agent_name` |
 | `just test -p codex-core prompt_tools_are_consistent_across_requests` | `f-ms-dev`, `codex-rs/` | Cache-sensitive prompt tool list остается согласованным |
 | `just test -p codex-core` | `f-ms-dev`, `codex-rs/` | Проходит crate-level regression suite для `codex-core` |
 | `just fix -p codex-core` | `f-ms-dev`, `codex-rs/` | Clippy/fix pass не оставляет обязательных исправлений |
@@ -343,6 +353,21 @@ tool текущего runtime, а не app-server API и не extension tool.
 `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; также были
 падения code-mode/MCP tests из-за missing `test_stdio_server` и timeouts.
 Узкие проверки нового tool и cache-sensitive prompt tool list прошли.
+
+Дополнительные фактические результаты 2026-06-17 после выделения общего helper-а
+`codex-rs/core/src/agent/agent_name.rs`:
+
+| Команда | Результат |
+| --- | --- |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core agent_name` | прошла: 6 tests run, 6 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core thread_info` | прошла: 5 tests run, 5 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m05s |
+
+Эти проверки подтверждают, что `get_thread_info.agent_name` продолжает
+использовать прежний контракт через общий helper. Связанная доработка
+`CODEX_AGENT` и ее дополнительные проверки зафиксированы в
+`docs/fork/codex-agent-env-var.md`.
 
 ## Runtime, сборка и установка
 
@@ -377,6 +402,7 @@ binary, используй обычный fork workflow для remote release-fa
 | Видимое модели описание различает `thread_id` для JSONL rollout и `session_id` для группировки дерева | перенесено в карточку и закреплено spec-тестом |
 | `agent_name` из subagent config `name` через `agent_role` | перенесено в карточку |
 | `agent_name` текущего root из profile/config `name` | перенесено в карточку |
+| Общий helper `agent_name` для `get_thread_info` и `CODEX_AGENT` | перенесено в карточку и связанную карточку `codex-agent-env-var.md` |
 | Remote build только на `f-ms-dev`, без разработки на mirror | перенесено в карточку |
 | Не читать полный JSONL history ради metadata | перенесено в карточку |
 | Проверки `fmt`, `test`, `fix` | выполнены; полный `codex-core` suite запускался и упал на remote-инфраструктуре, подробности зафиксированы выше |

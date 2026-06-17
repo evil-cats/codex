@@ -3,6 +3,7 @@ use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyInherit;
 use std::collections::HashMap;
 
+pub const CODEX_AGENT_ENV_VAR: &str = "CODEX_AGENT";
 pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
 
 /// Construct a shell environment from the supplied process environment and
@@ -10,19 +11,21 @@ pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
 pub fn create_env(
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
+    agent_name: Option<&str>,
 ) -> HashMap<String, String> {
-    create_env_from_vars(std::env::vars(), policy, thread_id)
+    create_env_from_vars(std::env::vars(), policy, thread_id, agent_name)
 }
 
 pub fn create_env_from_vars<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
+    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
 {
-    let mut env_map = populate_env(vars, policy, thread_id);
+    let mut env_map = populate_env(vars, policy, thread_id, agent_name);
 
     if cfg!(target_os = "windows") {
         // This is a workaround to address the failures we are seeing in the
@@ -47,6 +50,7 @@ pub fn populate_env<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
+    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
@@ -101,7 +105,11 @@ where
         env_map.retain(|k, _| matches_any(k, &policy.include_only));
     }
 
-    // Step 6 - Populate the thread ID environment variable when provided.
+    // Step 6 - Populate runtime identity environment variables when provided.
+    if let Some(agent_name) = agent_name {
+        env_map.insert(CODEX_AGENT_ENV_VAR.to_string(), agent_name.to_string());
+    }
+
     if let Some(thread_id) = thread_id {
         env_map.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
     }
@@ -148,6 +156,36 @@ pub const WINDOWS_CORE_ENV_VARS: &[&str] = &[
     "PWSH",
 ];
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn populate_env_injects_runtime_identity_after_include_only() {
+        let vars = vec![
+            ("CODEX_AGENT".to_string(), "from-parent-env".to_string()),
+            ("CODEX_THREAD_ID".to_string(), "from-parent-env".to_string()),
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("OTHER".to_string(), "ignored".to_string()),
+        ];
+        let policy = ShellEnvironmentPolicy {
+            ignore_default_excludes: true,
+            include_only: vec![EnvironmentVariablePattern::new_case_insensitive("PATH")],
+            ..Default::default()
+        };
+
+        let result = populate_env(vars, &policy, Some("thread-1"), Some("Hermione"));
+        let expected = HashMap::from([
+            ("PATH".to_string(), "/usr/bin".to_string()),
+            ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
+        ]);
+
+        assert_eq!(result, expected);
+    }
+}
+
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
     use super::*;
@@ -178,7 +216,9 @@ mod windows_tests {
         };
 
         // Check a few sample vars instead of the full Windows core list.
-        let result = populate_env(vars, &policy, /*thread_id*/ None);
+        let result = populate_env(
+            vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
+        );
         let expected = HashMap::from([
             (
                 "Shell".to_string(),
@@ -204,7 +244,12 @@ mod windows_tests {
             ..Default::default()
         };
 
-        let result = create_env_from_vars(Vec::new(), &policy, /*thread_id*/ None);
+        let result = create_env_from_vars(
+            Vec::new(),
+            &policy,
+            /*thread_id*/ None,
+            /*agent_name*/ None,
+        );
         let expected = HashMap::from([("PATHEXT".to_string(), ".COM;.EXE;.BAT;.CMD".to_string())]);
 
         assert_eq!(result, expected);
@@ -238,7 +283,9 @@ mod non_windows_tests {
             ..Default::default()
         };
 
-        let result = populate_env(vars, &policy, /*thread_id*/ None);
+        let result = populate_env(
+            vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
+        );
         let expected = HashMap::from([
             ("path".to_string(), "/usr/bin".to_string()),
             ("home".to_string(), "/home/codex".to_string()),
