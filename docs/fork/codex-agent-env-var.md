@@ -2,24 +2,35 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-06-17
+updated: 2026-06-18
 source_scope: working-tree
 ---
 
-# Runtime-переменная окружения `CODEX_AGENT`
+# Runtime-переменные окружения Codex
 
 ## Обзор
 
-Эта карточка фиксирует fork-доработку Hermione, которая добавляет
-runtime-переменную окружения `CODEX_AGENT` для CLI-команд, запускаемых Codex.
-Переменная заполняется тем же именем агента, которое `get_thread_info`
-возвращает в поле `agent_name`.
+Эта карточка фиксирует fork-доработку Hermione, которая добавляет и обслуживает
+runtime-переменные окружения для CLI-команд, запускаемых Codex:
+
+- `CODEX_AGENT` - человекочитаемое имя текущего root-агента или subagent;
+- `CODEX_CALL_ID` - логический id конкретного tool-вызова или пользовательской
+  shell-команды;
+- `CODEX_ROLLOUT` - best-effort путь к текущему rollout JSONL;
+- `CODEX_THREAD_ID` - уже существующая связанная переменная текущего thread.
+
+`CODEX_AGENT` заполняется тем же именем агента, которое `get_thread_info`
+возвращает в поле `agent_name`. `CODEX_CALL_ID` совпадает с `call_id`, по
+которому в rollout связаны модельный `FunctionCall`, `ExecCommandBegin`,
+`ExecCommandEnd` и `FunctionCallOutput`. `CODEX_ROLLOUT` дает дочернему процессу
+путь к jsonl-файлу текущего thread, если этот путь удалось получить без
+блокировки запуска команды.
 
 | Поле | Значение |
 | --- | --- |
 | Статус | `active` |
-| Runtime-переменная | `CODEX_AGENT` |
-| Связанная runtime-переменная | `CODEX_THREAD_ID` |
+| Runtime-переменные | `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` |
+| Связанная существующая runtime-переменная | `CODEX_THREAD_ID` |
 | Crates | `codex-core`, `codex-protocol` |
 | Общий helper имени агента | `codex-rs/core/src/agent/agent_name.rs` |
 | Сборка shell env | `codex-rs/protocol/src/shell_environment.rs`, `codex-rs/core/src/exec_env.rs` |
@@ -33,20 +44,34 @@ runtime-переменную окружения `CODEX_AGENT` для CLI-ком�
   `CODEX_AGENT=<имя root-агента>`;
 - если subagent запускает CLI-команду, дочерний процесс получает
   `CODEX_AGENT=<имя subagent>`;
+- если команда запускается из tool invocation, дочерний процесс получает
+  `CODEX_CALL_ID=<call_id этого invocation>`;
+- если пользовательская `/shell`-команда запускается вне модельного tool call,
+  дочерний процесс получает UUID `CODEX_CALL_ID`, который затем используется в
+  `ExecCommandBegin` и `ExecCommandEnd`;
+- если текущий rollout удалось materialize/read, дочерний процесс получает
+  `CODEX_ROLLOUT=<путь к jsonl>`;
+- если rollout materialize/read не удался, команда все равно запускается, а
+  `CODEX_ROLLOUT` просто не добавляется;
 - имя вычисляется через общий helper, который также использует
   `get_thread_info`;
-- `CODEX_AGENT` добавляется после `ShellEnvironmentPolicy.include_only`,
-  `exclude` и `set`, как служебная runtime-переменная идентичности;
-- `CODEX_AGENT` намеренно перезаписывает одноименную переменную из
-  родительского окружения или пользовательской shell env policy, если имя
-  текущего агента известно;
+- runtime-переменные добавляются после `ShellEnvironmentPolicy.include_only`,
+  `exclude` и `set`, как служебные переменные идентичности текущего запуска;
+- runtime-переменные намеренно перезаписывают одноименные переменные из
+  родительского окружения или пользовательской shell env policy, если значение
+  текущего запуска известно;
 - если имя агента честно определить нельзя, `CODEX_AGENT` не добавляется.
 
 ## Зачем это нужно
 
 `CODEX_THREAD_ID` уже дает CLI-командам однозначный идентификатор текущего
-thread. Этого достаточно, чтобы найти rollout JSONL, но недостаточно, чтобы
-быстро понять, кто именно запустил команду: root-агент или конкретный subagent.
+thread. Этого достаточно, чтобы найти thread, но для практической диагностики
+часто нужны еще три привязки:
+
+- кто именно запустил команду: root-агент или конкретный subagent;
+- какой конкретный tool-вызов или пользовательская shell-команда соответствует
+  текущему процессу;
+- в каком rollout JSONL искать записи этого запуска.
 
 Hermione workflow использует несколько агентов и subagents. Для shell-скриптов,
 диагностических команд, локальных helper-ов и будущих инструментов удобно иметь
@@ -54,28 +79,35 @@ Hermione workflow использует несколько агентов и suba
 
 - root-команда может видеть, что ее запустила `Hermione`;
 - subagent-команда может видеть имя своей роли, например `Researcher`;
+- дочерний скрипт может залогировать `CODEX_CALL_ID` и потом найти связанные
+  строки через `rg '"call_id":"<id>"' "$CODEX_ROLLOUT"`;
+- helper может сразу открыть текущий rollout-файл без отдельного вызова
+  `get_thread_info`;
 - внешние CLI helper-ы могут логировать агентную принадлежность без отдельного
   вызова `get_thread_info`;
 - shell snapshots и unified exec не должны терять identity-переменные при
   восстановлении окружения.
 
-Доработка не заменяет `get_thread_info`. `CODEX_AGENT` дает короткую runtime
-метку для процесса, а `get_thread_info` остается introspection tool для
-`thread_id`, `session_id`, `rollout_path` и полного контракта `agent_name`.
+Доработка не заменяет `get_thread_info`. Runtime-переменные дают короткие
+подсказки дочернему процессу, а `get_thread_info` остается introspection tool
+для `thread_id`, `session_id`, `rollout_path` и полного контракта `agent_name`.
 
 ## Согласованные решения
 
 | Пункт | Итоговое решение | Причина |
 | --- | --- | --- |
 | Имя переменной | `CODEX_AGENT` | Короткое имя рядом с `CODEX_THREAD_ID`; значение описывает текущего агента, а не хранилище профиля |
+| Id вызова | `CODEX_CALL_ID` | Пользователь выбрал короткое имя; значение является логическим ключом команды, а не номером строки rollout |
+| Путь rollout | `CODEX_ROLLOUT` | Дочерний процесс может сразу искать текущий jsonl без отдельного tool call |
 | Источник значения | Общий helper `current_agent_name(TurnContext)` | `CODEX_AGENT` и `get_thread_info.agent_name` не должны расходиться |
 | Root-сессия | `name` из effective config, затем active profile name | Это тот же контракт, что у текущего root `get_thread_info` |
 | Subagent | `agent_role`, затем leaf `agent_path`, затем `agent_nickname` | `name` из agent TOML сохраняется как role/name metadata |
 | Неизвестное имя | Не добавлять `CODEX_AGENT` | Пустое или выдуманное имя хуже отсутствующей переменной |
+| Ошибка получения rollout | Не добавлять `CODEX_ROLLOUT` и продолжать запуск | Переменная является удобной подсказкой, а не причиной блокировать CLI-команду |
 | Shell policy | Добавлять после `include_only` и `set` | Runtime-идентичность должна переживать фильтры policy, как `CODEX_THREAD_ID` |
 | Конфликт с родительским окружением | Перезаписывать runtime-значением | Дочерний процесс должен видеть текущего агента, а не устаревшее значение родительского процесса |
-| Обертка shell snapshot | Восстанавливать `CODEX_AGENT` вместе с `CODEX_THREAD_ID` | Snapshot, подключенный через `source`, может перезаписать env; runtime-идентичность нужно вернуть после snapshot |
-| Unified exec remote overlay | Считать `CODEX_AGENT` runtime-only изменением | Exec-server должен получить переменную как runtime-изменение, а не как базовое policy env |
+| Обертка shell snapshot | Восстанавливать весь набор runtime-переменных | Snapshot, подключенный через `source`, может перезаписать env; runtime-идентичность нужно вернуть после snapshot |
+| Unified exec remote overlay | Считать runtime-переменные runtime-only изменением | Exec-server должен получить переменные как runtime-изменение, а не как базовое policy env |
 | Remote build | На `f-ms-dev` только сборка и тесты, исходники правятся локально | `f-ms-dev` является сборочным зеркалом, а не местом разработки |
 
 ## Карта файлов
@@ -87,27 +119,27 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/core/src/agent/mod.rs` | Подключает модуль `agent_name` |
 | `codex-rs/core/src/tools/handlers/thread_info.rs` | Использует общий helper, чтобы поле `agent_name` осталось единым с `CODEX_AGENT` |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Оставляет tests разбора `thread_id`; tests helper-а перенесены к owner-модулю |
-| `codex-rs/protocol/src/shell_environment.rs` | Добавляет константу `CODEX_AGENT_ENV_VAR` и вставляет служебные runtime-переменные идентичности после shell env policy |
-| `codex-rs/core/src/exec_env.rs` | Экспортирует `CODEX_AGENT_ENV_VAR` и принимает `agent_name` рядом с `thread_id` при сборке env |
-| `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что `CODEX_AGENT` вставляется после фильтров policy и перезаписывает родительское окружение |
-| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя текущего агента в env для обычного `shell_command` |
-| `codex-rs/core/src/tools/handlers/shell_tests.rs` | Считает expected env через тот же `current_agent_name` |
-| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT` для пользовательского `/shell` task |
-| `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает `CODEX_AGENT` после обертки shell snapshot |
-| `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT` и `CODEX_THREAD_ID` после snapshot |
-| `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет `CODEX_AGENT` в runtime env unified exec sandbox session |
-| `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Проверяет, что exec-server overlay содержит `CODEX_AGENT` как runtime-изменение |
-| `docs/fork/codex-agent-env-var.md` | Владеющий handoff-артефакт для переменной `CODEX_AGENT` |
+| `codex-rs/protocol/src/shell_environment.rs` | Добавляет константы `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`, `CODEX_ROLLOUT_ENV_VAR`; вводит `RuntimeEnv`; вставляет служебные runtime-переменные после shell env policy |
+| `codex-rs/core/src/exec_env.rs` | Экспортирует runtime env constants; вводит core-level `RuntimeEnv` с `ThreadId`; конвертирует значения в protocol `RuntimeEnv` |
+| `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что runtime-переменные вставляются после фильтров policy и перезаписывают родительское окружение |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command` |
+| `codex-rs/core/src/tools/handlers/shell_tests.rs` | Проверяет expected env через `create_env_with_runtime(...)` |
+| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task |
+| `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает runtime-переменные после обертки shell snapshot |
+| `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после snapshot |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session, но не в `local_policy_env` |
+| `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Проверяет, что exec-server overlay содержит runtime-переменные как runtime-изменение |
+| `docs/fork/codex-agent-env-var.md` | Владеющий handoff-артефакт для runtime-переменных идентичности |
 | `docs/fork/core-thread-info-tool.md` | Связанная карточка: фиксирует общий helper `agent_name` и прежний контракт tool |
 
 Намеренно не менялись:
 
 | Зона | Почему не меняется |
 | --- | --- |
-| Config schema | `CODEX_AGENT` не добавляет config key; значение вычисляется из уже загруженной config/session metadata |
+| Config schema | Runtime-переменные не добавляют config key; значения вычисляются из уже загруженной config/session metadata и текущего запуска |
 | App-server protocol | Внешний app-server API не меняется |
 | TUI | Переменная нужна дочерним CLI-командам, а не отдельной UI-поверхности |
-| Rollout/thread data model | Используются существующие `TurnContext`, `SessionSource`, `ConfigLayerStack` и `StoredThread`-поля |
+| Rollout/thread data model | Используются существующие `TurnContext`, `SessionSource`, `ConfigLayerStack`, `StoredThread`-поля, `call_id` и live rollout path; отдельный номер строки rollout не вводится |
 | `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` и `CODEX_SANDBOX_ENV_VAR` | Эти зоны запрещены локальным `AGENTS.md` и не относятся к агентной identity |
 | Persisted root thread lookup | `CODEX_AGENT` относится к текущему live turn; для старых persisted root threads `get_thread_info` по-прежнему не выдумывает имя из текущего profile |
 
@@ -127,9 +159,41 @@ Hermione workflow использует несколько агентов и suba
 Эта логика является общей с `get_thread_info.agent_name`. При будущих переносах
 и изменениях нельзя менять один контракт отдельно от другого.
 
+### Значение `CODEX_CALL_ID`
+
+`CODEX_CALL_ID` содержит логический id текущего запуска команды:
+
+- для обычного `shell_command` и unified `exec_command`: `ToolInvocation.call_id`;
+- для пользовательской `/shell`-команды: UUID, который генерируется перед
+  сборкой env и затем используется в `ExecCommandBegin`/`ExecCommandEnd`;
+- для shell snapshots: live значение восстанавливается после `source`, если
+  snapshot-файл перезаписал переменную.
+
+`CODEX_CALL_ID` не является номером строки rollout. Это более стабильный ключ:
+по нему можно найти все связанные записи команды в jsonl, даже если файл
+дописывается дальше.
+
+### Значение `CODEX_ROLLOUT`
+
+`CODEX_ROLLOUT` содержит путь к текущему rollout JSONL, если Codex смог получить
+его без блокировки запуска команды.
+
+Для live shell-команд путь берется через `Session::hook_transcript_path()`:
+
+- метод best-effort materialize текущий rollout;
+- если materialize или чтение пути не удалось, метод логирует предупреждение и
+  возвращает `None`;
+- при `None` переменная `CODEX_ROLLOUT` не добавляется;
+- команда продолжает запускаться.
+
+Это намеренно отличается от `get_thread_info`: introspection tool может
+сообщать ошибку получения rollout path, а runtime env не должен ломать CLI
+команду только из-за отсутствующей диагностической подсказки.
+
 ### Поведение shell env policy
 
-`codex_protocol::shell_environment::populate_env(...)` строит окружение так:
+`codex_protocol::shell_environment::populate_env_with_runtime(...)` строит
+окружение так:
 
 1. выбирает базовые переменные по `ShellEnvironmentPolicy.inherit`;
 2. применяет default excludes, если они не отключены;
@@ -138,10 +202,12 @@ Hermione workflow использует несколько агентов и suba
 5. применяет `include_only`;
 6. добавляет служебные runtime-переменные идентичности:
    - `CODEX_AGENT`, если имя агента передано;
+   - `CODEX_CALL_ID`, если id вызова передан;
+   - `CODEX_ROLLOUT`, если путь rollout передан;
    - `CODEX_THREAD_ID`, если thread id передан.
 
-Следствие: `CODEX_AGENT` и `CODEX_THREAD_ID` переживают `include_only` и
-перезаписывают одноименные значения из inherited env или `set`.
+Следствие: runtime-переменные переживают `include_only` и перезаписывают
+одноименные значения из inherited env или `set`.
 
 ### Runtime-точки вызова
 
@@ -149,21 +215,28 @@ Hermione workflow использует несколько агентов и suba
 
 - `ShellCommandHandler::to_exec_params(...)` получает `TurnContext`;
 - вызывает `current_agent_name(turn_context)`;
-- передает `agent_name.as_deref()` в `create_env(...)`;
-- дочерний процесс получает `CODEX_AGENT`, если имя известно.
+- получает `call_id` из `ToolInvocation`;
+- получает best-effort `rollout_path` через `Session::hook_transcript_path()`;
+- передает `RuntimeEnv` в `create_env_with_runtime(...)`;
+- дочерний процесс получает доступные runtime-переменные.
 
 `/shell` user task:
 
 - `execute_user_shell_command(...)` получает live `Session` и `TurnContext`;
 - вызывает `current_agent_name(turn_context.as_ref())`;
-- передает имя в `create_env(...)` вместе с `Session.thread_id`;
+- заранее генерирует UUID `call_id`;
+- получает best-effort `rollout_path` через `Session::hook_transcript_path()`;
+- передает значения в `create_env_with_runtime(...)` вместе с
+  `Session.thread_id`;
 - snapshot preparation и proxy stripping работают поверх уже собранного env.
 
 Unified exec sandbox session:
 
-- базовое `local_policy_env` создается без `thread_id` и без `agent_name`;
-- затем runtime env получает `CODEX_THREAD_ID`;
+- базовое `local_policy_env` создается без runtime-переменных;
+- затем runtime env получает `CODEX_THREAD_ID` и `CODEX_CALL_ID`;
 - затем, если `current_agent_name(...)` вернул имя, добавляется `CODEX_AGENT`;
+- затем, если `Session::hook_transcript_path()` вернул путь, добавляется
+  `CODEX_ROLLOUT`;
 - `ExecServerEnvConfig.local_policy_env` остается без этих runtime-переменных
   идентичности, чтобы exec-server overlay видел их как runtime-изменение.
 
@@ -171,8 +244,8 @@ Unified exec sandbox session:
 
 - `maybe_wrap_shell_lc_with_snapshot(...)` получает explicit overrides и полный
   live env отдельно;
-- после source snapshot обертка восстанавливает `CODEX_AGENT` и
-  `CODEX_THREAD_ID` из live env;
+- после source snapshot обертка восстанавливает `CODEX_AGENT`,
+  `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` из live env;
 - эти переменные не считаются явными shell policy overrides.
 
 ## Примеры поведения
@@ -225,8 +298,41 @@ Researcher
 ```text
 PATH=/usr/bin
 CODEX_AGENT=Hermione
+CODEX_CALL_ID=call-1
+CODEX_ROLLOUT=/tmp/rollout.jsonl
 CODEX_THREAD_ID=thread-1
 ```
+
+### Поиск текущей команды в rollout
+
+Команда, запущенная из shell tool, может сохранить ключ:
+
+```bash
+printf '%s\n' "$CODEX_CALL_ID"
+```
+
+Если `CODEX_ROLLOUT` задан, связанные записи можно найти по `call_id`:
+
+```bash
+rg "\"call_id\":\"$CODEX_CALL_ID\"" "$CODEX_ROLLOUT"
+```
+
+Это находит логически связанные записи, а не конкретный номер строки. В одном
+rollout обычно есть несколько записей с тем же `call_id`: модельный вызов
+tool, `ExecCommandBegin`, `ExecCommandEnd` и output item.
+
+### Отсутствующий rollout path не ломает команду
+
+Если Codex не смог materialize/read текущий rollout path, дочерний процесс
+получает остальные runtime-переменные, но не получает `CODEX_ROLLOUT`:
+
+```text
+CODEX_AGENT=Hermione
+CODEX_CALL_ID=call-1
+CODEX_THREAD_ID=thread-1
+```
+
+Это ожидаемое best-effort поведение, а не ошибка запуска команды.
 
 ## Архитектурное решение
 
@@ -234,28 +340,52 @@ CODEX_THREAD_ID=thread-1
 
 - `codex-protocol` знает только имена runtime-переменных окружения и умеет
   вставить готовые строки после shell env policy;
-- `codex-core` знает live `TurnContext` и вычисляет имя текущего агента;
+- `codex-protocol::shell_environment::RuntimeEnv` группирует runtime-значения
+  без раздувания сигнатур несколькими позиционными `Option`;
+- `codex-core` знает live `TurnContext`, `Session`, `ToolInvocation.call_id` и
+  вычисляет значения для runtime env;
 - `get_thread_info` и shell env используют один helper, чтобы не расходиться;
 - unified exec сохраняет различие между базой policy и runtime overlay.
 
-Ключевое решение - не читать agent TOML заново при запуске команды. На момент
-turn нужная идентичность уже находится в `TurnContext.session_source` или effective
-config. Повторное чтение файлов было бы менее надежным:
+Ключевое решение для `CODEX_AGENT` - не читать agent TOML заново при запуске
+команды. На момент turn нужная идентичность уже находится в
+`TurnContext.session_source` или effective config. Повторное чтение файлов было
+бы менее надежным:
 
 - agent config path может измениться после запуска subagent;
 - persisted metadata уже содержит `agent_role`;
 - root effective config уже загружен и отражает активный profile/config stack;
 - shell command launch path не должен зависеть от дополнительного filesystem IO.
 
+Ключевое решение для `CODEX_CALL_ID` - использовать уже существующий `call_id`,
+а не вычислять номер строки rollout:
+
+- `ResponseItem::FunctionCall` уже содержит `call_id`;
+- `ToolInvocation` несет тот же `call_id` в tool handler;
+- `ExecCommandBegin` и `ExecCommandEnd` уже пишут тот же `call_id`;
+- output item тоже связан тем же `call_id`;
+- строка jsonl является физической позицией append-only файла, а `call_id`
+  является логическим ключом команды.
+
+Ключевое решение для `CODEX_ROLLOUT` - использовать best-effort
+`Session::hook_transcript_path()`, а не строгий путь ошибок из
+`get_thread_info`.
+Дочерняя CLI-команда не должна падать только потому, что диагностический путь к
+rollout не удалось получить.
+
 Отклоненные альтернативы:
 
 | Альтернатива | Почему отклонена |
 | --- | --- |
 | Дублировать helper из `thread_info.rs` в env-коде | Контракты `get_thread_info.agent_name` и `CODEX_AGENT` могли бы разойтись |
-| Всегда ставить `CODEX_AGENT=""` при неизвестном имени | Пустая переменная хуже отсутствующей: дочерний script не может отличить неизвестность от намеренного пустого значения |
+| Всегда ставить `CODEX_AGENT=""` при неизвестном имени | Пустая переменная хуже отсутствующей: дочерний скрипт не может отличить неизвестность от намеренного пустого значения |
 | Оставить `CODEX_AGENT` под контролем `ShellEnvironmentPolicy.include_only` | Runtime-идентичность должна быть доступна так же надежно, как `CODEX_THREAD_ID` |
 | Считать `CODEX_AGENT` частью `local_policy_env` unified exec | Exec-server overlay потерял бы информацию, что переменная является runtime-изменением |
 | Искать имя persisted root thread из текущего profile | Это неверно для старых root threads и не относится к live-окружению CLI-команды |
+| Добавлять `CODEX_ROLLOUT_LINE` | Номер строки физически удобен человеку, но плохо подходит для live append-only файла и не является уже существующим runtime key |
+| Называть ключ `CODEX_TOOL_CALL_ID` | Имя точнее для model tool calls, но пользователь выбрал более короткий `CODEX_CALL_ID`; `/shell` тоже получает id запуска, хотя это не model tool call |
+| Делать отсутствие rollout path ошибкой запуска | Пользователь явно выбрал best-effort контракт: если path не получили, переменная отсутствует, а команда продолжает работать |
+| Класть `CODEX_ROLLOUT` в `local_policy_env` unified exec | Exec-server потерял бы различие между policy env и runtime overlay текущего запуска |
 
 ## Порядок повторения при переносе
 
@@ -264,27 +394,34 @@ config. Повторное чтение файлов было бы менее н
 1. Прочитать `FORK.md`, эту карточку и `docs/fork/core-thread-info-tool.md`.
 2. Проверить, как upstream собирает shell env и где объявлен
    `CODEX_THREAD_ID`.
-3. Добавить `CODEX_AGENT_ENV_VAR` рядом с `CODEX_THREAD_ID_ENV_VAR` в protocol
-   shell environment module.
-4. Расширить `create_env`, `create_env_from_vars` и `populate_env`
-   необязательным `agent_name`.
-5. Убедиться, что служебные runtime-переменные идентичности добавляются после
+3. Добавить `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR` и
+   `CODEX_ROLLOUT_ENV_VAR` рядом с `CODEX_THREAD_ID_ENV_VAR` в protocol shell
+   environment module.
+4. Добавить или восстановить `RuntimeEnv` в protocol shell environment module.
+5. Оставить совместимые `create_env`, `create_env_from_vars` и `populate_env`
+   для старых точек вызова, но добавить варианты с `RuntimeEnv` для новых
+   значений.
+6. Убедиться, что служебные runtime-переменные идентичности добавляются после
    `include_only`.
-6. Вынести или восстановить общий helper имени агента:
+7. Вынести или восстановить общий helper имени агента:
    - root: `name` effective config, затем active profile;
    - subagent: `agent_role`, затем leaf `agent_path`, затем `agent_nickname`;
    - persisted fields: `agent_role`, затем leaf `agent_path`, затем
      `agent_nickname`.
-7. Переключить `get_thread_info` на общий helper.
-8. Передать `current_agent_name(...)` в shell command env, `/shell` user task и
-   unified exec sandbox session.
-9. Для unified exec не класть `CODEX_AGENT` в `local_policy_env`; добавлять его
-   только в runtime env.
-10. Обновить обертку shell snapshot, чтобы она восстанавливала `CODEX_AGENT`
-    вместе с `CODEX_THREAD_ID`.
-11. Перенести tests для env policy, agent helper, shell snapshot и unified exec
+8. Переключить `get_thread_info` на общий helper.
+9. Передать `current_agent_name(...)`, `call_id` и best-effort `rollout_path` в
+   shell command env и `/shell` user task.
+10. Для `/shell` генерировать UUID `call_id` до сборки env, а потом использовать
+    тот же id в `ExecCommandBegin`/`ExecCommandEnd`.
+11. Для unified exec не класть runtime-переменные в `local_policy_env`;
+    добавлять их только в runtime env.
+12. Использовать `Session::hook_transcript_path()` для `CODEX_ROLLOUT`, чтобы
+    отсутствие path не блокировало запуск команды.
+13. Обновить обертку shell snapshot, чтобы она восстанавливала весь набор
+    runtime-переменных.
+14. Перенести tests для env policy, agent helper, shell snapshot и unified exec
     overlay.
-12. Запустить форматирование и проверки на `f-ms-dev`, затем синхронизировать
+15. Запустить форматирование и проверки на `f-ms-dev`, затем синхронизировать
     remote-generated изменения обратно в локальный checkout.
 
 ## Проверки
@@ -298,12 +435,15 @@ config. Повторное чтение файлов было бы менее н
 | Команда | Где запускать | Ожидаемый результат |
 | --- | --- | --- |
 | `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |
-| `just test -p codex-core exec_env` | `f-ms-dev`, `codex-rs/` | Проходят tests сборки shell env и вставки `CODEX_AGENT` |
+| `just test -p codex-core exec_env` | `f-ms-dev`, `codex-rs/` | Проходят tests сборки shell env и вставки runtime-переменных |
 | `just test -p codex-core agent_name` | `f-ms-dev`, `codex-rs/` | Проходят tests общего helper-а имени агента |
 | `just test -p codex-core thread_info` | `f-ms-dev`, `codex-rs/` | `get_thread_info` сохраняет прежний контракт `agent_name` через общий helper |
-| `just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | `f-ms-dev`, `codex-rs/` | Snapshot wrapper сохраняет `CODEX_AGENT` и `CODEX_THREAD_ID` |
-| `just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | `f-ms-dev`, `codex-rs/` | Exec-server overlay включает `CODEX_AGENT` как runtime-изменение |
+| `just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | `f-ms-dev`, `codex-rs/` | Snapshot wrapper сохраняет runtime-переменные |
+| `just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | `f-ms-dev`, `codex-rs/` | Exec-server overlay включает runtime-переменные как runtime-изменения |
+| `just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | `f-ms-dev`, `codex-rs/` | `shell_command` env получает `CODEX_CALL_ID`, `CODEX_ROLLOUT`, `CODEX_AGENT` и `CODEX_THREAD_ID` |
+| `just test -p codex-protocol shell_environment` | `f-ms-dev`, `codex-rs/` | Protocol env builder вставляет runtime-переменные после `include_only` |
 | `just fix -p codex-core` | `f-ms-dev`, `codex-rs/` | Clippy/fix pass не оставляет обязательных исправлений |
+| `just fix -p codex-protocol` | `f-ms-dev`, `codex-rs/` | Protocol clippy/fix pass не оставляет обязательных исправлений |
 | `just build-fast-release` | `f-ms-dev`, `codex-rs/` | Release-fast binary собирается для установки |
 
 Фактические результаты 2026-06-17:
@@ -323,15 +463,33 @@ config. Повторное чтение файлов было бы менее н
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-protocol` | прошла за 37.68s |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just build-fast-release` | прошла за 5m59s |
 
+Фактические результаты 2026-06-18 для расширения `CODEX_CALL_ID` и
+`CODEX_ROLLOUT`:
+
+| Команда | Результат |
+| --- | --- |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fmt` | прошла на `f-ms-dev`; remote diff совпал с локальным diff |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 tests run, 12 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 tests run, 2 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_defaults_to_non_login_when_disallowed` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol` | прошла: 229 tests run, 229 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core` | запуск выполнен; итог `2680 passed, 68 failed, 15 skipped`. Видимые причины failures относятся к окружению сборочной машины: `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, отсутствие `target/debug/test_stdio_server` для stdio MCP tests и timeouts в code-mode/network-denial сценариях |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m59s |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-protocol` | прошла за 14.75s |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just build-fast-release` | прошла за 5m53s |
+
 Полный workspace `just test` не запускался: проектное правило требует
 отдельного подтверждения перед полным suite. Для текущей доработки выполнены
-узкие tests, protocol tests, compile-check затронутых crates, `fix` и
-release-fast сборка.
+узкие tests, полный `codex-protocol`, полный `codex-core` с окруженческими
+failures, `fix` и release-fast сборка.
 
 ## Runtime, сборка и установка
 
-Изменение затрагивает окружение дочерних CLI-процессов. Release-fast binary
-собран на `f-ms-dev` 2026-06-17:
+Изменение затрагивает окружение дочерних CLI-процессов. Актуальный
+release-fast binary собран на `f-ms-dev` 2026-06-18:
 
 | Поле | Значение |
 | --- | --- |
@@ -339,13 +497,20 @@ release-fast сборка.
 | Размер | `303M` |
 | Формат | `ELF 64-bit LSB pie executable, x86-64` |
 | Strip-статус | `stripped` |
-| BuildID | `702c38d8661e35aeecbab04a1e1a11eb10de7f2d` |
+| BuildID | `43e82d6f27a6987bd6fa113242379ab2a3735076` |
 | Версия | `codex-cli 0.140.0+hermione` |
 
-Бинарник не устанавливался локально в этом шаге. Если нужно проверить
-установленный `codex-hermione`, используй обычный fork workflow: скопировать
-remote artifact с `f-ms-dev` и установить в локальный путь только после явного
-решения на установку.
+Бинарник установлен локально 2026-06-18 после явного решения на установку:
+
+| Поле | Значение |
+| --- | --- |
+| Локальный путь | `/home/slader/.local/bin/codex-hermione` |
+| Источник установки | `/tmp/codex-hermione-release-fast`, скопированный с `f-ms-dev` |
+| Размер | `303M` |
+| Формат | `ELF 64-bit LSB pie executable, x86-64` |
+| Strip-статус | `stripped` |
+| BuildID | `43e82d6f27a6987bd6fa113242379ab2a3735076` |
+| Версия | `codex-cli 0.140.0+hermione` |
 
 Важно: `f-ms-dev` остается сборочным зеркалом. Разработка, ручные правки и
 commit происходят в локальном checkout `/home/slader/Projects/evilcats/codex`.
@@ -358,13 +523,22 @@ commit происходят в локальном checkout `/home/slader/Project
 - Если два subagent имеют одинаковый `agent_role`, `CODEX_AGENT` не различает
   их; для уникального id нужно использовать `CODEX_THREAD_ID`.
 - Если имя root или subagent недоступно, переменная не добавляется.
+- `CODEX_CALL_ID` является id вызова команды, а не токеном безопасности; его
+  нельзя использовать как границу доверия.
+- Для `/shell` значение `CODEX_CALL_ID` не приходит от модели: это локальный
+  UUID запуска пользовательской shell-команды.
+- `CODEX_ROLLOUT` является best-effort переменной и может отсутствовать, если
+  rollout не удалось materialize/read.
+- `CODEX_ROLLOUT` указывает на live jsonl, который может дописываться после
+  запуска команды; скрипты должны искать по `CODEX_CALL_ID`, а не полагаться на
+  последний номер строки.
 - Старые persisted root threads не получают задним числом agent name; это
   ограничение относится к `get_thread_info`, а `CODEX_AGENT` работает только
   для live-окружения CLI-команды.
-- Скрипты не должны использовать `CODEX_AGENT` как границу безопасности: значение
-  находится в обычном окружении процесса.
-- Будущие изменения именования агентов должны обновлять общий helper, эту карточку и
-  `docs/fork/core-thread-info-tool.md` вместе.
+- Скрипты не должны использовать runtime-переменные как границу безопасности:
+  значения находятся в обычном окружении процесса.
+- Будущие изменения именования агентов должны обновлять общий helper, эту
+  карточку и `docs/fork/core-thread-info-tool.md` вместе.
 
 ## Проверка покрытия
 
@@ -374,7 +548,10 @@ commit происходят в локальном checkout `/home/slader/Project
 | Subagent CLI получает имя subagent | перенесено в карточку и реализовано через `current_agent_name` |
 | `CODEX_AGENT` использует тот же контракт, что `get_thread_info.agent_name` | перенесено в карточку и реализовано через общий helper |
 | `CODEX_AGENT` добавляется после фильтров shell env policy | перенесено в карточку и покрыто unit tests |
-| Snapshot wrapper сохраняет `CODEX_AGENT` | перенесено в карточку и покрыто unit tests |
-| Unified exec overlay считает `CODEX_AGENT` runtime-only изменением | перенесено в карточку и покрыто unit tests |
+| `CODEX_CALL_ID` добавляется для shell tool и `/shell` user task | перенесено в карточку и реализовано |
+| `CODEX_CALL_ID` является ключом поиска в rollout, а не номером строки | перенесено в карточку |
+| `CODEX_ROLLOUT` добавляется best-effort и не блокирует запуск команды | перенесено в карточку и реализовано через `hook_transcript_path()` |
+| Snapshot wrapper сохраняет runtime-переменные | перенесено в карточку и покрыто unit tests |
+| Unified exec overlay считает runtime-переменные runtime-only изменением | перенесено в карточку и покрыто unit tests |
 | `f-ms-dev` только для сборки и тестов, без разработки на mirror | перенесено в карточку |
-| Проверки `fmt`, `test`, `fix`, `build-fast-release` | выполнено на `f-ms-dev`, результаты зафиксированы выше |
+| Проверки `fmt`, `test`, `fix`, `build-fast-release` | для `CODEX_AGENT` выполнено на `f-ms-dev`; для `CODEX_CALL_ID` и `CODEX_ROLLOUT` выполнены targeted tests, полный `codex-protocol`, `fix` и release-fast build; полный `codex-core` запуск зафиксирован с окруженческими failures |

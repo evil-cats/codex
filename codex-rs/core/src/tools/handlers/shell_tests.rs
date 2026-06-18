@@ -7,7 +7,6 @@ use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 
 use crate::agent::agent_name::current_agent_name;
-use crate::exec_env::create_env;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::tests::make_session_and_context;
 use crate::shell::Shell;
@@ -91,10 +90,16 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
         .derive_exec_args(&command, /*use_login_shell*/ true);
     #[allow(deprecated)]
     let expected_cwd = turn_context.resolve_path(workdir.clone());
-    let expected_env = create_env(
+    let call_id = "test-call";
+    let rollout_path = std::path::Path::new("/tmp/rollout.jsonl");
+    let expected_env = crate::exec_env::create_env_with_runtime(
         &turn_context.shell_environment_policy,
-        Some(session.thread_id),
-        current_agent_name(&turn_context).as_deref(),
+        crate::exec_env::RuntimeEnv {
+            thread_id: Some(session.thread_id),
+            agent_name: current_agent_name(&turn_context).as_deref(),
+            call_id: Some(call_id),
+            rollout_path: Some(rollout_path),
+        },
     );
 
     let params = ShellCommandToolCallParams {
@@ -113,6 +118,8 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
         &session,
         &turn_context,
         session.thread_id,
+        call_id,
+        Some(rollout_path),
         /*allow_login_shell*/ true,
     )
     .expect("login shells should be allowed");
@@ -175,11 +182,15 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
         justification: None,
     };
 
+    let call_id = "test-call";
+    let rollout_path = std::path::Path::new("/tmp/rollout.jsonl");
     let exec_params = ShellCommandHandler::to_exec_params(
         &params,
         &session,
         &turn_context,
         session.thread_id,
+        call_id,
+        Some(rollout_path),
         /*allow_login_shell*/ false,
     )
     .expect("non-login shells should still be allowed");

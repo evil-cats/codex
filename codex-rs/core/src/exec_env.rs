@@ -4,9 +4,20 @@ use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::shell_environment;
 use std::collections::HashMap;
+use std::path::Path;
 
 pub use codex_protocol::shell_environment::CODEX_AGENT_ENV_VAR;
+pub use codex_protocol::shell_environment::CODEX_CALL_ID_ENV_VAR;
+pub use codex_protocol::shell_environment::CODEX_ROLLOUT_ENV_VAR;
 pub use codex_protocol::shell_environment::CODEX_THREAD_ID_ENV_VAR;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RuntimeEnv<'a> {
+    pub thread_id: Option<ThreadId>,
+    pub agent_name: Option<&'a str>,
+    pub call_id: Option<&'a str>,
+    pub rollout_path: Option<&'a Path>,
+}
 
 /// Construct an environment map based on the rules in the specified policy. The
 /// resulting map can be passed directly to `Command::envs()` after calling
@@ -16,15 +27,38 @@ pub use codex_protocol::shell_environment::CODEX_THREAD_ID_ENV_VAR;
 /// The derivation follows the algorithm documented in the struct-level comment
 /// for [`ShellEnvironmentPolicy`].
 ///
-/// `CODEX_THREAD_ID` and `CODEX_AGENT` are injected when their values are
+/// Runtime identity variables such as `CODEX_THREAD_ID`, `CODEX_AGENT`,
+/// `CODEX_CALL_ID`, and `CODEX_ROLLOUT` are injected when their values are
 /// provided, even when `include_only` is set.
 pub fn create_env(
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<ThreadId>,
     agent_name: Option<&str>,
 ) -> HashMap<String, String> {
-    let thread_id = thread_id.map(|thread_id| thread_id.to_string());
-    shell_environment::create_env(policy, thread_id.as_deref(), agent_name)
+    create_env_with_runtime(
+        policy,
+        RuntimeEnv {
+            thread_id,
+            agent_name,
+            ..Default::default()
+        },
+    )
+}
+
+pub fn create_env_with_runtime(
+    policy: &ShellEnvironmentPolicy,
+    runtime: RuntimeEnv<'_>,
+) -> HashMap<String, String> {
+    let thread_id = runtime.thread_id.map(|thread_id| thread_id.to_string());
+    shell_environment::create_env_with_runtime(
+        policy,
+        shell_environment::RuntimeEnv {
+            thread_id: thread_id.as_deref(),
+            agent_name: runtime.agent_name,
+            call_id: runtime.call_id,
+            rollout_path: runtime.rollout_path,
+        },
+    )
 }
 
 #[cfg(all(test, target_os = "windows"))]
@@ -53,6 +87,28 @@ where
 {
     let thread_id = thread_id.map(|thread_id| thread_id.to_string());
     shell_environment::populate_env(vars, policy, thread_id.as_deref(), agent_name)
+}
+
+#[cfg(test)]
+fn populate_env_with_runtime<I>(
+    vars: I,
+    policy: &ShellEnvironmentPolicy,
+    runtime: RuntimeEnv<'_>,
+) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let thread_id = runtime.thread_id.map(|thread_id| thread_id.to_string());
+    shell_environment::populate_env_with_runtime(
+        vars,
+        policy,
+        shell_environment::RuntimeEnv {
+            thread_id: thread_id.as_deref(),
+            agent_name: runtime.agent_name,
+            call_id: runtime.call_id,
+            rollout_path: runtime.rollout_path,
+        },
+    )
 }
 
 #[cfg(test)]

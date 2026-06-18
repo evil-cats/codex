@@ -88,7 +88,7 @@ source_scope: working-tree
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `docs/fork/core-thread-info-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
-| `docs/fork/codex-agent-env-var.md` | Связанная fork-карточка: `CODEX_AGENT` использует тот же helper и тот же контракт `agent_name` для CLI-окружения |
+| `docs/fork/codex-agent-env-var.md` | Связанная fork-карточка runtime env: `CODEX_AGENT` использует тот же helper и тот же контракт `agent_name`; `CODEX_ROLLOUT` использует тот же live rollout path как best-effort env-подсказку |
 
 Намеренно не менялись:
 
@@ -283,7 +283,10 @@ tool текущего runtime, а не app-server API и не extension tool.
   `name` и сохраняет его как role/name metadata;
 - держать вычисление имени агента в общем helper-е
   `codex-rs/core/src/agent/agent_name.rs`, потому что `get_thread_info` и
-  runtime-переменная `CODEX_AGENT` должны отвечать одинаково для текущего turn.
+  runtime-переменная `CODEX_AGENT` должны отвечать одинаково для текущего turn;
+- оставить строгий контракт ошибок rollout path в `get_thread_info`, но
+  разрешить связанной runtime env переменной `CODEX_ROLLOUT` быть best-effort,
+  чтобы отсутствие диагностического path не блокировало запуск CLI-команды.
 
 Отклоненные альтернативы:
 
@@ -305,7 +308,7 @@ tool текущего runtime, а не app-server API и не extension tool.
    `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`.
 3. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
 4. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
-   используется связанной доработкой `CODEX_AGENT`.
+   используется связанной runtime env доработкой.
 5. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
 6. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
    `SystemTimeHandler` или ближайшим актуальным core utility block.
@@ -366,7 +369,7 @@ tool текущего runtime, а не app-server API и не extension tool.
 
 Эти проверки подтверждают, что `get_thread_info.agent_name` продолжает
 использовать прежний контракт через общий helper. Связанная доработка
-`CODEX_AGENT` и ее дополнительные проверки зафиксированы в
+runtime env и ее дополнительные проверки зафиксированы в
 `docs/fork/codex-agent-env-var.md`.
 
 ## Runtime, сборка и установка
@@ -403,6 +406,7 @@ binary, используй обычный fork workflow для remote release-fa
 | `agent_name` из subagent config `name` через `agent_role` | перенесено в карточку |
 | `agent_name` текущего root из profile/config `name` | перенесено в карточку |
 | Общий helper `agent_name` для `get_thread_info` и `CODEX_AGENT` | перенесено в карточку и связанную карточку `codex-agent-env-var.md` |
+| Связь `rollout_path` с best-effort `CODEX_ROLLOUT` | перенесено в связанную карточку `codex-agent-env-var.md` |
 | Remote build только на `f-ms-dev`, без разработки на mirror | перенесено в карточку |
 | Не читать полный JSONL history ради metadata | перенесено в карточку |
 | Проверки `fmt`, `test`, `fix` | выполнены; полный `codex-core` suite запускался и упал на remote-инфраструктуре, подробности зафиксированы выше |

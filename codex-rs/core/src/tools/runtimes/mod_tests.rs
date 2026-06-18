@@ -599,7 +599,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env() {
     let snapshot_path = dir.path().join("snapshot.sh");
     std::fs::write(
         &snapshot_path,
-        "# Snapshot file\nexport CODEX_AGENT='Parent'\nexport CODEX_THREAD_ID='parent-thread'\n",
+        "# Snapshot file\nexport CODEX_AGENT='Parent'\nexport CODEX_CALL_ID='parent-call'\nexport CODEX_ROLLOUT='/tmp/parent.jsonl'\nexport CODEX_THREAD_ID='parent-thread'\n",
     )
     .expect("write snapshot");
     let session_shell = shell_with_snapshot(
@@ -611,7 +611,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env() {
     let command = vec![
         "/bin/bash".to_string(),
         "-lc".to_string(),
-        "printf '%s|%s' \"$CODEX_AGENT\" \"$CODEX_THREAD_ID\"".to_string(),
+        "printf '%s|%s|%s|%s' \"$CODEX_AGENT\" \"$CODEX_CALL_ID\" \"$CODEX_ROLLOUT\" \"$CODEX_THREAD_ID\"".to_string(),
     ];
     let rewritten = maybe_wrap_shell_lc_with_snapshot(
         &command,
@@ -620,6 +620,11 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env() {
         &HashMap::new(),
         &HashMap::from([
             ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+            (
+                "CODEX_ROLLOUT".to_string(),
+                "/tmp/rollout.jsonl".to_string(),
+            ),
             ("CODEX_THREAD_ID".to_string(), "nested-thread".to_string()),
         ]),
         &RuntimePathPrepends::default(),
@@ -627,6 +632,8 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env() {
     let output = Command::new(&rewritten[0])
         .args(&rewritten[1..])
         .env("CODEX_AGENT", "Hermione")
+        .env("CODEX_CALL_ID", "call-1")
+        .env("CODEX_ROLLOUT", "/tmp/rollout.jsonl")
         .env("CODEX_THREAD_ID", "nested-thread")
         .output()
         .expect("run rewritten command");
@@ -634,7 +641,7 @@ fn maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env() {
     assert!(output.status.success(), "command failed: {output:?}");
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Hermione|nested-thread"
+        "Hermione|call-1|/tmp/rollout.jsonl|nested-thread"
     );
 }
 

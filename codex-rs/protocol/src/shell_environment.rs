@@ -2,9 +2,22 @@ use crate::config_types::EnvironmentVariablePattern;
 use crate::config_types::ShellEnvironmentPolicy;
 use crate::config_types::ShellEnvironmentPolicyInherit;
 use std::collections::HashMap;
+use std::path::Path;
 
 pub const CODEX_AGENT_ENV_VAR: &str = "CODEX_AGENT";
+pub const CODEX_CALL_ID_ENV_VAR: &str = "CODEX_CALL_ID";
+pub const CODEX_ROLLOUT_ENV_VAR: &str = "CODEX_ROLLOUT";
 pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
+
+/// Runtime identity values that Codex injects after shell environment policy
+/// filters have been applied.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RuntimeEnv<'a> {
+    pub thread_id: Option<&'a str>,
+    pub agent_name: Option<&'a str>,
+    pub call_id: Option<&'a str>,
+    pub rollout_path: Option<&'a Path>,
+}
 
 /// Construct a shell environment from the supplied process environment and
 /// shell-environment policy.
@@ -16,6 +29,13 @@ pub fn create_env(
     create_env_from_vars(std::env::vars(), policy, thread_id, agent_name)
 }
 
+pub fn create_env_with_runtime(
+    policy: &ShellEnvironmentPolicy,
+    runtime: RuntimeEnv<'_>,
+) -> HashMap<String, String> {
+    create_env_from_vars_with_runtime(std::env::vars(), policy, runtime)
+}
+
 pub fn create_env_from_vars<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
@@ -25,7 +45,26 @@ pub fn create_env_from_vars<I>(
 where
     I: IntoIterator<Item = (String, String)>,
 {
-    let mut env_map = populate_env(vars, policy, thread_id, agent_name);
+    create_env_from_vars_with_runtime(
+        vars,
+        policy,
+        RuntimeEnv {
+            thread_id,
+            agent_name,
+            ..Default::default()
+        },
+    )
+}
+
+pub fn create_env_from_vars_with_runtime<I>(
+    vars: I,
+    policy: &ShellEnvironmentPolicy,
+    runtime: RuntimeEnv<'_>,
+) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut env_map = populate_env_with_runtime(vars, policy, runtime);
 
     if cfg!(target_os = "windows") {
         // This is a workaround to address the failures we are seeing in the
@@ -51,6 +90,25 @@ pub fn populate_env<I>(
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
     agent_name: Option<&str>,
+) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    populate_env_with_runtime(
+        vars,
+        policy,
+        RuntimeEnv {
+            thread_id,
+            agent_name,
+            ..Default::default()
+        },
+    )
+}
+
+pub fn populate_env_with_runtime<I>(
+    vars: I,
+    policy: &ShellEnvironmentPolicy,
+    runtime: RuntimeEnv<'_>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
@@ -106,11 +164,22 @@ where
     }
 
     // Step 6 - Populate runtime identity environment variables when provided.
-    if let Some(agent_name) = agent_name {
+    if let Some(agent_name) = runtime.agent_name {
         env_map.insert(CODEX_AGENT_ENV_VAR.to_string(), agent_name.to_string());
     }
 
-    if let Some(thread_id) = thread_id {
+    if let Some(call_id) = runtime.call_id {
+        env_map.insert(CODEX_CALL_ID_ENV_VAR.to_string(), call_id.to_string());
+    }
+
+    if let Some(rollout_path) = runtime.rollout_path {
+        env_map.insert(
+            CODEX_ROLLOUT_ENV_VAR.to_string(),
+            rollout_path.display().to_string(),
+        );
+    }
+
+    if let Some(thread_id) = runtime.thread_id {
         env_map.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
     }
 
@@ -165,6 +234,8 @@ mod tests {
     fn populate_env_injects_runtime_identity_after_include_only() {
         let vars = vec![
             ("CODEX_AGENT".to_string(), "from-parent-env".to_string()),
+            ("CODEX_CALL_ID".to_string(), "from-parent-env".to_string()),
+            ("CODEX_ROLLOUT".to_string(), "from-parent-env".to_string()),
             ("CODEX_THREAD_ID".to_string(), "from-parent-env".to_string()),
             ("PATH".to_string(), "/usr/bin".to_string()),
             ("OTHER".to_string(), "ignored".to_string()),
@@ -175,10 +246,24 @@ mod tests {
             ..Default::default()
         };
 
-        let result = populate_env(vars, &policy, Some("thread-1"), Some("Hermione"));
+        let result = populate_env_with_runtime(
+            vars,
+            &policy,
+            RuntimeEnv {
+                thread_id: Some("thread-1"),
+                agent_name: Some("Hermione"),
+                call_id: Some("call-1"),
+                rollout_path: Some(std::path::Path::new("/tmp/rollout.jsonl")),
+            },
+        );
         let expected = HashMap::from([
             ("PATH".to_string(), "/usr/bin".to_string()),
             ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+            (
+                "CODEX_ROLLOUT".to_string(),
+                "/tmp/rollout.jsonl".to_string(),
+            ),
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         ]);
 

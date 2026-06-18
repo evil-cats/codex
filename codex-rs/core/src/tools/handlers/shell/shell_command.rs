@@ -6,7 +6,8 @@ use codex_tools::ToolName;
 use crate::agent::agent_name::current_agent_name;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecParams;
-use crate::exec_env::create_env;
+use crate::exec_env::RuntimeEnv;
+use crate::exec_env::create_env_with_runtime;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::session::turn_context::TurnContext;
@@ -88,6 +89,8 @@ impl ShellCommandHandler {
         session: &crate::session::session::Session,
         turn_context: &TurnContext,
         thread_id: ThreadId,
+        call_id: &str,
+        rollout_path: Option<&std::path::Path>,
         allow_login_shell: bool,
     ) -> Result<ExecParams, FunctionCallError> {
         let shell = session.user_shell();
@@ -102,10 +105,14 @@ impl ShellCommandHandler {
             cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env(
+            env: create_env_with_runtime(
                 &turn_context.shell_environment_policy,
-                Some(thread_id),
-                agent_name.as_deref(),
+                RuntimeEnv {
+                    thread_id: Some(thread_id),
+                    agent_name: agent_name.as_deref(),
+                    call_id: Some(call_id),
+                    rollout_path,
+                },
             ),
             network: turn_context.network.clone(),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
@@ -186,11 +193,14 @@ impl ShellCommandHandler {
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
+        let rollout_path = session.hook_transcript_path().await;
         let exec_params = Self::to_exec_params(
             &params,
             session.as_ref(),
             turn.as_ref(),
             session.thread_id,
+            &call_id,
+            rollout_path.as_deref(),
             turn.config.permissions.allow_login_shell,
         )?;
         let shell_type = Some(session.user_shell().shell_type);

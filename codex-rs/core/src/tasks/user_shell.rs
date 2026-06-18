@@ -14,7 +14,8 @@ use crate::agent::agent_name::current_agent_name;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::StdoutStream;
 use crate::exec::execute_exec_request;
-use crate::exec_env::create_env;
+use crate::exec_env::RuntimeEnv;
+use crate::exec_env::create_env_with_runtime;
 use crate::sandboxing::ExecRequest;
 use crate::session::TurnInput;
 use crate::session::turn_context::TurnContext;
@@ -132,10 +133,16 @@ pub(crate) async fn execute_user_shell_command(
     let session_shell = session.user_shell();
     let display_command = session_shell.derive_exec_args(&command, use_login_shell);
     let agent_name = current_agent_name(turn_context.as_ref());
-    let mut exec_env_map = create_env(
+    let call_id = Uuid::new_v4().to_string();
+    let rollout_path = session.hook_transcript_path().await;
+    let mut exec_env_map = create_env_with_runtime(
         &turn_context.shell_environment_policy,
-        Some(session.thread_id),
-        agent_name.as_deref(),
+        RuntimeEnv {
+            thread_id: Some(session.thread_id),
+            agent_name: agent_name.as_deref(),
+            call_id: Some(&call_id),
+            rollout_path: rollout_path.as_deref(),
+        },
     );
     if exec_env_map.contains_key(PROXY_ACTIVE_ENV_KEY) {
         strip_managed_proxy_env(&mut exec_env_map);
@@ -149,7 +156,6 @@ pub(crate) async fn execute_user_shell_command(
         &mut exec_env_map,
     );
 
-    let call_id = Uuid::new_v4().to_string();
     let raw_command = command;
     #[allow(deprecated)]
     let cwd = turn_context.cwd.clone();

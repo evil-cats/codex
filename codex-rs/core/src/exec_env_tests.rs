@@ -119,10 +119,12 @@ fn populate_env_inserts_thread_id() {
 }
 
 #[test]
-fn populate_env_inserts_agent_name_after_policy_filters() {
+fn populate_env_inserts_runtime_identity_after_policy_filters() {
     let vars = make_vars(&[
         ("PATH", "/usr/bin"),
         (CODEX_AGENT_ENV_VAR, "from-parent-env"),
+        (CODEX_CALL_ID_ENV_VAR, "from-parent-env"),
+        (CODEX_ROLLOUT_ENV_VAR, "from-parent-env"),
     ]);
     let policy = ShellEnvironmentPolicy {
         ignore_default_excludes: true,
@@ -130,11 +132,22 @@ fn populate_env_inserts_agent_name_after_policy_filters() {
         ..Default::default()
     };
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), Some("Hermione"));
+    let result = populate_env_with_runtime(
+        vars,
+        &policy,
+        RuntimeEnv {
+            thread_id: Some(thread_id),
+            agent_name: Some("Hermione"),
+            call_id: Some("call-1"),
+            rollout_path: Some(std::path::Path::new("/tmp/rollout.jsonl")),
+        },
+    );
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
         CODEX_AGENT_ENV_VAR.to_string() => "Hermione".to_string(),
+        CODEX_CALL_ID_ENV_VAR.to_string() => "call-1".to_string(),
+        CODEX_ROLLOUT_ENV_VAR.to_string() => "/tmp/rollout.jsonl".to_string(),
     };
     expected.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
 

@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::agent_name::current_agent_name;
 use crate::codex_thread::BackgroundTerminalInfo;
 use crate::exec_env::CODEX_AGENT_ENV_VAR;
+use crate::exec_env::CODEX_CALL_ID_ENV_VAR;
+use crate::exec_env::CODEX_ROLLOUT_ENV_VAR;
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
@@ -1039,8 +1041,15 @@ impl UnifiedExecProcessManager {
             CODEX_THREAD_ID_ENV_VAR.to_string(),
             context.session.thread_id.to_string(),
         );
+        env.insert(CODEX_CALL_ID_ENV_VAR.to_string(), context.call_id.clone());
         if let Some(agent_name) = current_agent_name(context.turn.as_ref()) {
             env.insert(CODEX_AGENT_ENV_VAR.to_string(), agent_name);
+        }
+        if let Some(rollout_path) = context.session.hook_transcript_path().await {
+            env.insert(
+                CODEX_ROLLOUT_ENV_VAR.to_string(),
+                rollout_path.display().to_string(),
+            );
         }
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {

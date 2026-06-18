@@ -46,6 +46,11 @@ fn env_overlay_for_exec_server_keeps_runtime_changes_only() {
         ("PATH".to_string(), "/sandbox-path".to_string()),
         ("SHELL_SET".to_string(), "policy".to_string()),
         ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+        ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+        (
+            "CODEX_ROLLOUT".to_string(),
+            "/tmp/rollout.jsonl".to_string(),
+        ),
         ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         (
             "CODEX_SANDBOX_NETWORK_DISABLED".to_string(),
@@ -58,6 +63,11 @@ fn env_overlay_for_exec_server_keeps_runtime_changes_only() {
         HashMap::from([
             ("PATH".to_string(), "/sandbox-path".to_string()),
             ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+            (
+                "CODEX_ROLLOUT".to_string(),
+                "/tmp/rollout.jsonl".to_string()
+            ),
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
             (
                 "CODEX_SANDBOX_NETWORK_DISABLED".to_string(),
@@ -84,6 +94,11 @@ fn exec_server_params_use_env_policy_overlay_contract() {
             ("HOME".to_string(), "/client-home".to_string()),
             ("PATH".to_string(), "/sandbox-path".to_string()),
             ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+            (
+                "CODEX_ROLLOUT".to_string(),
+                "/tmp/rollout.jsonl".to_string(),
+            ),
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         ]),
         exec_server_env_config: Some(ExecServerEnvConfig {
@@ -124,6 +139,11 @@ fn exec_server_params_use_env_policy_overlay_contract() {
         HashMap::from([
             ("PATH".to_string(), "/sandbox-path".to_string()),
             ("CODEX_AGENT".to_string(), "Hermione".to_string()),
+            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
+            (
+                "CODEX_ROLLOUT".to_string(),
+                "/tmp/rollout.jsonl".to_string(),
+            ),
             ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
         ])
     );
