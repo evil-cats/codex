@@ -817,6 +817,19 @@
       },
       "type": "object"
     },
+    "ExecToolToml": {
+      "additionalProperties": false,
+      "properties": {
+        "inline_output_max_tokens": {
+          "default": null,
+          "description": "Maximum approximate tokens from command stdout/stderr shown inline before spilling retained output to a Codex-owned file.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ExperimentalRequestUserInput": {
       "additionalProperties": false,
       "properties": {
@@ -2787,6 +2800,9 @@
     "ToolsToml": {
       "additionalProperties": false,
       "properties": {
+        "exec": {
+          "$ref": "#/definitions/ExecToolToml"
+        },
         "experimental_request_user_input": {
           "$ref": "#/definitions/ExperimentalRequestUserInput"
         },

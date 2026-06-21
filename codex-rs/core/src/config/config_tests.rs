@@ -12,6 +12,7 @@ use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::ExecToolToml;
 use codex_config::config_toml::ExperimentalRequestUserInput;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeArchitecture;
@@ -497,6 +498,7 @@ web_search = true
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
+            exec: None,
             experimental_request_user_input: None,
         })
     );
@@ -516,8 +518,47 @@ web_search = false
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
+            exec: None,
             experimental_request_user_input: None,
         })
+    );
+}
+
+#[test]
+fn tools_exec_inline_output_max_tokens_deserializes() {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[tools.exec]
+inline_output_max_tokens = 1234
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(
+        cfg.tools,
+        Some(ToolsToml {
+            web_search: None,
+            exec: Some(ExecToolToml {
+                inline_output_max_tokens: Some(1234),
+            }),
+            experimental_request_user_input: None,
+        })
+    );
+}
+
+#[test]
+fn tools_exec_inline_output_max_tokens_rejects_zero() {
+    let err = toml::from_str::<ConfigToml>(
+        r#"
+[tools.exec]
+inline_output_max_tokens = 0
+"#,
+    )
+    .expect_err("zero inline output limit should fail");
+
+    assert!(
+        err.to_string().contains("value must be greater than 0"),
+        "unexpected error: {err}"
     );
 }
 
@@ -534,6 +575,7 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
+            exec: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
         })
     );
@@ -553,9 +595,50 @@ enabled = false
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
+            exec: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
         })
     );
+}
+
+#[tokio::test]
+async fn load_config_resolves_exec_inline_output_max_tokens() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            tools: Some(ToolsToml {
+                web_search: None,
+                exec: Some(ExecToolToml {
+                    inline_output_max_tokens: Some(1234),
+                }),
+                experimental_request_user_input: None,
+            }),
+            ..ConfigToml::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.exec_inline_output_max_tokens, 1234);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_defaults_exec_inline_output_max_tokens() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.exec_inline_output_max_tokens,
+        crate::config::DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -565,6 +648,7 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
         ConfigToml {
             tools: Some(ToolsToml {
                 web_search: None,
+                exec: None,
                 experimental_request_user_input: Some(ExperimentalRequestUserInput {
                     enabled: false,
                 }),

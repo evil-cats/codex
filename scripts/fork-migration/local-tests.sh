@@ -144,6 +144,12 @@ run_card_tests() {
   card_test "core-thread-info-tool" just test -p codex-core prompt_tools_are_consistent_across_requests
   card_test "developer-instructions-files" just test -p codex-core developer_instructions
   card_test "environment-context-project-name" just test -p codex-core environment_context
+  card_test "exec-command-output-spill-files" just test -p codex-core inline_output_max_tokens
+  card_test "exec-command-output-spill-files" just test -p codex-core output_spill
+  card_test "exec-command-output-spill-files" just test -p codex-core exec_command_tool_output_formats_spill
+  card_test "exec-command-output-spill-files" just test -p codex-core exec_command_spills_large_completed_output_to_file
+  card_test "exec-command-output-spill-files" just test -p codex-core unified_exec_enforces_glob_deny_read_policy
+  card_test "exec-command-output-spill-files" just test -p codex-core unified_exec_timeout_and_followup_poll
   card_test "hermione-version-metadata" just test -p codex-cli
   # Этот IDE IPC test проверяет отдельный security contract и на `f-ms-dev`
   # зависит от permissions временной директории. Он не относится к контракту

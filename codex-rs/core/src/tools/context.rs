@@ -15,6 +15,7 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_tools::LoadableToolSpec;
 use codex_tools::ToolName;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_string::take_bytes_at_char_boundary;
@@ -317,6 +318,19 @@ pub struct ExecCommandToolOutput {
     pub exit_code: Option<i32>,
     pub original_token_count: Option<usize>,
     pub hook_command: Option<String>,
+    pub output_spill: Option<ExecCommandOutputSpill>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecCommandOutputSpill {
+    pub inline_limit_tokens: usize,
+    pub result: ExecCommandOutputSpillResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecCommandOutputSpillResult {
+    Saved { path: AbsolutePathBuf },
+    SaveFailed { error: String },
 }
 
 impl ToolOutput for ExecCommandToolOutput {
@@ -428,8 +442,25 @@ impl ExecCommandToolOutput {
             sections.push(format!("Original token count: {original_token_count}"));
         }
 
-        sections.push("Output:".to_string());
-        sections.push(self.truncated_output(self.model_output_max_tokens()));
+        if let Some(spill) = &self.output_spill {
+            sections.push(format!(
+                "Output exceeded inline limit of {} tokens.",
+                spill.inline_limit_tokens
+            ));
+            match &spill.result {
+                ExecCommandOutputSpillResult::Saved { path } => {
+                    sections.push(format!("Output saved to: {}", path.display()));
+                }
+                ExecCommandOutputSpillResult::SaveFailed { error } => {
+                    sections.push(format!("Failed to save output: {error}"));
+                }
+            }
+            sections.push("Output excerpt:".to_string());
+            sections.push(self.truncated_output(spill.inline_limit_tokens));
+        } else {
+            sections.push("Output:".to_string());
+            sections.push(self.truncated_output(self.model_output_max_tokens()));
+        }
 
         sections.join("\n")
     }

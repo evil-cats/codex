@@ -632,7 +632,18 @@ pub struct ToolsToml {
         deserialize_with = "deserialize_optional_web_search_tool_config"
     )]
     pub web_search: Option<WebSearchToolConfig>,
+    pub exec: Option<ExecToolToml>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ExecToolToml {
+    /// Maximum approximate tokens from command stdout/stderr shown inline
+    /// before spilling retained output to a Codex-owned file.
+    #[serde(default, deserialize_with = "deserialize_positive_usize_option")]
+    #[schemars(range(min = 1))]
+    pub inline_output_max_tokens: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
@@ -640,6 +651,17 @@ pub struct ToolsToml {
 pub struct ExperimentalRequestUserInput {
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+fn deserialize_positive_usize_option<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<usize>::deserialize(deserializer)?;
+    if matches!(value, Some(0)) {
+        return Err(D::Error::custom("value must be greater than 0"));
+    }
+    Ok(value)
 }
 
 #[derive(Deserialize)]

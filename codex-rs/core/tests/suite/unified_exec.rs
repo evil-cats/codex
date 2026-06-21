@@ -65,6 +65,9 @@ struct ParsedUnifiedExecOutput {
     process_id: Option<String>,
     exit_code: Option<i32>,
     original_token_count: Option<usize>,
+    output_inline_limit: Option<usize>,
+    output_saved_to: Option<String>,
+    output_save_error: Option<String>,
     output: String,
 }
 
@@ -78,7 +81,7 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
             r#"(?:Process exited with code (?P<exit_code>-?\d+)\n)?"#,
             r#"(?:Process running with session ID (?P<process_id>-?\d+)\n)?"#,
             r#"(?:Original token count: (?P<original_token_count>\d+)\n)?"#,
-            r#"Output:\n?(?P<output>.*)$"#,
+            r#"(?P<body>.*)$"#,
         ))
         .expect("valid unified exec output regex")
     });
@@ -123,11 +126,13 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
         })
         .transpose()?;
 
-    let output = captures
-        .name("output")
-        .expect("output group present")
-        .as_str()
-        .to_string();
+    let body = captures.name("body").expect("body group present").as_str();
+    let ParsedUnifiedExecOutputBody {
+        output_inline_limit,
+        output_saved_to,
+        output_save_error,
+        output,
+    } = parse_unified_exec_output_body(body)?;
 
     Ok(ParsedUnifiedExecOutput {
         chunk_id,
@@ -135,6 +140,62 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
         process_id,
         exit_code,
         original_token_count,
+        output_inline_limit,
+        output_saved_to,
+        output_save_error,
+        output,
+    })
+}
+
+struct ParsedUnifiedExecOutputBody {
+    output_inline_limit: Option<usize>,
+    output_saved_to: Option<String>,
+    output_save_error: Option<String>,
+    output: String,
+}
+
+fn parse_unified_exec_output_body(body: &str) -> Result<ParsedUnifiedExecOutputBody> {
+    if let Some(output) = body.strip_prefix("Output:\n") {
+        return Ok(ParsedUnifiedExecOutputBody {
+            output_inline_limit: None,
+            output_saved_to: None,
+            output_save_error: None,
+            output: output.to_string(),
+        });
+    }
+
+    let Some(rest) = body.strip_prefix("Output exceeded inline limit of ") else {
+        anyhow::bail!("missing Output section in unified exec output body {body:?}");
+    };
+    let (limit, rest) = rest
+        .split_once(" tokens.\n")
+        .ok_or_else(|| anyhow::anyhow!("missing spill inline limit terminator"))?;
+    let output_inline_limit = Some(
+        limit
+            .parse::<usize>()
+            .context("failed to parse spill inline limit")?,
+    );
+    let (storage_line, rest) = rest
+        .split_once('\n')
+        .ok_or_else(|| anyhow::anyhow!("missing spill storage line"))?;
+    let output_saved_to = storage_line
+        .strip_prefix("Output saved to: ")
+        .map(str::to_string);
+    let output_save_error = storage_line
+        .strip_prefix("Failed to save output: ")
+        .map(str::to_string);
+    if output_saved_to.is_none() && output_save_error.is_none() {
+        anyhow::bail!("unexpected spill storage line {storage_line:?}");
+    }
+    let output = rest
+        .strip_prefix("Output excerpt:\n")
+        .ok_or_else(|| anyhow::anyhow!("missing Output excerpt section"))?
+        .to_string();
+
+    Ok(ParsedUnifiedExecOutputBody {
+        output_inline_limit,
+        output_saved_to,
+        output_save_error,
         output,
     })
 }
@@ -2881,9 +2942,13 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
 
     let first_output = outputs.get(first_call_id).expect("missing timeout output");
     assert!(first_output.process_id.is_some());
+    assert_eq!(first_output.output_inline_limit, None);
+    assert_eq!(first_output.output_saved_to, None);
     assert!(first_output.output.is_empty());
 
     let poll_output = outputs.get(second_call_id).expect("missing poll output");
+    assert_eq!(poll_output.output_inline_limit, None);
+    assert_eq!(poll_output.output_saved_to, None);
     let output_text = poll_output.output.as_str();
     assert!(
         output_text.contains("ready"),
@@ -2967,6 +3032,85 @@ PY
         .original_token_count
         .expect("missing original_token_count for large output summary");
     assert!(original_tokens > 0);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Skipped on arm because the ctor logic to handle arg0 doesn't work on ARM.
+#[cfg(not(target_arch = "arm"))]
+async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
+    skip_if_wine_exec!(Ok(()), "uses a POSIX-only command fixture");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_windows!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.exec_inline_output_max_tokens = 6;
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("test config should allow feature update");
+    });
+    let test = builder.build_with_remote_env(&server).await?;
+
+    let call_id = "uexec-spill-large-output";
+    let expected_output = "alpha beta gamma delta epsilon zeta eta theta iota kappa\n";
+    let args = serde_json::json!({
+        "cmd": "printf 'alpha beta gamma delta epsilon zeta eta theta iota kappa\\n'",
+        "yield_time_ms": 3_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    submit_unified_exec_turn(&test, "run spill output test", PermissionProfile::Disabled).await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let requests = request_log.requests();
+    let bodies = requests
+        .into_iter()
+        .map(|request| request.body_json())
+        .collect::<Vec<_>>();
+    let outputs = collect_tool_outputs(&bodies)?;
+    let output = outputs.get(call_id).expect("missing spill output");
+
+    assert_eq!(output.output_inline_limit, Some(6));
+    assert_eq!(output.output_save_error, None);
+    let saved_to = output.output_saved_to.as_ref().expect("missing spill path");
+    assert!(
+        saved_to.contains("exec_outputs"),
+        "spill path should be under exec_outputs: {saved_to}"
+    );
+    assert!(
+        saved_to.contains(call_id),
+        "spill path should include sanitized call id: {saved_to}"
+    );
+    assert!(
+        output.output.contains("tokens truncated"),
+        "expected excerpt truncation marker: {:?}",
+        output.output
+    );
+    assert_eq!(
+        std::fs::read_to_string(std::path::Path::new(saved_to))?,
+        expected_output
+    );
 
     Ok(())
 }
@@ -3177,6 +3321,9 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     let outputs = collect_tool_outputs(&bodies)?;
     let output = outputs.get(call_id).expect("missing output");
 
+    assert_eq!(output.output_inline_limit, None);
+    assert_eq!(output.output_saved_to, None);
+    assert_eq!(output.output_save_error, None);
     assert!(
         output.exit_code.is_some_and(|code| code != 0),
         "glob deny-read should surface a non-zero exit code: {output:?}"

@@ -197,6 +197,7 @@ impl Default for GhostSnapshotConfig {
 /// the context window.
 pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 32 KiB
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
+pub(crate) const DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS: usize = 1000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
@@ -848,6 +849,9 @@ pub struct Config {
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
+    /// Maximum approximate command output tokens shown inline for completed
+    /// unified exec commands before retained output is spilled to a file.
+    pub exec_inline_output_max_tokens: usize,
 
     /// User-configured maximum number of agent threads that can be open concurrently.
     pub agent_max_threads: Option<usize>,
@@ -2430,6 +2434,15 @@ fn resolve_experimental_request_user_input_enabled(config_toml: &ConfigToml) -> 
         .is_none_or(|config| config.enabled)
 }
 
+fn resolve_exec_inline_output_max_tokens(config_toml: &ConfigToml) -> usize {
+    config_toml
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.exec.as_ref())
+        .and_then(|exec| exec.inline_output_max_tokens)
+        .unwrap_or(DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS)
+}
+
 fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
     let base = code_mode_toml_config(config_toml.features.as_ref());
 
@@ -3163,6 +3176,7 @@ impl Config {
         let web_search_config = resolve_web_search_config(&cfg);
         let experimental_request_user_input_enabled =
             resolve_experimental_request_user_input_enabled(&cfg);
+        let exec_inline_output_max_tokens = resolve_exec_inline_output_max_tokens(&cfg);
         let code_mode = resolve_code_mode_config(&cfg);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg);
         let terminal_resize_reflow = resolve_terminal_resize_reflow_config(&cfg);
@@ -3654,6 +3668,7 @@ impl Config {
                 })
                 .collect(),
             tool_output_token_limit: cfg.tool_output_token_limit,
+            exec_inline_output_max_tokens,
             agent_max_threads,
             agent_max_depth,
             agent_roles,

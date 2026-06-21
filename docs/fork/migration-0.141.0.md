@@ -2,7 +2,7 @@
 id: fork-migration-0.141.0
 status: active
 created: 2026-06-19
-updated: 2026-06-20
+updated: 2026-06-21
 source_scope: rust-v0.141.0..working-tree
 ---
 
@@ -25,7 +25,7 @@ upstream tag `rust-v0.141.0`.
 | Предыдущая fork-ветка | `hermione-0.140.0` |
 | Код правится | локально, `/mnt/ml/Projects/evilcats/codex` |
 | Сборка и Rust/`just` проверки | после прохода карточек, через родительского агента |
-| Текущий проверочный статус | upstream merge выполнен, механические conflict markers убраны, все активные fork-карточки из таблицы покрытия проверены подагентами; сборка и Rust/`just` проверки отложены до общего gate |
+| Текущий проверочный статус | upstream merge выполнен, механические conflict markers убраны, активные fork-карточки из таблицы покрытия проверены или добавлены текущей реализацией; проверка карточек и release-fast build на `f-ms-dev` прошли |
 
 ## Правило переноса
 
@@ -48,6 +48,7 @@ upstream tag `rust-v0.141.0`.
 | `core-thread-info-tool.md` | `перенесено` | Подагент подтвердил `get_thread_info`, persisted thread metadata, thread/session ids; добавлены unit tests для fallback-контракта `agent_name`; проверки должен запустить родительский агент |
 | `developer-instructions-files.md` | `перенесено` | Подагент подтвердил `developer_instructions_files`, config loader и schema entry; добавлен тест `developer_instructions_override_skips_files`; проверки должен запустить родительский агент |
 | `environment-context-project-name.md` | `перенесено` | Подагент подтвердил `project_name`, `effective_workspace_roots`, environment context rendering и diff path; изменений не потребовалось; проверки должен запустить родительский агент |
+| `exec-command-output-spill-files.md` | `перенесено` | Текущая реализация добавила spill-файлы для immediate-finished `exec_command` output выше inline-лимита, config key `[tools.exec].inline_output_max_tokens`, schema, формат `Output excerpt:`, точечные тесты и строки в исполняемую карту; запуск проверок отложен до общего gate |
 | `hermione-version-metadata.md` | `перенесено` | Подагент обновил `codex-cli` и `codex-tui` до `0.141.0+hermione`, синхронизировал `Cargo.lock`, owner-карточку обновил |
 | `internal-fork-docs-workflow.md` | `перенесено` | Подагент выявил устаревшую привязку к старым docs-каталогам; `AGENTS.md` и owner-карточка обновлены под текущий `docs/`/`docs/fork/` workflow |
 | `memory-read-template-path.md` | `перенесено` | Подагент подтвердил `[memories].read_template_path`, schema/config/tests и prompt builder; синхронизированы README и owner-карточка с фактическим runtime-шаблоном |
@@ -103,6 +104,23 @@ upstream tag `rust-v0.141.0`.
 - Fork-карточка `tui-history-image-previews.md` проверена подагентом без
   `fork_context`; подтверждены typed local-image history items, preview sizing,
   app-server schema surface и Kitty placeholder path; изменений не потребовалось.
+
+## Выполненные проверки общего прохода
+
+Проверки выполнялись после добавления `exec-command-output-spill-files.md` в
+таблицу покрытия и переноса текущего локального diff на `f-ms-dev`.
+
+| Проверка | Результат | Лог |
+| --- | --- | --- |
+| `scripts/fork-migration/local-preflight.sh 0.141.0` | `RESULT: ok` | `target/fork-migration/preflight-logs/0.141.0-preflight-20260621T181627Z.log` |
+| `scripts/fork-migration/local-format.sh check` | `RESULT: ok` | `target/fork-migration/format-logs/check-20260621T181632Z.log` |
+| `scripts/fork-migration/local-generators.sh` | `RESULT: ok` | `target/fork-migration/generator-logs/generators-20260621T181642Z.log` |
+| `scripts/fork-migration/remote-prepare-host.sh 0.141.0` | `RESULT: ok` | `target/fork-migration/remote-prepare-logs/0.141.0-remote-prepare-20260621T181709Z.log` |
+| `scripts/fork-migration/remote-apply-patch.sh 0.141.0` | `RESULT: ok`; удаленный diff совпал с локальным diff, `DIFF_SHA256=a76fb3733702eb359397da93730f36755ae4092d60d190c250de0f0d90d88dc9` | `target/fork-migration/remote-patch-logs/0.141.0-remote-patch-20260621T181718Z.log` |
+| `scripts/fork-migration/remote-tests.sh 0.141.0 cards` | `RESULT: ok`; удаленный `local-tests.sh 0.141.0 cards` тоже завершился с `RESULT: ok` | локальный лог: `target/fork-migration/remote-test-logs/0.141.0-cards-remote-tests-20260621T183240Z.log`; удаленный лог: `/home/slader/Projects/codex/target/fork-migration/test-logs/0.141.0-cards-20260621T183241Z.log` |
+| `scripts/fork-migration/remote-prepare-host.sh 0.141.0` | `RESULT: ok`; remote checkout повторно подготовлен перед fast build после обновления migration-карты | `target/fork-migration/remote-prepare-logs/0.141.0-remote-prepare-20260621T190723Z.log` |
+| `scripts/fork-migration/remote-apply-patch.sh 0.141.0` | `RESULT: ok`; удаленный diff совпал с локальным diff, `DIFF_SHA256=191fce319705094fc4a6e9cb30f2d3e4c9a1e1b88f039393052dd65ab8486dbb` | `target/fork-migration/remote-patch-logs/0.141.0-remote-patch-20260621T190740Z.log` |
+| `scripts/fork-migration/remote-build-fast.sh 0.141.0` | `RESULT: ok`; release-fast build, binary file metadata и binary version прошли; binary: `/home/slader/Projects/codex/codex-rs/target/release-fast/codex` | локальный лог: `target/fork-migration/remote-build-logs/0.141.0-remote-build-fast-20260621T190934Z.log`; удаленный лог: `/home/slader/Projects/codex/target/fork-migration/build-logs/0.141.0-build-fast-20260621T190935Z.log` |
 
 ## Проверенные карточки
 

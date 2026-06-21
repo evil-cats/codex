@@ -1,6 +1,7 @@
 use super::*;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::SearchToolCallParams;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::assert_regex_match;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -435,6 +436,7 @@ fn exec_command_tool_output_formats_truncated_response() {
         exit_code: Some(0),
         original_token_count: Some(10),
         hook_command: None,
+        output_spill: None,
     }
     .to_response_item("call-42", &payload);
 
@@ -457,6 +459,103 @@ fn exec_command_tool_output_formats_truncated_response() {
                     $"#,
                 &text,
             );
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn exec_command_tool_output_formats_spilled_response() {
+    let payload = ToolPayload::Function {
+        arguments: "{}".to_string(),
+    };
+    let spill_path = AbsolutePathBuf::from_absolute_path(
+        std::env::temp_dir()
+            .join("exec_outputs")
+            .join("thread")
+            .join("call-chunk.log"),
+    )
+    .expect("temp path should be absolute");
+    let response = ExecCommandToolOutput {
+        event_call_id: "call-42".to_string(),
+        chunk_id: "abc123".to_string(),
+        wall_time: std::time::Duration::from_millis(1250),
+        raw_output: b"token one token two token three token four token five".to_vec(),
+        truncation_policy: TruncationPolicy::Tokens(10_000),
+        max_output_tokens: None,
+        process_id: None,
+        exit_code: Some(0),
+        original_token_count: Some(10),
+        hook_command: None,
+        output_spill: Some(ExecCommandOutputSpill {
+            inline_limit_tokens: 4,
+            result: ExecCommandOutputSpillResult::Saved { path: spill_path },
+        }),
+    }
+    .to_response_item("call-42", &payload);
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { call_id, output } => {
+            assert_eq!(call_id, "call-42");
+            assert_eq!(output.success, Some(true));
+            let text = output
+                .body
+                .to_text()
+                .expect("exec output should serialize as text");
+            assert_regex_match(
+                r#"(?sx)
+                    ^Chunk\ ID:\ abc123
+                    \nWall\ time:\ \d+\.\d{4}\ seconds
+                    \nProcess\ exited\ with\ code\ 0
+                    \nOriginal\ token\ count:\ 10
+                    \nOutput\ exceeded\ inline\ limit\ of\ 4\ tokens\.
+                    \nOutput\ saved\ to:\ .*exec_outputs.*thread.*call-chunk\.log
+                    \nOutput\ excerpt:
+                    \n.*tokens\ truncated.*
+                    $"#,
+                &text,
+            );
+        }
+        other => panic!("expected FunctionCallOutput, got {other:?}"),
+    }
+}
+
+#[test]
+fn exec_command_tool_output_formats_spill_save_failure() {
+    let payload = ToolPayload::Function {
+        arguments: "{}".to_string(),
+    };
+    let response = ExecCommandToolOutput {
+        event_call_id: "call-42".to_string(),
+        chunk_id: "abc123".to_string(),
+        wall_time: std::time::Duration::from_millis(1250),
+        raw_output: b"token one token two token three token four token five".to_vec(),
+        truncation_policy: TruncationPolicy::Tokens(10_000),
+        max_output_tokens: None,
+        process_id: None,
+        exit_code: Some(0),
+        original_token_count: Some(10),
+        hook_command: None,
+        output_spill: Some(ExecCommandOutputSpill {
+            inline_limit_tokens: 4,
+            result: ExecCommandOutputSpillResult::SaveFailed {
+                error: "permission denied".to_string(),
+            },
+        }),
+    }
+    .to_response_item("call-42", &payload);
+
+    match response {
+        ResponseInputItem::FunctionCallOutput { output, .. } => {
+            assert_eq!(output.success, Some(true));
+            let text = output
+                .body
+                .to_text()
+                .expect("exec output should serialize as text");
+            assert!(text.contains("Output exceeded inline limit of 4 tokens."));
+            assert!(text.contains("Failed to save output: permission denied"));
+            assert!(text.contains("Output excerpt:\n"));
+            assert!(text.contains("tokens truncated"));
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
     }

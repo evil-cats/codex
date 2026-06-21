@@ -50,6 +50,8 @@ use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
 use crate::unified_exec::generate_chunk_id;
 use crate::unified_exec::head_tail_buffer::HeadTailBuffer;
+use crate::unified_exec::output_spill::effective_inline_output_max_tokens;
+use crate::unified_exec::output_spill::maybe_spill_exec_command_output;
 use crate::unified_exec::process::OutputBuffer;
 use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
@@ -601,6 +603,26 @@ impl UnifiedExecProcessManager {
         };
 
         let original_token_count = approx_token_count(&text);
+        let output_spill = if response_process_id.is_none() && exit_code.is_some() {
+            let inline_limit = effective_inline_output_max_tokens(
+                context.turn.config.exec_inline_output_max_tokens,
+                request.max_output_tokens,
+                context.turn.truncation_policy,
+            );
+            let thread_id = context.session.thread_id().to_string();
+            maybe_spill_exec_command_output(
+                &context.turn.config.codex_home,
+                &thread_id,
+                &context.call_id,
+                &chunk_id,
+                &collected,
+                original_token_count,
+                inline_limit,
+            )
+            .await
+        } else {
+            None
+        };
         let response = ExecCommandToolOutput {
             event_call_id: context.call_id.clone(),
             chunk_id,
@@ -612,6 +634,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(request.hook_command.clone()),
+            output_spill,
         };
 
         Ok(response)
@@ -767,6 +790,7 @@ impl UnifiedExecProcessManager {
             exit_code,
             original_token_count: Some(original_token_count),
             hook_command: Some(hook_command),
+            output_spill: None,
         };
 
         Ok(response)

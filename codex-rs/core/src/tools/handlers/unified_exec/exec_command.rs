@@ -263,6 +263,7 @@ impl ExecCommandHandler {
                 exit_code: None,
                 original_token_count: None,
                 hook_command: None,
+                output_spill: None,
             }));
         }
 
@@ -297,11 +298,13 @@ impl ExecCommandHandler {
             Err(UnifiedExecError::SandboxDenied { output, .. }) => {
                 let output_text = output.aggregated_output.text;
                 let original_token_count = approx_token_count(&output_text);
+                let chunk_id = generate_chunk_id();
+                let raw_output = output_text.into_bytes();
                 Ok(boxed_tool_output(ExecCommandToolOutput {
                     event_call_id: context.call_id.clone(),
-                    chunk_id: generate_chunk_id(),
+                    chunk_id,
                     wall_time: output.duration,
-                    raw_output: output_text.into_bytes(),
+                    raw_output,
                     truncation_policy: turn.truncation_policy,
                     max_output_tokens,
                     // Sandbox denial is terminal, so there is no live
@@ -310,6 +313,7 @@ impl ExecCommandHandler {
                     exit_code: Some(output.exit_code),
                     original_token_count: Some(original_token_count),
                     hook_command: Some(hook_command),
+                    output_spill: None,
                 }))
             }
             Err(err) => Err(FunctionCallError::RespondToModel(format!(
