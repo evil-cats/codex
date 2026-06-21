@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-06-08
+updated: 2026-06-19
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -191,6 +191,9 @@ Schema должна показывать `developer_instructions_files` как a
     empty file пропущен, непустой файл добавлен, warning есть.
   - `developer_instructions_files_reject_missing_file` проверяет `NotFound` и
     текст ошибки.
+  - `developer_instructions_override_skips_files` проверяет, что runtime
+    override `developer_instructions` не читает файлы из config и возвращает
+    переданное override-значение как итоговые developer instructions.
 
 ## Проверки
 
@@ -206,6 +209,12 @@ Schema должна показывать `developer_instructions_files` как a
 
 В текущем turn карточка создана без запуска тестов/debug и без локального
 Rust/Cargo/`just`.
+
+В миграционном проходе 2026-06-19 карточка сверена с текущей рабочей копией без
+запуска сборки, тестов, генераторов, форматирования или `fix` по ограничению
+основного агента. Для закрытия пробела покрытия добавлен тест
+`developer_instructions_override_skips_files`, но он не запускался в этом
+подагентском проходе.
 
 ## Ограничения
 
@@ -238,4 +247,4 @@ Rust/Cargo/`just`.
 | Читать файлы в заданном порядке | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
 | Empty file как warning | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
 | Missing file как error | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
-| Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения" |
+| Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения", "Регрессионное покрытие" |

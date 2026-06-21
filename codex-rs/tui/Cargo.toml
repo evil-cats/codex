@@ -1,6 +1,6 @@
 [package]
 name = "codex-tui"
-version = "0.140.0+hermione"
+version = "0.141.0+hermione"
 edition.workspace = true
 license.workspace = true
 autobins = false
@@ -151,6 +151,7 @@ codex-cli = { workspace = true }
 codex-mcp = { workspace = true }
 core_test_support = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
+codex-utils-path-uri = { workspace = true }
 assert_matches = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 insta = { workspace = true }

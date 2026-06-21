@@ -43,11 +43,10 @@ In the codex-rs folder where the rust code lives:
 - Do not add negative tests for logic that was removed.
 - Do not add broad upstream product or user-facing documentation to the `docs/`
   folder. The official Codex documentation lives elsewhere. This fork may keep
-  internal development documentation under `docs/architecture/`, `docs/plans/`,
-  `docs/follow-ups/`, and `docs/backlog/` when it records fork-specific
-  implementation decisions, verification, maintenance notes, or work tracking.
-  The exception for app-server API documentation is covered by the app-server
-  guidance below.
+  fork-specific internal development documentation in `docs/` when it records
+  implementation decisions, verification, maintenance notes, work tracking, or
+  handoff material. The exception for app-server API documentation is covered
+  by the app-server guidance below.
 - Prefer private modules and explicitly exported public crate API.
 - If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
@@ -271,6 +270,7 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
   `*Params` for request payloads, `*Response` for responses, and `*Notification` for notifications.
 - Expose RPC methods as `<resource>/<method>` and keep `<resource>` singular (for example, `thread/read`, `app/list`).
 - Always expose fields as camelCase on the wire with `#[serde(rename_all = "camelCase")]` unless a tagged union or explicit compatibility requirement needs a targeted rename.
+- Always expose string enum values as camelCase on the wire with matching serde and TS `rename_all = "camelCase"` annotations unless an explicit compatibility requirement needs targeted renames.
 - Exception: config RPC payloads are expected to use snake_case to mirror config.toml keys (see the config read/write/list APIs in `app-server-protocol/src/protocol/v2.rs`).
 - Always set `#[ts(export_to = "v2/")]` on v2 request/response/notification types so generated TypeScript lands in the correct namespace.
 - Never use `#[serde(skip_serializing_if = "Option::is_none")]` for v2 API payload fields.

@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-06-18
+updated: 2026-06-19
 source_scope: working-tree
 ---
 
@@ -485,6 +485,23 @@ rollout не удалось получить.
 отдельного подтверждения перед полным suite. Для текущей доработки выполнены
 узкие tests, полный `codex-protocol`, полный `codex-core` с окруженческими
 failures, `fix` и release-fast сборка.
+
+Фактическая проверка 2026-06-19 после merge нового upstream-релиза:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/protocol/src/shell_environment.rs` | Константы `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`, `CODEX_ROLLOUT_ENV_VAR` и `CODEX_THREAD_ID_ENV_VAR` присутствуют; `RuntimeEnv` добавляет runtime-переменные после `include_only` |
+| `codex-rs/core/src/exec_env.rs` | `RuntimeEnv` уровня core прокидывает `ThreadId`, `agent_name`, `call_id` и `rollout_path` в сборщик окружения protocol |
+| `codex-rs/core/src/agent/agent_name.rs` и `codex-rs/core/src/tools/handlers/thread_info.rs` | `CODEX_AGENT` и `get_thread_info.agent_name` используют общий helper имени агента |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | `shell_command` передает `current_agent_name(...)`, `ToolInvocation.call_id`, `Session.thread_id` и best-effort `Session::hook_transcript_path()` в env |
+| `codex-rs/core/src/tasks/user_shell.rs` | Пользовательская `/shell`-команда генерирует UUID `CODEX_CALL_ID` до сборки env и использует тот же id в `ExecCommandBegin`/`ExecCommandEnd` |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | Unified exec добавляет runtime-переменные поверх `local_policy_env`, не записывая их в базовый policy env |
+| `codex-rs/core/src/tools/runtimes/mod.rs` | Обертка snapshot восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` из live-окружения после `source` snapshot |
+
+Кодовых изменений по этой карточке после проверки 2026-06-19 не потребовалось.
+Проверочные команды, сборка, форматирование, генераторы и `fix` в этом запуске
+не выполнялись по правилу `docs/migration-one-card-for-agent.md`; основной
+агент должен запустить нужные проверки отдельно.
 
 ## Runtime, сборка и установка
 

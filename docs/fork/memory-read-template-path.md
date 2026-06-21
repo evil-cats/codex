@@ -2,8 +2,8 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-06-08
-source_scope: rust-v0.137.0..HEAD
+updated: 2026-06-20
+source_scope: rust-v0.141.0..HEAD
 ---
 
 # Memory read template: `[memories].read_template_path`
@@ -22,9 +22,9 @@ source_scope: rust-v0.137.0..HEAD
 | --- | --- |
 | Статус | `active` |
 | Основной commit | `9c9af8853 Make memory read template configurable` |
-| Текущая база проверки | `rust-v0.137.0..HEAD`, ветка `hermione-0.137.0` |
+| Текущая база проверки | `rust-v0.141.0..HEAD`, ветка `hermione-0.141.0` |
 | Главный config key | `[memories].read_template_path` |
-| Runtime-владелец в `0.137.0` | `codex-rs/ext/memories/src/prompts.rs` |
+| Runtime-владелец после merge `rust-v0.141.0` | `codex-rs/ext/memories/src/prompts.rs` |
 | Исторический владелец до merge | `codex-rs/memories/read/src/prompts.rs` |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
@@ -49,7 +49,7 @@ template.
 | `codex-rs/ext/memories/src/prompts.rs` | Загружает embedded или configured template и рендерит prompt |
 | `codex-rs/ext/memories/src/prompts_tests.rs` | Проверяет embedded template и configured template |
 | `codex-rs/ext/memories/src/tests.rs` | Обновляет extension test config новым полем |
-| `codex-rs/memories/README.md` | Документирует override и placeholders |
+| `codex-rs/memories/README.md` | Документирует override, placeholders и фактический путь к runtime-шаблону |
 
 ## Итоговый контракт
 
@@ -145,7 +145,7 @@ developer instructions.
 
 ### 4. Обновить prompt builder
 
-В текущем `0.137.0` владелец находится в
+В текущей проверке после merge `rust-v0.141.0` владелец находится в
 `codex-rs/ext/memories/src/prompts.rs`. В более старых ветках этот код мог жить
 в `codex-rs/memories/read/src/prompts.rs`; при переносе на новый upstream нужно
 сначала найти живой вызов `build_memory_tool_developer_instructions`.
@@ -200,6 +200,11 @@ fn render_memory_tool_developer_instructions_template(
 переопределить через `[memories].read_template_path`, а configured template
 рендерится с `{{ base_path }}` и `{{ memory_summary }}`. Отдельно указать, что
 unknown placeholders делают read-path prompt unavailable.
+
+После merge `rust-v0.141.0` README также должен указывать фактический
+канонический путь к runtime-шаблону:
+`codex-rs/ext/memories/templates/memories/read_path.md`, а не исторический путь
+в `codex-rs/memories/read`.
 
 ## Регрессионное покрытие
 
@@ -262,4 +267,5 @@ unknown placeholder должен возвращать `None`.
 | Сохранить embedded template как default | перенесено | "Итоговый контракт" |
 | Поддержать только `base_path` и `memory_summary` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Учесть перенос owner crate после upstream merge | перенесено | "Пошаговое воспроизведение", "Риски" |
+| Синхронизировать README с фактическим путём к runtime-шаблону | перенесено | "Карта файлов", "Пошаговое воспроизведение" |
 | Зафиксировать тесты и проверки | перенесено | "Регрессионное покрытие", "Проверки" |

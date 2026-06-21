@@ -7,9 +7,11 @@ Runtime orchestration for Phase 1 and Phase 2 still lives in `codex-core` under
 
 ## Crates
 
-- `codex-rs/memories/read` (`codex-memories-read`) owns the read path:
-  memory developer-instruction injection, memory citation parsing, and
-  read-usage telemetry classification.
+- `codex-rs/ext/memories` (`codex-memories-extension`) owns the runtime memory
+  extension, the read-path developer-instruction injection, the dedicated memory
+  tools, and the canonical read-path template.
+- `codex-rs/memories/read` (`codex-memories-read`) owns memory citation parsing
+  and read-usage telemetry classification.
 - `codex-rs/memories/write` (`codex-memories-write`) owns the write path:
   Phase 1 and Phase 2 prompt rendering, filesystem artifact helpers,
   workspace diff helpers, and extension resource pruning.
@@ -19,10 +21,10 @@ Runtime orchestration for Phase 1 and Phase 2 still lives in `codex-core` under
 Memory prompt templates live with the crate that uses them:
 
 - The undated template files are the canonical latest versions used at runtime:
-  - `read/templates/memories/read_path.md`
-  - `write/templates/memories/stage_one_system.md`
-  - `write/templates/memories/stage_one_input.md`
-  - `write/templates/memories/consolidation.md`
+  - `codex-rs/ext/memories/templates/memories/read_path.md`
+  - `codex-rs/memories/write/templates/memories/stage_one_system.md`
+  - `codex-rs/memories/write/templates/memories/stage_one_input.md`
+  - `codex-rs/memories/write/templates/memories/consolidation.md`
 - The read-path template can be overridden per config/profile with
   `[memories].read_template_path`. The configured template is rendered with
   `{{ base_path }}` and `{{ memory_summary }}` when those placeholders are

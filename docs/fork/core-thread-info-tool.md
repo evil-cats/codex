@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-06-16
+updated: 2026-06-19
 source_scope: working-tree
 ---
 
@@ -79,7 +79,7 @@ source_scope: working-tree
 | Файл | Ответственность |
 | --- | --- |
 | `codex-rs/core/src/agent/agent_name.rs` | Общий helper для вычисления `agent_name`: текущий root через config/profile, текущий subagent через `SessionSource`, persisted thread через сохраненные поля |
-| `codex-rs/core/src/agent/agent_name_tests.rs` | Unit tests для root/subagent/persisted fallback-контракта `agent_name` |
+| `codex-rs/core/src/agent/agent_name_tests.rs` | Unit tests для fallback-контракта `agent_name`: root config/profile, metadata текущего subagent и поля persisted thread |
 | `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime-обработчик: разбор `thread_id`, чтение текущей или persisted thread metadata, materialize текущего rollout, использование общего helper-а `agent_name`, model-facing ошибки |
 | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` | Описание Responses API tool: имя, описание, input schema, output schema |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing `thread_id` |
@@ -372,6 +372,32 @@ tool текущего runtime, а не app-server API и не extension tool.
 runtime env и ее дополнительные проверки зафиксированы в
 `docs/fork/codex-agent-env-var.md`.
 
+Миграционная сверка 2026-06-19 после обновления upstream:
+
+- вручную сверены файлы-владельцы выбранной карточки:
+  `codex-rs/core/src/tools/handlers/thread_info.rs`,
+  `codex-rs/core/src/tools/handlers/thread_info_spec.rs`,
+  `codex-rs/core/src/agent/agent_name.rs`,
+  `codex-rs/core/src/tools/handlers/mod.rs`,
+  `codex-rs/core/src/tools/spec_plan.rs`,
+  `codex-rs/core/tests/suite/prompt_caching.rs`;
+- вручную сверены прямо используемые API текущей кодовой базы:
+  `ReadThreadParams`, `StoredThread`, `ThreadStore`,
+  `ToolInvocation`, `Session::thread_id()`, `Session::session_id()`,
+  `Session::try_ensure_rollout_materialized()`,
+  `Session::current_rollout_path()`, `SessionSource`,
+  `SubAgentSource` и `AgentPath::name()`;
+- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
+  текущий thread обслуживается через live `Session`, другой persisted thread
+  читается через `ThreadStore`, `include_archived: true` и
+  `include_history: false` сохранены, обход parent chain ограничен
+  `MAX_PARENT_CHAIN_DEPTH = 64`;
+- доработано тестовое покрытие `agent_name`: добавлены проверки fallback на
+  `agent_nickname` для текущего subagent, приоритета `agent_role` для
+  persisted thread и fallback на `agent_nickname` для persisted thread;
+- команды форматирования, сборки, тестов, генераторов и `fix` в рамках этой
+  миграционной сверки одной карточки не запускались по ограничению запуска.
+
 ## Runtime, сборка и установка
 
 Эта доработка не требует отдельного install step. Если нужно проверить installed
@@ -410,3 +436,4 @@ binary, используй обычный fork workflow для remote release-fa
 | Remote build только на `f-ms-dev`, без разработки на mirror | перенесено в карточку |
 | Не читать полный JSONL history ради metadata | перенесено в карточку |
 | Проверки `fmt`, `test`, `fix` | выполнены; полный `codex-core` suite запускался и упал на remote-инфраструктуре, подробности зафиксированы выше |
+| Миграционная сверка после обновления upstream 2026-06-19 | ручная сверка выполнена; тестовое покрытие fallback-контракта `agent_name` усилено; команды проверок должен запустить основной агент |

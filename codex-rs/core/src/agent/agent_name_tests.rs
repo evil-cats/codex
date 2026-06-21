@@ -59,9 +59,41 @@ fn agent_name_from_thread_spawn_falls_back_to_agent_path_name() {
 }
 
 #[test]
+fn agent_name_from_thread_spawn_falls_back_to_nickname() {
+    let source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: thread_id("00000000-0000-0000-0000-000000000001"),
+        depth: 1,
+        agent_path: None,
+        agent_nickname: Some(" fast reader ".to_string()),
+        agent_role: None,
+    });
+
+    assert_eq!(
+        agent_name_from_session_source(&source),
+        Some("fast reader".to_string())
+    );
+}
+
+#[test]
+fn stored_agent_name_prefers_agent_role() {
+    assert_eq!(
+        agent_name_from_stored_fields(Some("Researcher"), Some("/root/research"), Some("nickname"),),
+        Some("Researcher".to_string())
+    );
+}
+
+#[test]
 fn stored_agent_name_falls_back_to_path_leaf() {
     assert_eq!(
         agent_name_from_stored_fields(None, Some("/root/research"), Some("nickname")),
         Some("research".to_string())
+    );
+}
+
+#[test]
+fn stored_agent_name_falls_back_to_nickname() {
+    assert_eq!(
+        agent_name_from_stored_fields(None, None, Some(" nickname ")),
+        Some("nickname".to_string())
     );
 }
