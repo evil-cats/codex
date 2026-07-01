@@ -3,15 +3,12 @@ set -euo pipefail
 
 # Локальная быстрая release-сборка для цепочки миграции.
 #
-# Скрипт запускается в текущем checkout на любом хосте: локальной машине,
-# `f-ms-dev` или другом заранее подготовленном сервере. Он не синхронизирует
-# рабочее дерево и не применяет patch; его задача - проверить предусловия
-# текущего checkout, выполнить `just build-fast-release`, проверить бинарник
-# `codex-rs/target/release-fast/codex`, вывести metadata файла и версию
-# собранного бинарника.
-#
-# Для удаленного запуска используй `remote-build-fast.sh`: он подключится к
-# `f-ms-dev` и запустит этот же `local-build-fast.sh` в удаленном checkout.
+# Скрипт запускается в текущем checkout. Для Hermione/Codex migration workflow
+# canonical checkout находится на `f-ms-dev` в `/home/slader/Projects/codex`.
+# Скрипт не синхронизирует рабочее дерево и не применяет patch; его задача -
+# проверить предусловия текущего checkout, выполнить `just build-fast-release`,
+# проверить бинарник `codex-rs/target/release-fast/codex`, вывести metadata файла
+# и версию собранного бинарника.
 # Полный вывод команд пишется в `target/fork-migration/build-logs/`; при
 # ошибке на экран выводятся только последние строки лога.
 

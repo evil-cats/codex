@@ -2,7 +2,7 @@
 id: fork-migration-0.141.0
 status: active
 created: 2026-06-19
-updated: 2026-06-21
+updated: 2026-06-29
 source_scope: rust-v0.141.0..working-tree
 ---
 
@@ -23,8 +23,8 @@ upstream tag `rust-v0.141.0`.
 | Новая ветка | `hermione-0.141.0` |
 | Upstream tag | `rust-v0.141.0` |
 | Предыдущая fork-ветка | `hermione-0.140.0` |
-| Код правится | локально, `/mnt/ml/Projects/evilcats/codex` |
-| Сборка и Rust/`just` проверки | после прохода карточек, через родительского агента |
+| Код правится | на `f-ms-dev`, `/home/slader/Projects/codex` |
+| Сборка и Rust/`just` проверки | в source-of-truth checkout на `f-ms-dev`, через `local-*` wrappers |
 | Текущий проверочный статус | upstream merge выполнен, механические conflict markers убраны, активные fork-карточки из таблицы покрытия проверены или добавлены текущей реализацией; проверка карточек и release-fast build на `f-ms-dev` прошли |
 
 ## Правило переноса
@@ -108,19 +108,21 @@ upstream tag `rust-v0.141.0`.
 ## Выполненные проверки общего прохода
 
 Проверки выполнялись после добавления `exec-command-output-spill-files.md` в
-таблицу покрытия и переноса текущего локального diff на `f-ms-dev`.
+таблицу покрытия. Исторический проверочный проход 2026-06-21 выполнялся на
+`f-ms-dev`; с 2026-06-29 текущий workflow запускает только `local-*` wrappers в
+source-of-truth checkout `/home/slader/Projects/codex`.
 
 | Проверка | Результат | Лог |
 | --- | --- | --- |
 | `scripts/fork-migration/local-preflight.sh 0.141.0` | `RESULT: ok` | `target/fork-migration/preflight-logs/0.141.0-preflight-20260621T181627Z.log` |
 | `scripts/fork-migration/local-format.sh check` | `RESULT: ok` | `target/fork-migration/format-logs/check-20260621T181632Z.log` |
 | `scripts/fork-migration/local-generators.sh` | `RESULT: ok` | `target/fork-migration/generator-logs/generators-20260621T181642Z.log` |
-| `scripts/fork-migration/remote-prepare-host.sh 0.141.0` | `RESULT: ok` | `target/fork-migration/remote-prepare-logs/0.141.0-remote-prepare-20260621T181709Z.log` |
-| `scripts/fork-migration/remote-apply-patch.sh 0.141.0` | `RESULT: ok`; удаленный diff совпал с локальным diff, `DIFF_SHA256=a76fb3733702eb359397da93730f36755ae4092d60d190c250de0f0d90d88dc9` | `target/fork-migration/remote-patch-logs/0.141.0-remote-patch-20260621T181718Z.log` |
-| `scripts/fork-migration/remote-tests.sh 0.141.0 cards` | `RESULT: ok`; удаленный `local-tests.sh 0.141.0 cards` тоже завершился с `RESULT: ok` | локальный лог: `target/fork-migration/remote-test-logs/0.141.0-cards-remote-tests-20260621T183240Z.log`; удаленный лог: `/home/slader/Projects/codex/target/fork-migration/test-logs/0.141.0-cards-20260621T183241Z.log` |
-| `scripts/fork-migration/remote-prepare-host.sh 0.141.0` | `RESULT: ok`; remote checkout повторно подготовлен перед fast build после обновления migration-карты | `target/fork-migration/remote-prepare-logs/0.141.0-remote-prepare-20260621T190723Z.log` |
-| `scripts/fork-migration/remote-apply-patch.sh 0.141.0` | `RESULT: ok`; удаленный diff совпал с локальным diff, `DIFF_SHA256=191fce319705094fc4a6e9cb30f2d3e4c9a1e1b88f039393052dd65ab8486dbb` | `target/fork-migration/remote-patch-logs/0.141.0-remote-patch-20260621T190740Z.log` |
-| `scripts/fork-migration/remote-build-fast.sh 0.141.0` | `RESULT: ok`; release-fast build, binary file metadata и binary version прошли; binary: `/home/slader/Projects/codex/codex-rs/target/release-fast/codex` | локальный лог: `target/fork-migration/remote-build-logs/0.141.0-remote-build-fast-20260621T190934Z.log`; удаленный лог: `/home/slader/Projects/codex/target/fork-migration/build-logs/0.141.0-build-fast-20260621T190935Z.log` |
+| Подготовка checkout на `f-ms-dev` перед card tests | `RESULT: ok` | Исторический лог 2026-06-21 |
+| Применение проверяемого diff на `f-ms-dev` перед card tests | `RESULT: ok`; diff checksum `a76fb3733702eb359397da93730f36755ae4092d60d190c250de0f0d90d88dc9` | Исторический лог 2026-06-21 |
+| `scripts/fork-migration/local-tests.sh 0.141.0 cards` на `f-ms-dev` | `RESULT: ok` | `/home/slader/Projects/codex/target/fork-migration/test-logs/0.141.0-cards-20260621T183241Z.log` |
+| Подготовка checkout на `f-ms-dev` перед release-fast build | `RESULT: ok`; migration-карта была обновлена перед сборкой | Исторический лог 2026-06-21 |
+| Применение проверяемого diff на `f-ms-dev` перед release-fast build | `RESULT: ok`; diff checksum `191fce319705094fc4a6e9cb30f2d3e4c9a1e1b88f039393052dd65ab8486dbb` | Исторический лог 2026-06-21 |
+| `scripts/fork-migration/local-build-fast.sh 0.141.0` на `f-ms-dev` | `RESULT: ok`; release-fast build, binary file metadata и binary version прошли; binary: `/home/slader/Projects/codex/codex-rs/target/release-fast/codex` | `/home/slader/Projects/codex/target/fork-migration/build-logs/0.141.0-build-fast-20260621T190935Z.log` |
 
 ## Проверенные карточки
 
