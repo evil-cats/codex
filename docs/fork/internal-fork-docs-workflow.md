@@ -81,7 +81,7 @@ the app-server guidance below.
 | --- | --- |
 | `AGENTS.md` | Уточняет границу между upstream product docs и внутренними fork-docs |
 | `docs/fork/*.md` | Живые handoff-карточки fork-доработок и migration-карты |
-| `docs/migration-one-card-for-agent.md` | Инструкция для подагента, который проверяет одну fork-карточку |
+| Project skill `fork` | Workflow, checks, templates и инструкция для подагента одной fork-карточки |
 | `docs/.markdownlint-cli2.yaml` | Локальная markdownlint-конфигурация для внутренних документов |
 | `docs/table-rendering-long-links-test.md` | Временный визуальный fixture для длинных Markdown-ссылок в таблицах |
 
@@ -115,10 +115,10 @@ the app-server guidance below.
   upstream Codex;
 - хранить handoff по кодовым fork-доработкам в `docs/fork/`;
 - для новой кодовой fork-доработки обновлять или создавать owner-карточку в
-  `docs/fork/` по правилам `FORK.md`;
+  `docs/fork/` по правилам project skill `fork`;
 - для текущей migration использовать `docs/fork/migration-0.141.0.md` как
-  таблицу покрытия, а `docs/migration-one-card-for-agent.md` как инструкцию для
-  подагента одной карточки;
+  таблицу покрытия, а project skill `fork` как workflow для подагента одной
+  карточки;
 - не восстанавливать старые каталоги `docs/architecture`, `docs/plans`,
   `docs/follow-ups` и `docs/backlog` механически;
 - при появлении нового документационного каталога сразу определить его назначение,

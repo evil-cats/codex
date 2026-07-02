@@ -391,7 +391,8 @@ rollout не удалось получить.
 
 При переносе на новый upstream:
 
-1. Прочитать `FORK.md`, эту карточку и `docs/fork/core-thread-info-tool.md`.
+1. Использовать project skill `fork`, эту карточку и
+   `docs/fork/core-thread-info-tool.md`.
 2. Проверить, как upstream собирает shell env и где объявлен
    `CODEX_THREAD_ID`.
 3. Добавить `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR` и
@@ -500,8 +501,8 @@ failures, `fix` и release-fast сборка.
 
 Кодовых изменений по этой карточке после проверки 2026-06-19 не потребовалось.
 Проверочные команды, сборка, форматирование, генераторы и `fix` в этом запуске
-не выполнялись по правилу `docs/migration-one-card-for-agent.md`; основной
-агент должен запустить нужные проверки отдельно.
+не выполнялись по skill-owned one-card правилу; основной агент должен запустить
+нужные проверки отдельно.
 
 ## Runtime, сборка и установка
 

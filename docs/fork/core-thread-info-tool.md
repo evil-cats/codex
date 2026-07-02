@@ -303,7 +303,7 @@ tool текущего runtime, а не app-server API и не extension tool.
 
 При переносе на новый upstream:
 
-1. Прочитать `FORK.md` и эту карточку.
+1. Использовать project skill `fork` и эту карточку.
 2. Проверить, как в новом upstream устроены `ToolExecutor`, `ToolInvocation`,
    `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`.
 3. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
@@ -315,8 +315,8 @@ tool текущего runtime, а не app-server API и не extension tool.
 7. Перенести tests для spec и runtime-контрактов helper-а.
 8. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.
-9. Запустить форматирование и проверки на `f-ms-dev`, затем синхронизировать
-   remote-generated изменения обратно в локальный checkout.
+9. Запустить форматирование и проверки через skill-owned gates в текущем
+   checkout.
 10. Сверить diff с этой карточкой: все описанные поля, ошибки, fallbacks и
    bounded parent-chain logic должны остаться на месте.
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fork"
+  short_description: "Owns Codex fork workflow gates"
+  default_prompt: "Use $fork to maintain the Codex fork workflow."

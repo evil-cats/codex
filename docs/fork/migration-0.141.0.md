@@ -268,7 +268,7 @@ metadata после `+` в CLI и TUI paths.
 Подагент подтвердил, что старая карточка все еще описывала обязательные каталоги
 `docs/architecture`, `docs/plans`, `docs/follow-ups` и `docs/backlog`, хотя в
 текущем checkout живыми внутренними fork-документами являются `docs/fork/`,
-`docs/migration-one-card-for-agent.md`, `docs/.markdownlint-cli2.yaml` и
+project skill `fork`, `docs/.markdownlint-cli2.yaml` и
 `docs/table-rendering-long-links-test.md`.
 
 Документационная доработка: в `AGENTS.md` правило о `docs/` теперь разрешает
@@ -374,10 +374,10 @@ placeholder path.
 Для проверки одной строки таблицы основной агент запускает свежего подагента
 без `fork_context` и передает ему:
 
-- `docs/migration-one-card-for-agent.md`;
+- skill-owned one-card subagent workflow;
 - одну выбранную карточку `docs/fork/<card>.md`.
 
-Подагент не читает `FORK.md`, не читает другие `docs/fork/*.md` целиком, не
-запускает сборку, тесты, генераторы, форматирование или `fix`, не делает
-`git commit` и `git push`. Родительский агент проверяет результат и обновляет
-эту карту покрытия перед переходом к следующей карточке.
+Подагент не читает parent-only references, не читает другие `docs/fork/*.md`
+целиком, не запускает сборку, тесты, генераторы, форматирование или `fix`, не
+делает `git commit` и `git push`. Родительский агент проверяет результат и
+обновляет эту карту покрытия перед переходом к следующей карточке.
