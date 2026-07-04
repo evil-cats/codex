@@ -633,6 +633,7 @@ pub struct ToolsToml {
     )]
     pub web_search: Option<WebSearchToolConfig>,
     pub exec: Option<ExecToolToml>,
+    pub read_file: Option<ReadFileToolToml>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
 }
 
@@ -644,6 +645,15 @@ pub struct ExecToolToml {
     #[serde(default, deserialize_with = "deserialize_positive_usize_option")]
     #[schemars(range(min = 1))]
     pub inline_output_max_tokens: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ReadFileToolToml {
+    /// Maximum approximate tokens from file content returned by `read_file`.
+    #[serde(default, deserialize_with = "deserialize_positive_usize_option")]
+    #[schemars(range(min = 1))]
+    pub content_max_tokens: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]

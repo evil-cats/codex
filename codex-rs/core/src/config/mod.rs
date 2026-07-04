@@ -198,6 +198,7 @@ impl Default for GhostSnapshotConfig {
 pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 32 KiB
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS: usize = 1000;
+pub(crate) const DEFAULT_READ_FILE_CONTENT_MAX_TOKENS: usize = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
@@ -852,6 +853,8 @@ pub struct Config {
     /// Maximum approximate command output tokens shown inline for completed
     /// unified exec commands before retained output is spilled to a file.
     pub exec_inline_output_max_tokens: usize,
+    /// Maximum approximate file content tokens returned by the `read_file` tool.
+    pub read_file_content_max_tokens: usize,
 
     /// User-configured maximum number of agent threads that can be open concurrently.
     pub agent_max_threads: Option<usize>,
@@ -2443,6 +2446,15 @@ fn resolve_exec_inline_output_max_tokens(config_toml: &ConfigToml) -> usize {
         .unwrap_or(DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS)
 }
 
+fn resolve_read_file_content_max_tokens(config_toml: &ConfigToml) -> usize {
+    config_toml
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.read_file.as_ref())
+        .and_then(|read_file| read_file.content_max_tokens)
+        .unwrap_or(DEFAULT_READ_FILE_CONTENT_MAX_TOKENS)
+}
+
 fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
     let base = code_mode_toml_config(config_toml.features.as_ref());
 
@@ -3177,6 +3189,7 @@ impl Config {
         let experimental_request_user_input_enabled =
             resolve_experimental_request_user_input_enabled(&cfg);
         let exec_inline_output_max_tokens = resolve_exec_inline_output_max_tokens(&cfg);
+        let read_file_content_max_tokens = resolve_read_file_content_max_tokens(&cfg);
         let code_mode = resolve_code_mode_config(&cfg);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg);
         let terminal_resize_reflow = resolve_terminal_resize_reflow_config(&cfg);
@@ -3755,6 +3768,7 @@ impl Config {
             web_search_mode: constrained_web_search_mode.value,
             web_search_config,
             experimental_request_user_input_enabled,
+            read_file_content_max_tokens,
             code_mode,
             use_experimental_unified_exec_tool,
             background_terminal_max_timeout,

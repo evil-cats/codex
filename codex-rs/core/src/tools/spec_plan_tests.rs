@@ -624,12 +624,14 @@ async fn environment_count_controls_environment_backed_tools() {
         "shell_command",
         "exec_command",
         "apply_patch",
+        "read_file",
         "view_image",
     ]);
     no_environment.assert_registered_lacks(&[
         "shell_command",
         "exec_command",
         "apply_patch",
+        "read_file",
         "view_image",
     ]);
 
@@ -640,13 +642,22 @@ async fn environment_count_controls_environment_backed_tools() {
         turn.model_info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
     })
     .await;
-    multiple_environments.assert_visible_contains(&["exec_command", "apply_patch", "view_image"]);
+    multiple_environments.assert_visible_contains(&[
+        "exec_command",
+        "apply_patch",
+        "read_file",
+        "view_image",
+    ]);
     assert!(has_parameter(
         multiple_environments.visible_spec("exec_command"),
         "environment_id"
     ));
     assert!(apply_patch_accepts_environment_id(
         multiple_environments.visible_spec("apply_patch")
+    ));
+    assert!(has_parameter(
+        multiple_environments.visible_spec("read_file"),
+        "environment_id"
     ));
     assert!(has_parameter(
         multiple_environments.visible_spec("view_image"),

@@ -82,7 +82,13 @@ async fn empty_turn_environments_omits_environment_backed_tools() -> Result<()> 
         tools.contains(&"update_plan".to_string()),
         "non-environment tool should remain available; got {tools:?}"
     );
-    for environment_tool in ["exec_command", "write_stdin", "apply_patch", "view_image"] {
+    for environment_tool in [
+        "exec_command",
+        "write_stdin",
+        "apply_patch",
+        "read_file",
+        "view_image",
+    ] {
         assert!(
             !tools.contains(&environment_tool.to_string()),
             "{environment_tool} should be omitted for explicit empty turn environments; got {tools:?}"
@@ -125,6 +131,62 @@ async fn turn_environment_selection_keeps_environment_backed_tools() -> Result<(
     assert!(
         tools.contains(&"exec_command".to_string()),
         "environment tool should remain available with selected local environment; got {tools:?}"
+    );
+    assert!(
+        tools.contains(&"read_file".to_string()),
+        "read_file should remain available with selected local environment; got {tools:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_tool_reads_utf8_file_with_line_metadata() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config.read_file_content_max_tokens = 10_000;
+    });
+    let fixture = builder.build(&server).await?;
+
+    let fixture_path = fixture.workspace_path("read-file-fixture.txt");
+    fs::write(&fixture_path, "alpha\nbeta\ngamma\n").context("write read_file fixture")?;
+
+    let call_id = "read-file-call";
+    let args = json!({
+        "path": "read-file-fixture.txt",
+        "start_line": 2,
+        "end_line": 3,
+    });
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "read_file", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let mock = mount_sse_sequence(&server, responses).await;
+
+    fixture
+        .submit_turn_with_permission_profile(
+            "read the fixture file",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+
+    let output = mock
+        .function_call_output_text(call_id)
+        .context("read_file output present")?;
+
+    assert_eq!(
+        output,
+        "ReadFile: read-file-fixture.txt\nLines: total=3 requested=2-3 returned=2-3 complete=yes\nLineNumbers: yes\n\n2 | beta\n3 | gamma\n"
     );
 
     Ok(())

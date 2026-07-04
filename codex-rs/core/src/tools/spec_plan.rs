@@ -16,6 +16,7 @@ use crate::tools::handlers::ListMcpResourcesHandler;
 use crate::tools::handlers::McpHandler;
 use crate::tools::handlers::NewContextWindowHandler;
 use crate::tools::handlers::PlanHandler;
+use crate::tools::handlers::ReadFileHandler;
 use crate::tools::handlers::ReadMcpResourceHandler;
 use crate::tools::handlers::RequestPermissionsHandler;
 use crate::tools::handlers::RequestPluginInstallHandler;
@@ -652,6 +653,11 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
     planned_tools.add(PlanHandler);
     planned_tools.add(SystemTimeHandler);
     planned_tools.add(ThreadInfoHandler);
+
+    if environment_mode.has_environment() {
+        let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+        planned_tools.add(ReadFileHandler::new(include_environment_id));
+    }
 
     if turn_context.config.experimental_request_user_input_enabled {
         planned_tools.add_with_exposure(

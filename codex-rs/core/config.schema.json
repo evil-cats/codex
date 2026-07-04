@@ -2465,6 +2465,19 @@
       },
       "type": "object"
     },
+    "ReadFileToolToml": {
+      "additionalProperties": false,
+      "properties": {
+        "content_max_tokens": {
+          "default": null,
+          "description": "Maximum approximate tokens from file content returned by `read_file`.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RealtimeAudioToml": {
       "additionalProperties": false,
       "properties": {
@@ -2805,6 +2818,9 @@
         },
         "experimental_request_user_input": {
           "$ref": "#/definitions/ExperimentalRequestUserInput"
+        },
+        "read_file": {
+          "$ref": "#/definitions/ReadFileToolToml"
         },
         "web_search": {
           "allOf": [

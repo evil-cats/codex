@@ -15,6 +15,7 @@ use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ExecToolToml;
 use codex_config::config_toml::ExperimentalRequestUserInput;
 use codex_config::config_toml::ProjectConfig;
+use codex_config::config_toml::ReadFileToolToml;
 use codex_config::config_toml::RealtimeArchitecture;
 use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::RealtimeToml;
@@ -499,6 +500,7 @@ web_search = true
         Some(ToolsToml {
             web_search: None,
             exec: None,
+            read_file: None,
             experimental_request_user_input: None,
         })
     );
@@ -519,6 +521,7 @@ web_search = false
         Some(ToolsToml {
             web_search: None,
             exec: None,
+            read_file: None,
             experimental_request_user_input: None,
         })
     );
@@ -541,6 +544,7 @@ inline_output_max_tokens = 1234
             exec: Some(ExecToolToml {
                 inline_output_max_tokens: Some(1234),
             }),
+            read_file: None,
             experimental_request_user_input: None,
         })
     );
@@ -563,6 +567,45 @@ inline_output_max_tokens = 0
 }
 
 #[test]
+fn tools_read_file_content_max_tokens_deserializes() {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[tools.read_file]
+content_max_tokens = 4321
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(
+        cfg.tools,
+        Some(ToolsToml {
+            web_search: None,
+            exec: None,
+            read_file: Some(ReadFileToolToml {
+                content_max_tokens: Some(4321),
+            }),
+            experimental_request_user_input: None,
+        })
+    );
+}
+
+#[test]
+fn tools_read_file_content_max_tokens_rejects_zero() {
+    let err = toml::from_str::<ConfigToml>(
+        r#"
+[tools.read_file]
+content_max_tokens = 0
+"#,
+    )
+    .expect_err("zero read_file content limit should fail");
+
+    assert!(
+        err.to_string().contains("value must be greater than 0"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn tools_experimental_request_user_input_defaults_to_enabled() {
     let cfg: ConfigToml = toml::from_str(
         r#"
@@ -576,6 +619,7 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
         Some(ToolsToml {
             web_search: None,
             exec: None,
+            read_file: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
         })
     );
@@ -596,6 +640,7 @@ enabled = false
         Some(ToolsToml {
             web_search: None,
             exec: None,
+            read_file: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
         })
     );
@@ -611,6 +656,7 @@ async fn load_config_resolves_exec_inline_output_max_tokens() -> std::io::Result
                 exec: Some(ExecToolToml {
                     inline_output_max_tokens: Some(1234),
                 }),
+                read_file: None,
                 experimental_request_user_input: None,
             }),
             ..ConfigToml::default()
@@ -621,6 +667,47 @@ async fn load_config_resolves_exec_inline_output_max_tokens() -> std::io::Result
     .await?;
 
     assert_eq!(config.exec_inline_output_max_tokens, 1234);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_resolves_read_file_content_max_tokens() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            tools: Some(ToolsToml {
+                web_search: None,
+                exec: None,
+                read_file: Some(ReadFileToolToml {
+                    content_max_tokens: Some(4321),
+                }),
+                experimental_request_user_input: None,
+            }),
+            ..ConfigToml::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.read_file_content_max_tokens, 4321);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_defaults_read_file_content_max_tokens() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.read_file_content_max_tokens,
+        crate::config::DEFAULT_READ_FILE_CONTENT_MAX_TOKENS
+    );
     Ok(())
 }
 
@@ -649,6 +736,7 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
             tools: Some(ToolsToml {
                 web_search: None,
                 exec: None,
+                read_file: None,
                 experimental_request_user_input: Some(ExperimentalRequestUserInput {
                     enabled: false,
                 }),
