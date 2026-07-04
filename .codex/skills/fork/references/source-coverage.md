@@ -34,6 +34,7 @@ Structural coverage по-прежнему не доказывает семант
 | До switch skill проходил review; после switch skill является активным владельцем workflow | перенесено | `SKILL.md`, этот файл |
 | В новом workflow не закреплять host-specific зависимость | перенесено | `references/local-development.md` |
 | Source of truth формулировать как текущий локальный checkout | перенесено | `references/local-development.md` |
+| Новые source/task-owned файлы должны попадать в Git index минимум через `git add -N`; build artifacts и unrelated untracked не добавляются | перенесено | `references/fork-rules.md`, `references/local-development.md`, `references/checks-and-gates.md`, `scripts/fork_cli.py` |
 | Структурную полноту переноса проверять coverage artifact и script | перенесено | этот файл, `scripts/fork check-source-coverage` |
 | Семантическую полноту переноса проверять отдельным independent audit | перенесено | `SKILL.md`, этот файл |
 
@@ -43,15 +44,16 @@ Structural coverage по-прежнему не доказывает семант
 | --- | --- | --- |
 | `SKILL.md` | Короткий entrypoint и маршрутизатор | bootstrap |
 | `references/fork-rules.md` | Что является fork-доработкой и когда нужна карточка | перенесено |
-| `references/fork-card-contract.md` | Контракт и готовность `docs/fork/*.md` | перенесено |
+| `references/fork-card-contract.md` | Контракт и готовность `docs/fork/*.md`, включая strict раздел `Проверки` | перенесено |
 | `references/parent-migration.md` | Parent-agent migration workflow | перенесено |
 | `references/subagent-one-card.md` | Правила подагента одной карточки | перенесено |
 | `references/local-development.md` | Host-agnostic local checkout workflow | перенесено |
-| `references/checks-and-gates.md` | Skill-owned gates and scripts | перенесено |
-| `assets/templates/fork-card.md` | Шаблон fork-карточки | перенесено |
+| `references/checks-and-gates.md` | Skill-owned gates, исполняемые карты и scripts | перенесено |
+| `assets/templates/fork-card.md` | Шаблон fork-карточки с разделением смыслового покрытия, владельца исполняемой карты и evidence | перенесено |
 | `assets/templates/migration-card.md` | Шаблон migration-карты | перенесено |
 | `assets/templates/parent-subagent-prompt.md` | Шаблон prompt для подагента | перенесено |
 | `scripts/fork` | Skill-owned CLI entrypoint | перенесено |
+| `scripts/fork_cli.py` | Строгая validation для связи active cards с `CARD_TESTS` и исполняемыми картами | перенесено |
 
 ## Status values
 
@@ -70,7 +72,7 @@ Structural coverage по-прежнему не доказывает семант
 | `# Правила обслуживания fork` | `SKILL.md`, все references | перенесено с нормализацией | Owner model перенесен в skill; legacy остается эталоном до switch |
 | `## Что считается fork-доработкой` | `references/fork-rules.md` | перенесено | Определение и исключения для служебных изменений перенесены |
 | `## Карточки docs/fork/` | `references/fork-card-contract.md` | перенесено | Назначение, подробность и запрет transcript-summary перенесены |
-| `### Критерии готовности fork-карточки` | `references/fork-card-contract.md` | перенесено с нормализацией | `wrapper или скрипт` нормализовано в `skill-owned command или script` |
+| `### Критерии готовности fork-карточки` | `references/fork-card-contract.md` | перенесено с нормализацией | `wrapper или скрипт` нормализовано как skill-owned владелец исполняемой карты; раздел `Проверки` теперь strict |
 | `### Проверка покрытия` | `references/fork-card-contract.md` | перенесено | Статусы и запрет молчаливой потери перенесены |
 | `## Проверка перед коммитом` | `references/fork-rules.md` | перенесено | Предкоммитная проверка и card/staging правила перенесены |
 | `## Апгрейд на новую версию Codex` | `references/parent-migration.md` | перенесено с нормализацией | `f-ms-dev` заменен на local checkout, subagent source заменен на skill reference |
@@ -78,7 +80,7 @@ Structural coverage по-прежнему не доказывает семант
 | `### Шаблон prompt для подагента одной карточки` | `assets/templates/parent-subagent-prompt.md` | перенесено с нормализацией | Legacy subagent source заменен на skill reference, parent-only запрет добавлен |
 | `После прохода по карточкам` | `references/checks-and-gates.md` | перенесено с нормализацией | Legacy `local-*` команды заменены на skill-owned `fork ...` команды |
 | `### Wrapper-скрипты миграции и логи` | `references/checks-and-gates.md`, `scripts/fork` | перенесено с нормализацией | Legacy wrappers заменены на skill-owned commands; parity rows остаются ниже |
-| `### Обновление скриптов при изменении fork-карточек` | `references/checks-and-gates.md` | перенесено с нормализацией | Legacy script names заменены на skill-owned commands |
+| `### Обновление скриптов при изменении fork-карточек` | `references/checks-and-gates.md`, `scripts/fork_cli.py` | перенесено с нормализацией | Legacy script names заменены на skill-owned исполняемые карты; `fork cards validate` проверяет связь active cards с `CARD_TESTS` |
 | `## Source-of-truth checkout на f-ms-dev` | `references/local-development.md` | перенесено с нормализацией | Host-specific часть заменена на текущий локальный checkout |
 
 ## `docs/migration-one-card-for-agent.md` coverage
@@ -104,7 +106,7 @@ workflow.
 | `scripts/fork-migration/local-preflight.sh` | `fork preflight` | перенесено с нормализацией | whitespace, conflict markers, markdownlint, migration checks, logs |
 | `scripts/fork-migration/local-format.sh` | `fork format` | перенесено с нормализацией | `check/apply` перенесены как `--check/--fix`, log semantics сохранены |
 | `scripts/fork-migration/local-generators.sh` | `fork generators` | перенесено | generated schema/API surfaces |
-| `scripts/fork-migration/local-tests.sh` | `fork tests` | перенесено с нормализацией | `list`, `cards`, `full`, card map |
+| `scripts/fork-migration/local-tests.sh` | `fork tests` | перенесено с нормализацией | `list`, `cards`, `full`, строгая карта карточечных тестов |
 | `scripts/fork-migration/local-build-fast.sh` | `fork build-fast` | перенесено с нормализацией | fast build, binary check, version check, logs |
 | `scripts/fork-migration/common.sh` | `scripts/fork` internals | перенесено с нормализацией | shared logging, PATH setup and repo checks |
 | `scripts/fork-migration/remote-prepare-host.sh` | не переносится | не переносится | Remote mirror reset/clean retired; replacement is current local source-of-truth checkout |
@@ -129,7 +131,8 @@ workflow.
 - script parity rows без допустимого статуса;
 - rows со статусом `не переносится` без причины.
 
-Structural gate не доказывает смысловой перенос. Для будущих существенных
-изменений skill-owned workflow после structural green нужен отдельный semantic
-audit. После cleanup legacy owner artifacts удалены, а старые имена scripts
-остаются только в script parity table как доказательство переноса.
+Structural gate не доказывает смысловой перенос и не заменяет `fork cards
+validate`. Для будущих существенных изменений skill-owned workflow после
+structural green нужен отдельный semantic audit. После cleanup legacy owner
+artifacts удалены, а старые имена scripts остаются только в script parity table
+как доказательство переноса.

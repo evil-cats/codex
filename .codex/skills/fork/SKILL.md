@@ -47,3 +47,14 @@ Switch выполнен после structural coverage gate, независим�
 
 Skill-owned scripts не вызывают retired legacy scripts как runtime dependency.
 Имена старых scripts сохраняются только в матрице покрытия переноса.
+
+## Обязательный gate карточек и тестов
+
+Если задача добавляет active fork-карточку, меняет `docs/fork/*.md`, раздел
+`Проверки`, обязательное покрытие, crate/test target, tool spec, config/schema,
+prompt или model-visible context, прочитай `references/checks-and-gates.md`.
+
+Перед финалом такой задачи синхронизируй skill-owned исполняемые карты и
+проверь `fork tests --mode list`. `fork cards validate` является строгим gate
+связи карточек с исполняемыми картами, но не заменяет
+`fork tests --mode list`.

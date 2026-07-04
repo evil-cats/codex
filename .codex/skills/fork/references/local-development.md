@@ -19,9 +19,13 @@ diff review, staging и commit.
 1. Перед существенным шагом проверь фактическое состояние checkout:
    `git status --short --branch`.
 2. Если нужен свежий upstream, обновляй refs в этом же checkout.
-3. Если генератор, форматирование, тест или сборка изменили файлы, проверяй
+3. После создания нового source/task-owned файла добавь его в Git index минимум
+   через `git add -N <path>`, чтобы `git diff` и review видели содержимое.
+   Не добавляй build artifacts, logs, cache, temporary output и unrelated
+   untracked files.
+4. Если генератор, форматирование, тест или сборка изменили файлы, проверяй
    diff в этом же checkout.
-4. Destructive sync/reset операции сначала ограничь inspect/report и выполняй
+5. Destructive sync/reset операции сначала ограничь inspect/report и выполняй
    только после отдельного подтверждения пользователя.
 
 ## Host-specific details

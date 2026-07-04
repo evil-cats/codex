@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -120,143 +121,402 @@ CARD_REQUIRED_SECTION_GROUPS = (
     ),
 )
 
+STRICT_CHECK_SUBSECTIONS = (
+    "Смысловое покрытие",
+    "Владелец исполняемой карты",
+    "Дополнительные gates",
+    "Исторические результаты",
+    "Известные падения и пропуски",
+)
+
+COMMAND_RUNBOOK_RE = re.compile(
+    r"(?:^|\s)(?:just\s+\S+|cargo\s+\S+|"
+    r"\.codex/skills/fork/scripts/fork\s+\S+|fork\s+\S+\s+--\S+)"
+)
+
+SOURCE_LIKE_SUFFIXES = (
+    ".bazel",
+    ".bzl",
+    ".css",
+    ".html",
+    ".js",
+    ".json",
+    ".jsx",
+    ".md",
+    ".proto",
+    ".py",
+    ".rs",
+    ".scss",
+    ".sh",
+    ".snap",
+    ".sql",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".yaml",
+    ".yml",
+)
+
+SOURCE_LIKE_NAMES = (
+    "AGENTS.md",
+    "BUILD",
+    "BUILD.bazel",
+    "Cargo.lock",
+    "Cargo.toml",
+    "Dockerfile",
+    "Justfile",
+    "MODULE.bazel",
+    "README.md",
+    "SKILL.md",
+    "fork",
+    "package-lock.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+)
+
+UNTRACKED_ARTIFACT_DIRS = (
+    ".cache",
+    ".git",
+    ".mypy_cache",
+    ".next",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+)
+
+UNTRACKED_ARTIFACT_SUFFIXES = (
+    ".d",
+    ".dll",
+    ".dylib",
+    ".exe",
+    ".gcda",
+    ".gcno",
+    ".log",
+    ".o",
+    ".profraw",
+    ".pyc",
+    ".pyo",
+    ".rlib",
+    ".rmeta",
+    ".snap.new",
+    ".so",
+    ".stderr",
+    ".stdout",
+    ".temp",
+    ".tmp",
+)
+
+
+@dataclass(frozen=True)
+class CardTest:
+    card_id: str
+    argv: tuple[str, ...]
+    purpose: str
+
+
+def card_test(card_id: str, purpose: str, *argv: str) -> CardTest:
+    return CardTest(card_id=card_id, purpose=purpose, argv=argv)
+
+
 CARD_TESTS = (
-    ("codex-agent-env-var", ("just", "test", "-p", "codex-core", "exec_env")),
-    ("codex-agent-env-var", ("just", "test", "-p", "codex-core", "agent_name")),
-    ("codex-agent-env-var", ("just", "test", "-p", "codex-core", "thread_info")),
-    (
-        "codex-agent-env-var",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env",
-        ),
+    card_test(
+        "fork-codex-agent-env-var",
+        "exec environment",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_env",
     ),
-    (
-        "codex-agent-env-var",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "env_overlay_for_exec_server_keeps_runtime_changes_only",
-        ),
+    card_test(
+        "fork-codex-agent-env-var",
+        "agent name",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "agent_name",
     ),
-    (
-        "codex-agent-env-var",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "shell_command_handler_to_exec_params_uses_session_shell_and_turn_context",
-        ),
+    card_test(
+        "fork-codex-agent-env-var",
+        "thread info",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "thread_info",
     ),
-    ("codex-agent-env-var", ("just", "test", "-p", "codex-protocol", "shell_environment")),
-    ("core-system-time-tool", ("just", "test", "-p", "codex-core", "system_time")),
-    (
-        "core-system-time-tool",
-        ("just", "test", "-p", "codex-core", "prompt_tools_are_consistent_across_requests"),
+    card_test(
+        "fork-codex-agent-env-var",
+        "identity restore",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env",
     ),
-    ("core-thread-info-tool", ("just", "test", "-p", "codex-core", "agent_name")),
-    ("core-thread-info-tool", ("just", "test", "-p", "codex-core", "thread_info")),
-    (
-        "core-thread-info-tool",
-        ("just", "test", "-p", "codex-core", "prompt_tools_are_consistent_across_requests"),
+    card_test(
+        "fork-codex-agent-env-var",
+        "exec env overlay",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "env_overlay_for_exec_server_keeps_runtime_changes_only",
     ),
-    ("developer-instructions-files", ("just", "test", "-p", "codex-core", "developer_instructions")),
-    ("environment-context-project-name", ("just", "test", "-p", "codex-core", "environment_context")),
-    ("exec-command-output-spill-files", ("just", "test", "-p", "codex-core", "inline_output_max_tokens")),
-    ("exec-command-output-spill-files", ("just", "test", "-p", "codex-core", "output_spill")),
-    (
-        "exec-command-output-spill-files",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "exec_command_tool_output_formats_spill",
-        ),
+    card_test(
+        "fork-codex-agent-env-var",
+        "shell context",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "shell_command_handler_to_exec_params_uses_session_shell_and_turn_context",
     ),
-    (
-        "exec-command-output-spill-files",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "exec_command_spills_large_completed_output_to_file",
-        ),
+    card_test(
+        "fork-codex-agent-env-var",
+        "protocol shell env",
+        "just",
+        "test",
+        "-p",
+        "codex-protocol",
+        "shell_environment",
     ),
-    (
-        "exec-command-output-spill-files",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "unified_exec_enforces_glob_deny_read_policy",
-        ),
+    card_test(
+        "fork-core-read-file-tool",
+        "runtime contract",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "read_file",
     ),
-    (
-        "exec-command-output-spill-files",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-core",
-            "unified_exec_timeout_and_followup_poll",
-        ),
+    card_test(
+        "fork-core-read-file-tool",
+        "tool visibility",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "environment_count_controls_environment_backed_tools",
     ),
-    ("hermione-version-metadata", ("just", "test", "-p", "codex-cli")),
-    (
-        "hermione-version-metadata",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-tui",
-            "--",
-            "--skip",
-            "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
-        ),
+    card_test(
+        "fork-core-system-time-tool",
+        "system time",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "system_time",
     ),
-    (
-        "memory-read-template-path",
-        (
-            "cargo",
-            "build",
-            "--manifest-path",
-            "codex-rs/Cargo.toml",
-            "-p",
-            "codex-rmcp-client",
-            "--bin",
-            "test_stdio_server",
-        ),
+    card_test(
+        "fork-core-system-time-tool",
+        "prompt tool cache",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "prompt_tools_are_consistent_across_requests",
     ),
-    ("memory-read-template-path", ("just", "test", "-p", "codex-core", "config")),
-    ("memory-read-template-path", ("just", "test", "-p", "codex-memories-extension")),
-    ("terminal-title-session-label", ("just", "test", "-p", "codex-tui", "terminal_title")),
-    ("tui-history-image-previews", ("just", "test", "-p", "codex-core", "view_image")),
-    (
-        "tui-history-image-previews",
-        (
-            "just",
-            "test",
-            "-p",
-            "codex-tui",
-            "--",
-            "--skip",
-            "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
-        ),
+    card_test(
+        "fork-core-thread-info-tool",
+        "agent name",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "agent_name",
     ),
-    ("tui-history-image-previews", ("just", "test", "-p", "codex-app-server-protocol")),
-    ("tui-history-image-previews", ("just", "test", "-p", "codex-protocol")),
-    (
-        "tui-snapshots",
-        ("cargo", "insta", "pending-snapshots", "--manifest-path", "codex-rs/tui/Cargo.toml"),
+    card_test(
+        "fork-core-thread-info-tool",
+        "thread info",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "thread_info",
+    ),
+    card_test(
+        "fork-core-thread-info-tool",
+        "prompt tool cache",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "prompt_tools_are_consistent_across_requests",
+    ),
+    card_test(
+        "fork-developer-instructions-files",
+        "developer instructions",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "developer_instructions",
+    ),
+    card_test(
+        "fork-environment-context-project-name",
+        "environment context",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "environment_context",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "inline token limit",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "inline_output_max_tokens",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "spill output",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "output_spill",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "spill formatting",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_tool_output_formats_spill",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "large output spill",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_spills_large_completed_output_to_file",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "glob deny policy",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "unified_exec_enforces_glob_deny_read_policy",
+    ),
+    card_test(
+        "fork-exec-command-output-spill-files",
+        "timeout poll",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "unified_exec_timeout_and_followup_poll",
+    ),
+    card_test("fork-hermione-version-metadata", "cli metadata", "just", "test", "-p", "codex-cli"),
+    card_test(
+        "fork-hermione-version-metadata",
+        "tui metadata",
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "--",
+        "--skip",
+        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
+    ),
+    card_test(
+        "fork-memory-read-template-path",
+        "stdio fixture binary",
+        "cargo",
+        "build",
+        "--manifest-path",
+        "codex-rs/Cargo.toml",
+        "-p",
+        "codex-rmcp-client",
+        "--bin",
+        "test_stdio_server",
+    ),
+    card_test(
+        "fork-memory-read-template-path",
+        "core config",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "config",
+    ),
+    card_test(
+        "fork-memory-read-template-path",
+        "memories extension",
+        "just",
+        "test",
+        "-p",
+        "codex-memories-extension",
+    ),
+    card_test(
+        "fork-terminal-title-session-label",
+        "terminal title",
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "terminal_title",
+    ),
+    card_test(
+        "fork-tui-history-image-previews",
+        "core view image",
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "view_image",
+    ),
+    card_test(
+        "fork-tui-history-image-previews",
+        "tui render",
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "--",
+        "--skip",
+        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
+    ),
+    card_test(
+        "fork-tui-history-image-previews",
+        "app server protocol",
+        "just",
+        "test",
+        "-p",
+        "codex-app-server-protocol",
+    ),
+    card_test(
+        "fork-tui-history-image-previews",
+        "protocol",
+        "just",
+        "test",
+        "-p",
+        "codex-protocol",
+    ),
+    card_test(
+        "fork-tui-history-image-previews",
+        "pending snapshots",
+        "cargo",
+        "insta",
+        "pending-snapshots",
+        "--manifest-path",
+        "codex-rs/tui/Cargo.toml",
     ),
 )
 
@@ -292,6 +552,91 @@ def tail_lines(path: Path, count: int = 10) -> list[str]:
 
 def shell_quote(argv: list[str] | tuple[str, ...]) -> str:
     return shlex.join(argv)
+
+
+def git_untracked_paths(
+    repo_root: Path, pathspecs: list[str]
+) -> tuple[int, list[Path], str]:
+    argv = ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
+    if pathspecs:
+        argv.extend(["--", *pathspecs])
+
+    result = subprocess.run(
+        argv,
+        cwd=repo_root,
+        env=command_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    paths = [
+        Path(entry[3:])
+        for entry in result.stdout.split("\0")
+        if entry.startswith("?? ")
+    ]
+    return result.returncode, paths, result.stderr
+
+
+def is_untracked_artifact(path: Path) -> bool:
+    if any(part in UNTRACKED_ARTIFACT_DIRS for part in path.parts):
+        return True
+    return str(path).endswith(UNTRACKED_ARTIFACT_SUFFIXES)
+
+
+def is_source_like_untracked(path: Path) -> bool:
+    if is_untracked_artifact(path):
+        return False
+    return path.name in SOURCE_LIKE_NAMES or path.suffix in SOURCE_LIKE_SUFFIXES
+
+
+def preflight_untracked_pathspecs(repo_root: Path, scope: str) -> list[str]:
+    if scope == "skill":
+        try:
+            return [str(SKILL_ROOT.relative_to(repo_root))]
+        except ValueError:
+            return [str(SKILL_ROOT)]
+    return []
+
+
+def check_source_like_untracked(session: "LogSession", scope: str) -> int:
+    pathspecs = preflight_untracked_pathspecs(session.repo_root, scope)
+    session.log_command(
+        "source-like untracked files",
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
+        + (["--", *pathspecs] if pathspecs else []),
+    )
+
+    result, paths, stderr = git_untracked_paths(session.repo_root, pathspecs)
+    if result != 0:
+        if stderr:
+            session.write(stderr)
+        return session.fail(label="git status untracked files", exit_code=result)
+
+    source_like = sorted(path for path in paths if is_source_like_untracked(path))
+    ignored = sorted(path for path in paths if is_untracked_artifact(path))
+
+    if ignored:
+        session.write("ignored artifact-like untracked files:\n")
+        for path in ignored:
+            session.write(f"- {path}\n")
+
+    if not source_like:
+        session.write("source-like untracked files: none\n")
+        return 0
+
+    session.write("source-like untracked files require explicit handling:\n")
+    for path in source_like:
+        session.write(f"- {path}\n")
+    session.write("\n")
+    session.write("If a file is task-owned source, run `git add -N <path>`.\n")
+    session.write(
+        "Do not add build artifacts, logs, cache, temporary output, or unrelated files.\n"
+    )
+    session.write(
+        "If a source-like file is unrelated, classify it explicitly before finalizing.\n"
+    )
+    return session.fail(label="source-like untracked files")
 
 
 class LogSession:
@@ -599,6 +944,46 @@ def has_heading(headings: list[str], aliases: tuple[str, ...]) -> bool:
     return False
 
 
+def section_text(text: str, heading: str, level: int = 2) -> str:
+    marker = "#" * level
+    next_marker = "#" * level
+    pattern = re.compile(
+        rf"^{re.escape(marker)}\s+{re.escape(heading)}\s*$",
+        re.MULTILINE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return ""
+
+    start = match.end()
+    next_match = re.search(rf"^{re.escape(next_marker)}\s+", text[start:], re.MULTILINE)
+    end = start + next_match.start() if next_match else len(text)
+    return text[start:end]
+
+
+def subsection_text(section: str, heading: str) -> str:
+    return section_text(section, heading, level=3)
+
+
+def remove_subsection(section: str, heading: str) -> str:
+    marker = "###"
+    pattern = re.compile(
+        rf"^{re.escape(marker)}\s+{re.escape(heading)}\s*$",
+        re.MULTILINE,
+    )
+    match = pattern.search(section)
+    if not match:
+        return section
+
+    next_match = re.search(rf"^{re.escape(marker)}\s+", section[match.end() :], re.MULTILINE)
+    end = match.end() + next_match.start() if next_match else len(section)
+    return section[: match.start()] + section[end:]
+
+
+def card_test_ids() -> set[str]:
+    return {test.card_id for test in CARD_TESTS}
+
+
 def status_count(text: str, status: str) -> int:
     return len(re.findall(rf"\|\s*{re.escape(status)}\s*\|", text))
 
@@ -703,6 +1088,14 @@ def first_status(path: Path) -> str:
     return ""
 
 
+def first_id(path: Path) -> str:
+    for line in read_text(path).splitlines()[:80]:
+        match = re.match(r"\s*id:\s*`?([^`]+?)`?\s*$", line)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
 def cmd_cards_list(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     docs_fork = repo_root / "docs/fork"
@@ -723,7 +1116,7 @@ def cmd_cards_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def card_validation_errors(path: Path) -> list[str]:
+def strict_card_validation_errors(path: Path) -> list[str]:
     text = read_text(path)
     errors = []
     if not first_heading(path):
@@ -737,6 +1130,46 @@ def card_validation_errors(path: Path) -> list[str]:
     for group_name, aliases in CARD_REQUIRED_SECTION_GROUPS:
         if not has_heading(headings, aliases):
             errors.append(f"missing owner-card section group: {group_name}")
+
+    if status != "active":
+        return errors
+
+    card_id = first_id(path)
+    if not card_id:
+        errors.append("active card missing frontmatter id")
+
+    checks = section_text(text, "Проверки")
+    if not checks:
+        errors.append("active card missing strict `Проверки` section")
+        return errors
+
+    for subsection in STRICT_CHECK_SUBSECTIONS:
+        if not subsection_text(checks, subsection):
+            errors.append(f"active card missing strict `Проверки` subsection: {subsection}")
+
+    owner = subsection_text(checks, "Владелец исполняемой карты")
+    has_fork_tests_owner = "`fork tests`" in owner or "fork tests" in owner
+    has_manual_exception = "`manual-required`" in owner or "`not-applicable`" in owner
+    has_card_tests = card_id in card_test_ids()
+    if has_card_tests and not has_fork_tests_owner:
+        errors.append(
+            "CARD_TESTS entry exists but `Владелец исполняемой карты` does not name `fork tests`"
+        )
+    if not has_card_tests and not has_manual_exception:
+        errors.append(
+            "active card has no CARD_TESTS entry and no "
+            "`manual-required`/`not-applicable` exception"
+        )
+
+    normative_checks = remove_subsection(checks, "Исторические результаты")
+    if re.search(r"^```(?:bash|sh)\s*$", normative_checks, re.MULTILINE):
+        errors.append("runbook command block in `Проверки` outside `Исторические результаты`")
+    for line_number, line in enumerate(normative_checks.splitlines(), start=1):
+        if COMMAND_RUNBOOK_RE.search(line):
+            errors.append(
+                "runbook command leakage in `Проверки` outside "
+                f"`Исторические результаты` at section line {line_number}: {line.strip()}"
+            )
     return errors
 
 
@@ -748,12 +1181,21 @@ def cmd_cards_validate(args: argparse.Namespace) -> int:
         return 2
 
     failures = []
+    active_card_ids = set()
     for card in cards:
-        errors = card_validation_errors(card)
+        if not card.name.startswith("migration-") and first_status(card) == "active":
+            card_id = first_id(card)
+            if card_id:
+                active_card_ids.add(card_id)
+
+        errors = strict_card_validation_errors(card)
         if errors:
             rel = card.relative_to(repo_root)
             for error in errors:
                 failures.append(f"{rel}: {error}")
+
+    for test_id in sorted(card_test_ids() - active_card_ids):
+        failures.append(f"CARD_TESTS: label has no active fork card: {test_id}")
 
     for failure in failures:
         print(f"ERROR: {failure}", file=sys.stderr)
@@ -825,6 +1267,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     if failures:
         return session.fail(label="static skill checks")
+
+    result = check_source_like_untracked(session, scope)
+    if result != 0:
+        return result
 
     if scope in ("fork-docs", "all"):
         if not version:
@@ -935,8 +1381,8 @@ def cmd_tests(args: argparse.Namespace) -> int:
     version = resolved_version(args, repo_root)
 
     if args.mode == "list":
-        for label, argv in CARD_TESTS:
-            print(f"{label:<34} {shell_quote(argv)}")
+        for test in CARD_TESTS:
+            print(f"{test.card_id:<36} {test.purpose:<24} {shell_quote(test.argv)}")
         return 0
 
     session = LogSession(repo_root=repo_root, log_kind="test", mode=args.mode, version=version)
@@ -950,8 +1396,8 @@ def cmd_tests(args: argparse.Namespace) -> int:
         return result
 
     if args.mode == "cards":
-        for label, argv in CARD_TESTS:
-            result = session.run_step(label, list(argv))
+        for test in CARD_TESTS:
+            result = session.run_step(f"{test.card_id}: {test.purpose}", list(test.argv))
             if result != 0:
                 return result
         return session.ok()
