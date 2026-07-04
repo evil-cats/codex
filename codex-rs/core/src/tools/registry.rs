@@ -17,6 +17,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::core_tool_activity::CoreToolActivityHandle;
 use crate::tools::flat_tool_name;
 use crate::tools::handlers::multi_agents_spec::MULTI_AGENT_V1_NAMESPACE;
 use crate::tools::hook_names::HookToolName;
@@ -537,6 +538,7 @@ impl ToolRegistry {
         }
 
         let response_cell = tokio::sync::Mutex::new(None);
+        let core_tool_activity = CoreToolActivityHandle::maybe_start(&invocation).await;
         let invocation_for_tool = invocation.clone();
         let log_payload = invocation.payload.log_payload();
 
@@ -569,6 +571,12 @@ impl ToolRegistry {
             Ok((_, success)) => *success,
             Err(_) => false,
         };
+        if let Some(core_tool_activity) = core_tool_activity {
+            let error = result.as_ref().err().map(ToString::to_string);
+            core_tool_activity
+                .complete(&invocation, success, error)
+                .await;
+        }
         emit_metric_for_tool_read(&invocation, success);
         let post_tool_use_payload = if success {
             let guard = response_cell.lock().await;

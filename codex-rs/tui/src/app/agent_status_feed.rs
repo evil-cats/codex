@@ -149,6 +149,19 @@ fn activity_summary(item: &ThreadItem) -> Option<String> {
         ThreadItem::McpToolCall { server, tool, .. } => {
             return bounded_summary(&format!("MCP {server}/{tool}"));
         }
+        ThreadItem::CoreToolActivity { kind, detail, .. } => {
+            let action = match kind {
+                codex_app_server_protocol::CoreToolActivityKind::File => "File",
+                codex_app_server_protocol::CoreToolActivityKind::ThreadInfo => "Thread info",
+                codex_app_server_protocol::CoreToolActivityKind::SystemTime => "System time",
+            };
+            let suffix = if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" {detail}")
+            };
+            return bounded_summary(&format!("{action}{suffix}"));
+        }
         ThreadItem::DynamicToolCall {
             namespace, tool, ..
         } => {

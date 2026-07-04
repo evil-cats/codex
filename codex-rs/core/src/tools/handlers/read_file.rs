@@ -255,14 +255,16 @@ fn render_output(
         lines.len(),
     );
 
-    if returned.range.is_none() && !returned.complete
-        && let Some(range) = requested_range {
-            output.push_str(&format!(
-                "Error: line {} exceeds ReadFile content token limit\n",
-                range.start
-            ));
-            return output;
-        }
+    if returned.range.is_none()
+        && !returned.complete
+        && let Some(range) = requested_range
+    {
+        output.push_str(&format!(
+            "Error: line {} exceeds ReadFile content token limit\n",
+            range.start
+        ));
+        return output;
+    }
 
     let line_numbers = yes_no(args.line_numbers);
     output.push_str(&format!("LineNumbers: {line_numbers}\n\n"));

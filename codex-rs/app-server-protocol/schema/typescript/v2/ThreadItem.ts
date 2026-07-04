@@ -12,6 +12,8 @@ import type { CollabAgentToolCallStatus } from "./CollabAgentToolCallStatus";
 import type { CommandAction } from "./CommandAction";
 import type { CommandExecutionSource } from "./CommandExecutionSource";
 import type { CommandExecutionStatus } from "./CommandExecutionStatus";
+import type { CoreToolActivityKind } from "./CoreToolActivityKind";
+import type { CoreToolActivityStatus } from "./CoreToolActivityStatus";
 import type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputContentItem";
 import type { DynamicToolCallStatus } from "./DynamicToolCallStatus";
 import type { FileUpdateChange } from "./FileUpdateChange";
@@ -62,6 +64,10 @@ durationMs: number | null, } | { "type": "fileChange", id: string, changes: Arra
 durationMs: number | null, } | { "type": "dynamicToolCall", id: string, namespace: string | null, tool: string, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null,
 /**
  * The duration of the dynamic tool call in milliseconds.
+ */
+durationMs: number | null, } | { "type": "coreToolActivity", id: string, toolName: string, kind: CoreToolActivityKind, detail: string, arguments: JsonValue, status: CoreToolActivityStatus, error: string | null,
+/**
+ * The duration of the core tool activity in milliseconds.
  */
 durationMs: number | null, } | { "type": "collabAgentToolCall",
 /**

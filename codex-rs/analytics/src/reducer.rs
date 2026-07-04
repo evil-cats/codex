@@ -383,6 +383,7 @@ impl TurnToolCounts {
             | ThreadItem::AgentMessage { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
+            | ThreadItem::CoreToolActivity { .. }
             | ThreadItem::ImageView { .. }
             | ThreadItem::Sleep { .. }
             | ThreadItem::EnteredReviewMode { .. }
@@ -1619,6 +1620,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::AgentMessage { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
+        | ThreadItem::CoreToolActivity { .. }
         | ThreadItem::SubAgentActivity { .. }
         | ThreadItem::ImageView { .. }
         | ThreadItem::Sleep { .. }

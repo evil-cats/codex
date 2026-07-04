@@ -286,6 +286,7 @@ impl ChatWidget {
                 self.on_patch_apply_begin(file_update_changes_to_display(changes));
             }
             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
+            item @ ThreadItem::CoreToolActivity { .. } => self.on_core_tool_activity_started(item),
             ThreadItem::WebSearch { id, .. } => {
                 self.on_web_search_begin(id);
             }

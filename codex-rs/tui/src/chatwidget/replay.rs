@@ -138,6 +138,13 @@ impl ChatWidget {
                 ..
             } => self.on_mcp_tool_call_started(item),
             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_completed(item),
+            item @ ThreadItem::CoreToolActivity {
+                status: codex_app_server_protocol::CoreToolActivityStatus::InProgress,
+                ..
+            } => self.on_core_tool_activity_started(item),
+            item @ ThreadItem::CoreToolActivity { .. } => {
+                self.on_core_tool_activity_completed(item);
+            }
             ThreadItem::WebSearch { id, query, action } => {
                 self.on_web_search_begin(id.clone());
                 self.on_web_search_end(

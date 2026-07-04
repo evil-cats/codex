@@ -418,6 +418,22 @@
       ],
       "type": "string"
     },
+    "CoreToolActivityKind": {
+      "enum": [
+        "file",
+        "threadInfo",
+        "systemTime"
+      ],
+      "type": "string"
+    },
+    "CoreToolActivityStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
     "DynamicToolCallOutputContentItem": {
       "oneOf": [
         {
@@ -1546,6 +1562,58 @@
             "type"
           ],
           "title": "DynamicToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "arguments": true,
+            "detail": {
+              "type": "string"
+            },
+            "durationMs": {
+              "description": "The duration of the core tool activity in milliseconds.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/definitions/CoreToolActivityKind"
+            },
+            "status": {
+              "$ref": "#/definitions/CoreToolActivityStatus"
+            },
+            "toolName": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "coreToolActivity"
+              ],
+              "title": "CoreToolActivityThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "arguments",
+            "detail",
+            "id",
+            "kind",
+            "status",
+            "toolName",
+            "type"
+          ],
+          "title": "CoreToolActivityThreadItem",
           "type": "object"
         },
         {

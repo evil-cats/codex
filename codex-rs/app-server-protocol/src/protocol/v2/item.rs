@@ -14,6 +14,8 @@ use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmen
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
 use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use codex_protocol::items::CoreToolActivityKind as CoreCoreToolActivityKind;
+use codex_protocol::items::CoreToolActivityStatus as CoreCoreToolActivityStatus;
 use codex_protocol::items::ImagePreviewSize;
 use codex_protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
 use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -316,6 +318,20 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    CoreToolActivity {
+        id: String,
+        tool_name: String,
+        kind: CoreToolActivityKind,
+        detail: String,
+        arguments: JsonValue,
+        status: CoreToolActivityStatus,
+        error: Option<String>,
+        /// The duration of the core tool activity in milliseconds.
+        #[ts(type = "number | null")]
+        duration_ms: Option<i64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     CollabAgentToolCall {
         /// Unique identifier for this collab tool call.
         id: String,
@@ -409,6 +425,7 @@ impl ThreadItem {
             | ThreadItem::FileChange { id, .. }
             | ThreadItem::McpToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }
+            | ThreadItem::CoreToolActivity { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::SubAgentActivity { id, .. }
             | ThreadItem::WebSearch { id, .. }
@@ -890,6 +907,22 @@ impl From<CoreTurnItem> for ThreadItem {
                     duration_ms,
                 }
             }
+            CoreTurnItem::CoreToolActivity(activity) => {
+                let duration_ms = activity
+                    .duration
+                    .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+
+                ThreadItem::CoreToolActivity {
+                    id: activity.id,
+                    tool_name: activity.tool_name,
+                    kind: CoreToolActivityKind::from(activity.kind),
+                    detail: activity.detail,
+                    arguments: activity.arguments,
+                    status: CoreToolActivityStatus::from(activity.status),
+                    error: activity.error,
+                    duration_ms,
+                }
+            }
             CoreTurnItem::ContextCompaction(compaction) => {
                 ThreadItem::ContextCompaction { id: compaction.id }
             }
@@ -1022,6 +1055,44 @@ pub enum McpToolCallStatus {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub enum DynamicToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl From<CoreCoreToolActivityKind> for CoreToolActivityKind {
+    fn from(value: CoreCoreToolActivityKind) -> Self {
+        match value {
+            CoreCoreToolActivityKind::File => Self::File,
+            CoreCoreToolActivityKind::ThreadInfo => Self::ThreadInfo,
+            CoreCoreToolActivityKind::SystemTime => Self::SystemTime,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum CoreToolActivityKind {
+    File,
+    ThreadInfo,
+    SystemTime,
+}
+
+impl From<CoreCoreToolActivityStatus> for CoreToolActivityStatus {
+    fn from(value: CoreCoreToolActivityStatus) -> Self {
+        match value {
+            CoreCoreToolActivityStatus::InProgress => Self::InProgress,
+            CoreCoreToolActivityStatus::Completed => Self::Completed,
+            CoreCoreToolActivityStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum CoreToolActivityStatus {
     InProgress,
     Completed,
     Failed,

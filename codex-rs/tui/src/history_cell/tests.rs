@@ -596,7 +596,8 @@ fn final_message_separator_includes_worked_label_after_one_minute() {
 fn ps_output_empty_snapshot() {
     let cell = new_unified_exec_processes_output(Vec::new());
     let rendered = render_lines(&cell.display_lines(/*width*/ 60)).join("\n");
-    insta::assert_snapshot!(rendered);
+    insta::assert_snapshot!(rendered, @"• Exploring
+  └ File docs/fork/core-read-file-tool.md:10-80");
 }
 
 #[tokio::test]
@@ -635,7 +636,8 @@ async fn session_info_availability_nux_tooltip_snapshot() {
     );
 
     let rendered = render_transcript(&cell).join("\n");
-    insta::assert_snapshot!(rendered);
+    insta::assert_snapshot!(rendered, @"• Exploring
+  └ File docs/fork/core-read-file-tool.md:10-80");
 }
 
 #[tokio::test]
@@ -1187,6 +1189,72 @@ fn active_mcp_tool_call_snapshot() {
     let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
 
     insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn active_core_tool_activity_read_file_snapshot() {
+    let cell = new_core_tool_activity_cell(
+        codex_app_server_protocol::ThreadItem::CoreToolActivity {
+            id: "call-read-file".to_string(),
+            tool_name: "read_file".to_string(),
+            kind: codex_app_server_protocol::CoreToolActivityKind::File,
+            detail: "docs/fork/core-read-file-tool.md:10-80".to_string(),
+            arguments: json!({
+                "path": "docs/fork/core-read-file-tool.md",
+                "start_line": 10,
+                "end_line": 80,
+            }),
+            status: codex_app_server_protocol::CoreToolActivityStatus::InProgress,
+            error: None,
+            duration_ms: None,
+        },
+        /*animations_enabled*/ false,
+    )
+    .expect("core tool activity cell");
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!(rendered, @"• Exploring
+  └ File docs/fork/core-read-file-tool.md:10-80");
+}
+
+#[test]
+fn completed_core_tool_activity_inspect_tools_snapshot() {
+    let cells = [
+        codex_app_server_protocol::ThreadItem::CoreToolActivity {
+            id: "call-thread-info".to_string(),
+            tool_name: "get_thread_info".to_string(),
+            kind: codex_app_server_protocol::CoreToolActivityKind::ThreadInfo,
+            detail: "current".to_string(),
+            arguments: json!({}),
+            status: codex_app_server_protocol::CoreToolActivityStatus::Completed,
+            error: None,
+            duration_ms: Some(1),
+        },
+        codex_app_server_protocol::ThreadItem::CoreToolActivity {
+            id: "call-system-time".to_string(),
+            tool_name: "get_system_time".to_string(),
+            kind: codex_app_server_protocol::CoreToolActivityKind::SystemTime,
+            detail: "+03:00".to_string(),
+            arguments: json!({"offset": "+03:00"}),
+            status: codex_app_server_protocol::CoreToolActivityStatus::Completed,
+            error: None,
+            duration_ms: Some(1),
+        },
+    ]
+    .into_iter()
+    .map(|item| {
+        let cell =
+            new_core_tool_activity_cell(item, /*animations_enabled*/ false).expect("activity");
+        render_lines(&cell.display_lines(/*width*/ 80)).join("\n")
+    })
+    .collect::<Vec<_>>()
+    .join("\n\n");
+
+    insta::assert_snapshot!(cells, @"• Inspected
+  └ Thread info current
+
+• Inspected
+  └ System time +03:00");
 }
 
 #[test]

@@ -367,7 +367,8 @@ impl ThreadHistoryBuilder {
                     ThreadItem::from(payload.item.clone()),
                 );
             }
-            codex_protocol::items::TurnItem::Sleep(_) => {
+            codex_protocol::items::TurnItem::Sleep(_)
+            | codex_protocol::items::TurnItem::CoreToolActivity(_) => {
                 self.upsert_item_in_turn_id(
                     &payload.turn_id,
                     ThreadItem::from(payload.item.clone()),
@@ -397,7 +398,8 @@ impl ThreadHistoryBuilder {
                     ThreadItem::from(payload.item.clone()),
                 );
             }
-            codex_protocol::items::TurnItem::Sleep(_) => {
+            codex_protocol::items::TurnItem::Sleep(_)
+            | codex_protocol::items::TurnItem::CoreToolActivity(_) => {
                 self.upsert_item_in_turn_id(
                     &payload.turn_id,
                     ThreadItem::from(payload.item.clone()),
@@ -1244,8 +1246,13 @@ impl From<&PendingTurn> for Turn {
 mod tests {
     use super::*;
     use crate::protocol::v2::CommandExecutionSource;
+    use crate::protocol::v2::CoreToolActivityKind;
+    use crate::protocol::v2::CoreToolActivityStatus;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+    use codex_protocol::items::CoreToolActivityItem as CoreCoreToolActivityItem;
+    use codex_protocol::items::CoreToolActivityKind as CoreCoreToolActivityKind;
+    use codex_protocol::items::CoreToolActivityStatus as CoreCoreToolActivityStatus;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
     use codex_protocol::items::SleepItem as CoreSleepItem;
     use codex_protocol::items::TurnItem as CoreTurnItem;
@@ -1536,6 +1543,93 @@ mod tests {
             vec![ThreadItem::Sleep {
                 id: "sleep-1".to_string(),
                 duration_ms: 1_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn rebuilds_core_tool_activity_from_item_lifecycle_events() {
+        let turn_id = "turn-1";
+        let thread_id = ThreadId::new();
+        let started_item = CoreTurnItem::CoreToolActivity(CoreCoreToolActivityItem {
+            id: "call-read-file".to_string(),
+            tool_name: "read_file".to_string(),
+            kind: CoreCoreToolActivityKind::File,
+            detail: "docs/fork/core-read-file-tool.md:10-80".to_string(),
+            arguments: serde_json::json!({
+                "path": "docs/fork/core-read-file-tool.md",
+                "start_line": 10,
+                "end_line": 80,
+            }),
+            status: CoreCoreToolActivityStatus::InProgress,
+            error: None,
+            duration: None,
+        });
+        let completed_item = CoreTurnItem::CoreToolActivity(CoreCoreToolActivityItem {
+            id: "call-read-file".to_string(),
+            tool_name: "read_file".to_string(),
+            kind: CoreCoreToolActivityKind::File,
+            detail: "docs/fork/core-read-file-tool.md:10-80".to_string(),
+            arguments: serde_json::json!({
+                "path": "docs/fork/core-read-file-tool.md",
+                "start_line": 10,
+                "end_line": 80,
+            }),
+            status: CoreCoreToolActivityStatus::Completed,
+            error: None,
+            duration: Some(Duration::from_millis(42)),
+        });
+        let events = vec![
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: turn_id.to_string(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemStarted(ItemStartedEvent {
+                thread_id,
+                turn_id: turn_id.to_string(),
+                item: started_item,
+                started_at_ms: 0,
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: turn_id.to_string(),
+                item: completed_item,
+                completed_at_ms: 42,
+            }),
+            EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: turn_id.to_string(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        ];
+
+        let items = events
+            .into_iter()
+            .map(RolloutItem::EventMsg)
+            .collect::<Vec<_>>();
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CoreToolActivity {
+                id: "call-read-file".to_string(),
+                tool_name: "read_file".to_string(),
+                kind: CoreToolActivityKind::File,
+                detail: "docs/fork/core-read-file-tool.md:10-80".to_string(),
+                arguments: serde_json::json!({
+                    "path": "docs/fork/core-read-file-tool.md",
+                    "start_line": 10,
+                    "end_line": 80,
+                }),
+                status: CoreToolActivityStatus::Completed,
+                error: None,
+                duration_ms: Some(42),
             }]
         );
     }

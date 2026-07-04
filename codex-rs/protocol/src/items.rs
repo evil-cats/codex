@@ -30,6 +30,7 @@ use quick_xml::se::to_string as to_xml_string;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -51,6 +52,7 @@ pub enum TurnItem {
     ImageGeneration(ImageGenerationItem),
     FileChange(FileChangeItem),
     McpToolCall(McpToolCallItem),
+    CoreToolActivity(CoreToolActivityItem),
     ContextCompaction(ContextCompactionItem),
 }
 
@@ -221,6 +223,42 @@ pub struct McpToolCallItem {
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
 pub enum McpToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct CoreToolActivityItem {
+    pub id: String,
+    pub tool_name: String,
+    pub kind: CoreToolActivityKind,
+    pub detail: String,
+    pub arguments: JsonValue,
+    pub status: CoreToolActivityStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "string", optional)]
+    pub duration: Option<Duration>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CoreToolActivityKind {
+    File,
+    ThreadInfo,
+    SystemTime,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum CoreToolActivityStatus {
     InProgress,
     Completed,
     Failed,
@@ -600,6 +638,7 @@ impl TurnItem {
             TurnItem::ImageGeneration(item) => item.id.clone(),
             TurnItem::FileChange(item) => item.id.clone(),
             TurnItem::McpToolCall(item) => item.id.clone(),
+            TurnItem::CoreToolActivity(item) => item.id.clone(),
             TurnItem::ContextCompaction(item) => item.id.clone(),
         }
     }
@@ -625,6 +664,7 @@ impl TurnItem {
                 .into_iter()
                 .collect(),
             TurnItem::McpToolCall(item) => item.as_legacy_end_event().into_iter().collect(),
+            TurnItem::CoreToolActivity(_) => Vec::new(),
             TurnItem::Reasoning(item) => item.as_legacy_events(show_raw_agent_reasoning),
             TurnItem::ContextCompaction(item) => vec![item.as_legacy_event()],
         }

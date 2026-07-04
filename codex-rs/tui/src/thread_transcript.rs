@@ -9,6 +9,7 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::ReasoningSummaryCell;
 use crate::history_cell::UserHistoryCell;
+use crate::history_cell::new_core_tool_activity_cell;
 use crate::multi_agents::sub_agent_activity_summary;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadItem;
@@ -105,6 +106,13 @@ pub(crate) fn thread_to_transcript_cells(
                     )));
                 }
             }
+            item @ ThreadItem::CoreToolActivity { .. } => {
+                if let Some(cell) =
+                    new_core_tool_activity_cell(item.clone(), /*animations_enabled*/ false)
+                {
+                    cells.push(Arc::new(cell));
+                }
+            }
             other => {
                 if let Some(cell) = fallback_transcript_cell(other) {
                     cells.push(Arc::new(cell));
@@ -179,6 +187,28 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .dim()
                 .into(),
         ],
+        ThreadItem::CoreToolActivity {
+            kind,
+            detail,
+            status,
+            ..
+        } => {
+            let action = match kind {
+                codex_app_server_protocol::CoreToolActivityKind::File => "File",
+                codex_app_server_protocol::CoreToolActivityKind::ThreadInfo => "Thread info",
+                codex_app_server_protocol::CoreToolActivityKind::SystemTime => "System time",
+            };
+            let suffix = if detail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" {detail}")
+            };
+            vec![
+                format!("core tool: {action}{suffix} · {status:?}")
+                    .dim()
+                    .into(),
+            ]
+        }
         ThreadItem::DynamicToolCall {
             namespace,
             tool,

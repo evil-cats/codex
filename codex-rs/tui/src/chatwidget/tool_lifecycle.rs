@@ -105,6 +105,22 @@ impl ChatWidget {
         );
     }
 
+    pub(super) fn on_core_tool_activity_started(&mut self, item: ThreadItem) {
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_started(item),
+            |s| s.handle_core_tool_activity_started_now(item2),
+        );
+    }
+
+    pub(super) fn on_core_tool_activity_completed(&mut self, item: ThreadItem) {
+        let item2 = item.clone();
+        self.defer_or_handle(
+            |q| q.push_item_completed(item),
+            |s| s.handle_core_tool_activity_completed_now(item2),
+        );
+    }
+
     pub(super) fn on_web_search_begin(&mut self, call_id: String) {
         self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
@@ -292,6 +308,50 @@ impl ChatWidget {
         self.transcript.had_work_activity = true;
     }
 
+    pub(crate) fn handle_core_tool_activity_started_now(&mut self, item: ThreadItem) {
+        self.record_visible_turn_activity();
+        self.flush_answer_stream_with_separator();
+        self.flush_active_cell();
+        if let Some(cell) = history_cell::new_core_tool_activity_cell(item, self.config.animations)
+        {
+            self.transcript.active_cell = Some(Box::new(cell));
+            self.bump_active_cell_revision();
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn handle_core_tool_activity_completed_now(&mut self, item: ThreadItem) {
+        self.flush_answer_stream_with_separator();
+        let ThreadItem::CoreToolActivity {
+            id, status, error, ..
+        } = &item
+        else {
+            return;
+        };
+
+        let mut handled = false;
+        if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::CoreToolActivityCell>()
+        }) && cell.call_id() == id
+        {
+            cell.complete(*status, error.clone());
+            self.bump_active_cell_revision();
+            self.flush_active_cell();
+            handled = true;
+        }
+
+        if !handled {
+            self.flush_active_cell();
+            if let Some(cell) =
+                history_cell::new_core_tool_activity_cell(item, self.config.animations)
+            {
+                self.add_to_history(cell);
+            }
+        }
+        self.transcript.had_work_activity = true;
+    }
+
     pub(crate) fn handle_queued_item_started_now(&mut self, item: ThreadItem) {
         match item {
             item @ ThreadItem::CommandExecution { .. } => {
@@ -299,6 +359,9 @@ impl ChatWidget {
             }
             item @ ThreadItem::McpToolCall { .. } => {
                 self.handle_mcp_tool_call_started_now(item);
+            }
+            item @ ThreadItem::CoreToolActivity { .. } => {
+                self.handle_core_tool_activity_started_now(item);
             }
             _ => {}
         }
@@ -311,6 +374,9 @@ impl ChatWidget {
             }
             item @ ThreadItem::FileChange { .. } => self.handle_file_change_completed_now(item),
             item @ ThreadItem::McpToolCall { .. } => self.handle_mcp_tool_call_completed_now(item),
+            item @ ThreadItem::CoreToolActivity { .. } => {
+                self.handle_core_tool_activity_completed_now(item);
+            }
             _ => {}
         }
     }
