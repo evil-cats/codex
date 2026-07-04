@@ -5,6 +5,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,6 +55,7 @@ REQUIRED_FILES = (
     "assets/templates/migration-card.md",
     "assets/templates/parent-subagent-prompt.md",
     "scripts/fork",
+    "scripts/fork_cli_tests.py",
 )
 
 SKILL_MARKDOWN = (
@@ -526,6 +528,49 @@ CARD_TESTS = (
         "--manifest-path",
         "codex-rs/tui/Cargo.toml",
     ),
+    card_test(
+        "fork-tui-core-tool-activity",
+        "tui snapshots",
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "core_tool_activity",
+    ),
+    card_test(
+        "fork-tui-core-tool-activity",
+        "thread history replay",
+        "just",
+        "test",
+        "-p",
+        "codex-app-server-protocol",
+        "core_tool_activity",
+    ),
+    card_test(
+        "fork-tui-core-tool-activity",
+        "protocol item model",
+        "just",
+        "test",
+        "-p",
+        "codex-protocol",
+    ),
+    card_test(
+        "fork-tui-core-tool-activity",
+        "analytics reducer",
+        "just",
+        "test",
+        "-p",
+        "codex-analytics",
+    ),
+    card_test(
+        "fork-tui-core-tool-activity",
+        "pending snapshots",
+        "cargo",
+        "insta",
+        "pending-snapshots",
+        "--manifest-path",
+        "codex-rs/tui/Cargo.toml",
+    ),
 )
 
 
@@ -547,6 +592,25 @@ def command_env() -> dict[str, str]:
     if home:
         env["PATH"] = f"{home}/.cargo/bin:{home}/.local/bin:{env.get('PATH', '')}"
     return env
+
+
+def default_install_target(env: Mapping[str, str] | None = None) -> Path:
+    source_env = os.environ if env is None else env
+    home = source_env.get("HOME")
+    if not home:
+        raise ValueError("HOME must be set to resolve the default install target")
+    return Path(home) / ".local/bin/codex-hermione"
+
+
+def resolve_path_arg(value: str, repo_root: Path) -> Path:
+    expanded = Path(os.path.expanduser(os.path.expandvars(value)))
+    if expanded.is_absolute():
+        return expanded
+    return repo_root / expanded
+
+
+def install_temp_path(target: Path) -> Path:
+    return target.with_name(f"{target.name}.new")
 
 
 def timestamp() -> str:
@@ -1439,6 +1503,14 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     if result != 0:
         return result
 
+    if scope in ("skill", "all"):
+        result = session.run_step(
+            "fork cli unit tests",
+            [sys.executable, str(SKILL_ROOT / "scripts/fork_cli_tests.py")],
+        )
+        if result != 0:
+            return result
+
     coverage_args = argparse.Namespace(path=None, strict=args.strict_coverage)
     coverage_result = cmd_check_source_coverage(coverage_args)
     if coverage_result != 0:
@@ -1593,6 +1665,87 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
     return session.ok([f"BINARY: {binary_path}"])
 
 
+def cmd_install(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
+    session = LogSession(repo_root=repo_root, log_kind="install", mode="install")
+
+    source_path = (
+        resolve_path_arg(args.source, repo_root)
+        if args.source
+        else repo_root / "codex-rs/target/release-fast/codex"
+    )
+    try:
+        target_path = (
+            resolve_path_arg(args.target, repo_root) if args.target else default_install_target()
+        )
+    except ValueError as exc:
+        session.write(f"{exc}\n")
+        return session.fail(label="resolve install target")
+
+    temp_path = install_temp_path(target_path)
+    session.write(f"source: {source_path}\n")
+    session.write(f"target: {target_path}\n")
+    session.write(f"temporary: {temp_path}\n")
+
+    file_cmd = session.check_command("file")
+    if not file_cmd:
+        return session.fail(label="require command: file")
+
+    if not source_path.is_file():
+        session.write(f"source binary not found: {source_path}\n")
+        return session.fail(label="source binary exists")
+    if not os.access(source_path, os.X_OK):
+        session.write(f"source binary is not executable: {source_path}\n")
+        return session.fail(label="source binary executable")
+
+    if source_path.resolve() == target_path.resolve(strict=False):
+        session.write("source and target resolve to the same path\n")
+        return session.fail(label="source target distinct")
+    if source_path.resolve() == temp_path.resolve(strict=False):
+        session.write("source and temporary path resolve to the same path\n")
+        return session.fail(label="source temporary distinct")
+
+    for label, argv in (
+        ("source binary metadata", [file_cmd, str(source_path)]),
+        ("source binary version", [str(source_path), "--version"]),
+    ):
+        result = session.run_step(label, argv)
+        if result != 0:
+            return result
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, temp_path)
+        temp_path.chmod(0o755)
+    except OSError as exc:
+        session.write(f"failed to copy temporary binary: {exc}\n")
+        return session.fail(label="copy temporary binary")
+
+    for label, argv in (
+        ("temporary binary metadata", [file_cmd, str(temp_path)]),
+        ("temporary binary version", [str(temp_path), "--version"]),
+    ):
+        result = session.run_step(label, argv)
+        if result != 0:
+            return result
+
+    try:
+        os.replace(temp_path, target_path)
+    except OSError as exc:
+        session.write(f"failed to replace installed binary: {exc}\n")
+        return session.fail(label="replace installed binary")
+
+    for label, argv in (
+        ("installed binary metadata", [file_cmd, str(target_path)]),
+        ("installed binary version", [str(target_path), "--version"]),
+    ):
+        result = session.run_step(label, argv)
+        if result != 0:
+            return result
+
+    return session.ok([f"SOURCE: {source_path}", f"TARGET: {target_path}"])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fork",
@@ -1668,6 +1821,18 @@ def build_parser() -> argparse.ArgumentParser:
     build_fast.add_argument("--version")
     build_fast.add_argument("--skip-branch-check", action="store_true")
     build_fast.set_defaults(func=cmd_build_fast)
+
+    install = sub.add_parser("install")
+    install.add_argument("--repo-root")
+    install.add_argument(
+        "--source",
+        help="Binary to install. Defaults to codex-rs/target/release-fast/codex.",
+    )
+    install.add_argument(
+        "--target",
+        help="Install target. Defaults to ${HOME}/.local/bin/codex-hermione.",
+    )
+    install.set_defaults(func=cmd_install)
 
     return parser
 

@@ -13,6 +13,40 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(fork_cli)
 
 
+class InstallPathTests(unittest.TestCase):
+    def test_default_install_target_uses_home_local_bin(self) -> None:
+        self.assertEqual(
+            fork_cli.default_install_target({"HOME": "/home/slader"}),
+            Path("/home/slader/.local/bin/codex-hermione"),
+        )
+
+    def test_default_install_target_requires_home(self) -> None:
+        with self.assertRaisesRegex(ValueError, "HOME must be set"):
+            fork_cli.default_install_target({})
+
+    def test_install_temp_path_appends_new_suffix(self) -> None:
+        self.assertEqual(
+            fork_cli.install_temp_path(Path("/home/slader/.local/bin/codex-hermione")),
+            Path("/home/slader/.local/bin/codex-hermione.new"),
+        )
+
+    def test_install_parser_accepts_source_and_target(self) -> None:
+        parser = fork_cli.build_parser()
+        args = parser.parse_args(
+            [
+                "install",
+                "--source",
+                "codex-rs/target/release-fast/codex",
+                "--target",
+                "/tmp/codex-hermione",
+            ]
+        )
+
+        self.assertEqual(args.command, "install")
+        self.assertEqual(args.source, "codex-rs/target/release-fast/codex")
+        self.assertEqual(args.target, "/tmp/codex-hermione")
+
+
 class CardTestFilterTests(unittest.TestCase):
     def make_repo(self) -> Path:
         temp_dir = tempfile.TemporaryDirectory()

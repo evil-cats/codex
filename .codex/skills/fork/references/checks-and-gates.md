@@ -24,6 +24,7 @@ commands.
 .codex/skills/fork/scripts/fork tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z
 .codex/skills/fork/scripts/fork tests --mode full --version X.Y.Z
 .codex/skills/fork/scripts/fork build-fast --version X.Y.Z
+.codex/skills/fork/scripts/fork install
 .codex/skills/fork/scripts/fork cards list
 .codex/skills/fork/scripts/fork cards validate
 .codex/skills/fork/scripts/fork render-subagent-prompt
@@ -32,6 +33,12 @@ commands.
 
 `--version` можно опустить, если команда однозначно выводит версию из текущей
 ветки `hermione-X.Y.Z` или единственной `docs/fork/migration-X.Y.Z.md`.
+
+`fork install` по умолчанию устанавливает
+`codex-rs/target/release-fast/codex` в
+`${HOME}/.local/bin/codex-hermione`. Если нужно явно переопределить источник
+или цель, используй `--source PATH` и `--target PATH`; это остается
+skill-owned установкой, а не ручным копированием бинарника.
 
 `fork tests --mode list` и `fork tests --mode cards` принимают повторяемый
 `--card`. Значение может быть `id` карточки, путь `docs/fork/*.md`, имя файла
@@ -59,6 +66,7 @@ command является workflow-командой; `just`/`cargo` argv внут
 | Тесты карточки | `fork tests --mode cards --card CARD` | argv живут в `CARD_TESTS` |
 | Полный регрессионный проход | `fork tests --mode full` | Полный набор тестов и pending snapshots |
 | Быстрая release-сборка | `fork build-fast` | Fast build и проверка бинарника |
+| Установка fork-бинарника | `fork install` | Атомарная установка release-fast бинарника |
 
 Если `AGENTS.md` требует шаг, которого нет в этой таблице или другом
 skill-owned command, это пробел workflow. Сначала обнови skill-owned command или
@@ -84,6 +92,7 @@ Rust workflow:
 | `fork check-source-coverage` | Structural coverage gate переноса skill workflow |
 | `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
 | `fork build-fast` | Fork build gate с проверкой бинарника и версии |
+| `fork install` | Атомарная установка fork-бинарника в `${HOME}/.local/bin/codex-hermione` |
 
 ## Skill-owned scripts и логи
 
@@ -238,10 +247,11 @@ snapshot/schema/generator, условие пропуска проверки ли
 меняются из-за новой fork-карточки:
 
 - `fork format`;
-- `fork build-fast`.
+- `fork build-fast`;
+- `fork install`.
 
-Их меняют только при изменении самой цепочки миграции, формата логов, build
-artifact или правил запуска сборки.
+Их меняют только при изменении самой цепочки миграции, формата логов, артефакта
+сборки или правил запуска сборки и установки.
 
 ## Bootstrap status
 
@@ -260,8 +270,10 @@ artifact или правил запуска сборки.
 - `tests --mode cards --version X.Y.Z`;
 - `tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z`;
 - `tests --mode full --version X.Y.Z`;
-- `build-fast --version X.Y.Z`.
+- `build-fast --version X.Y.Z`;
+- `install`.
 
 Heavy gates (`generators`, `tests --mode cards`, `tests --mode full`,
-`build-fast`) запускай только когда они нужны текущему этапу. Режим
+`build-fast`) запускай только когда они нужны текущему этапу. `fork install`
+запускай только после явного решения установить собранный бинарник. Режим
 `tests --mode list` печатает исполняемую карту проверок без запуска тестов.

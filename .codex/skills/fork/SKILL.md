@@ -3,8 +3,8 @@ name: fork
 description: >-
   Локальный project skill для обслуживания Codex Hermione fork: fork-доработки,
   карточки `docs/fork/`, миграция на новую upstream-версию, работа
-  parent/subagent по одной карточке, prompt templates и skill-owned
-  checks/build/test scripts. Используй, когда задача касается fork workflow,
+  parent/subagent по одной карточке, prompt templates и skill-owned скрипты
+  проверок, сборки, тестов и установки. Используй, когда задача касается fork workflow,
   `docs/fork/*.md`, migration table, subagent one-card flow, fork gates, fast
   build, генераторов, retired legacy fork workflow или cleanup после переноса в
   skill-owned workflow.
@@ -13,8 +13,8 @@ description: >-
 # Fork
 
 Этот skill является активным владельцем fork workflow для локальной разработки,
-сборки, тестирования, миграции fork-доработок, карточек `docs/fork/*.md`,
-parent/subagent flow и skill-owned scripts.
+сборки, установки, тестирования, миграции fork-доработок, карточек
+`docs/fork/*.md`, parent/subagent flow и skill-owned scripts.
 
 Switch выполнен после structural coverage gate, независимого semantic audit без
 блокирующих P0/P1 findings и явного подтверждения пользователя.
