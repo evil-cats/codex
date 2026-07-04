@@ -1,5 +1,6 @@
 import importlib.util
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -83,6 +84,152 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertIsNotNone(error)
         assert error is not None
         self.assertIn("card(s) have no CARD_TESTS entries: fork-planned-only", error)
+
+
+class CardValidationTests(unittest.TestCase):
+    def write_card(
+        self,
+        *,
+        transfer_body: str = "1. Проверь owner-файлы и перенеси контракт.",
+        historical_results: str = (
+            "| `just test -p codex-core read_file` | `passed` | "
+            "Исторический запуск |"
+        ),
+        owner_detail: str = "`fork tests` владеет запуском; внутренние argv не являются runbook.",
+    ) -> Path:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        path = Path(temp_dir.name) / "core-read-file-tool.md"
+        template = textwrap.dedent(
+            """\
+                ---
+                id: fork-core-read-file-tool
+                status: active
+                ---
+                # Read file
+
+                ## Обзор
+
+                Активная карточка.
+
+                ## Зачем это нужно
+
+                Проверяет контракт.
+
+                ## Карта файлов
+
+                | Файл | Роль |
+                | --- | --- |
+                | `codex-rs/core/src/tools/handlers/read_file.rs` | Runtime-контракт |
+
+                ## Итоговый контракт
+
+                Контракт сохраняется.
+
+                ## Порядок повторения при переносе
+
+                {{transfer_body}}
+
+                ## Проверки
+
+                ### Смысловое покрытие
+
+                | Контракт | Обязательность | Где покрывается |
+                | --- | --- | --- |
+                | Runtime-контракт | `required` | `read_file` |
+
+                ### Владелец исполняемой карты
+
+                {{owner_detail}}
+
+                ### Дополнительные gates
+
+                `not-applicable`: дополнительных gates нет.
+
+                ### Исторические результаты
+
+                | Проверка | Результат | Примечание |
+                | --- | --- | --- |
+                {{historical_results}}
+
+                ### Известные падения и пропуски
+
+                Нет.
+
+                ## Риски и ограничения
+
+                Нет.
+
+                ## Проверка покрытия
+
+                | Смысловой пункт | Статус | Где покрыто |
+                | --- | --- | --- |
+                | Контракт | `перенесено в карточку` | `Итоговый контракт` |
+                """
+        )
+        path.write_text(
+            template.replace("{{transfer_body}}", transfer_body)
+            .replace("{{owner_detail}}", owner_detail)
+            .replace("{{historical_results}}", historical_results),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_allows_historical_command_results(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(self.write_card())
+
+        self.assertEqual(errors, [])
+
+    def test_rejects_command_runbook_in_transfer_section(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                transfer_body="1. Запусти `just test -p codex-core read_file`."
+            )
+        )
+
+        self.assertTrue(
+            any(
+                "runbook command leakage in `Порядок повторения при переносе`"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_rejects_command_block_in_transfer_section(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                transfer_body="```bash\njust test -p codex-core read_file\n```"
+            )
+        )
+
+        self.assertTrue(
+            any(
+                "runbook command block in `Порядок повторения при переносе`"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_rejects_internal_fork_argv_in_checks_owner(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                owner_detail=(
+                    "`fork tests` владеет запуском через "
+                    "`fork tests --mode cards --card fork-core-read-file-tool`."
+                )
+            )
+        )
+
+        self.assertTrue(
+            any(
+                "runbook command leakage in `Проверки`" in error
+                and "Исторические результаты" in error
+                for error in errors
+            ),
+            errors,
+        )
 
 
 if __name__ == "__main__":

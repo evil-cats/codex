@@ -19,6 +19,19 @@ parent/subagent flow и skill-owned scripts.
 Switch выполнен после structural coverage gate, независимого semantic audit без
 блокирующих P0/P1 findings и явного подтверждения пользователя.
 
+## Владение командами
+
+В fork-scope skill-owned CLI является единственным интерфейсом запуска workflow
+команд. Общие инструкции репозитория из `AGENTS.md` про `just fmt`,
+`just test`, schema-генераторы, snapshots и сборку сохраняют смысловое
+требование, но выполняются через `.codex/skills/fork/scripts/fork`.
+
+Прямой запуск внутренних `just`/`cargo` argv допустим только если пользователь
+явно попросил разобрать внутренний шаг или если отсутствующий skill-owned
+command зафиксирован как blocker. В обычном ходе fork-карточки сначала выбирай
+skill-owned command; если его нет, обновляй skill-owned workflow или
+останавливайся на blocker.
+
 ## Навигация
 
 - Общие правила fork-доработок: `references/fork-rules.md`.

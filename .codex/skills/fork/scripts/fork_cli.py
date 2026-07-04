@@ -70,6 +70,25 @@ SKILL_MARKDOWN = (
     "assets/templates/parent-subagent-prompt.md",
 )
 
+TRANSFER_SECTION_ALIASES = (
+    "Порядок повторения при переносе",
+    "Пошаговое воспроизведение",
+    "Пошаговое воспроизведение доработки",
+    "Порядок реализации",
+)
+
+CHECKS_SECTION_ALIASES = (
+    "Проверки",
+    "Проверки для будущего переноса",
+    "Исторические проверки",
+    "Регрессионное покрытие",
+    "Регрессионное покрытие в diff",
+)
+
+NORMATIVE_COMMAND_SECTION_GROUPS = (
+    ("Порядок повторения при переносе", TRANSFER_SECTION_ALIASES),
+)
+
 CARD_REQUIRED_SECTION_GROUPS = (
     ("Обзор", ("Обзор",)),
     ("Зачем это нужно", ("Зачем это нужно",)),
@@ -84,22 +103,11 @@ CARD_REQUIRED_SECTION_GROUPS = (
     ),
     (
         "Порядок повторения при переносе",
-        (
-            "Порядок повторения при переносе",
-            "Пошаговое воспроизведение",
-            "Пошаговое воспроизведение доработки",
-            "Порядок реализации",
-        ),
+        TRANSFER_SECTION_ALIASES,
     ),
     (
         "Проверки",
-        (
-            "Проверки",
-            "Проверки для будущего переноса",
-            "Исторические проверки",
-            "Регрессионное покрытие",
-            "Регрессионное покрытие в diff",
-        ),
+        CHECKS_SECTION_ALIASES,
     ),
     (
         "Риски и ограничения",
@@ -130,7 +138,7 @@ STRICT_CHECK_SUBSECTIONS = (
 )
 
 COMMAND_RUNBOOK_RE = re.compile(
-    r"(?:^|\s)(?:just\s+\S+|cargo\s+\S+|"
+    r"(?:^|\s)`?(?:just\s+\S+|cargo\s+\S+|"
     r"\.codex/skills/fork/scripts/fork\s+\S+|fork\s+\S+\s+--\S+)"
 )
 
@@ -961,6 +969,23 @@ def section_text(text: str, heading: str, level: int = 2) -> str:
     return text[start:end]
 
 
+def section_text_for_aliases(
+    text: str, aliases: tuple[str, ...], level: int = 2
+) -> tuple[str, str]:
+    marker = "#" * level
+    pattern = re.compile(rf"^{re.escape(marker)}\s+(.+?)\s*$", re.MULTILINE)
+    for match in pattern.finditer(text):
+        heading = match.group(1).strip()
+        if not has_heading([heading], aliases):
+            continue
+
+        start = match.end()
+        next_match = re.search(rf"^{re.escape(marker)}\s+", text[start:], re.MULTILINE)
+        end = start + next_match.start() if next_match else len(text)
+        return heading, text[start:end]
+    return "", ""
+
+
 def subsection_text(section: str, heading: str) -> str:
     return section_text(section, heading, level=3)
 
@@ -978,6 +1003,19 @@ def remove_subsection(section: str, heading: str) -> str:
     next_match = re.search(rf"^{re.escape(marker)}\s+", section[match.end() :], re.MULTILINE)
     end = match.end() + next_match.start() if next_match else len(section)
     return section[: match.start()] + section[end:]
+
+
+def command_runbook_errors(section_name: str, section: str) -> list[str]:
+    errors = []
+    if re.search(r"^```(?:bash|sh)\s*$", section, re.MULTILINE):
+        errors.append(f"runbook command block in `{section_name}`")
+    for line_number, line in enumerate(section.splitlines(), start=1):
+        if COMMAND_RUNBOOK_RE.search(line):
+            errors.append(
+                f"runbook command leakage in `{section_name}` at section line "
+                f"{line_number}: {line.strip()}"
+            )
+    return errors
 
 
 def card_test_ids() -> set[str]:
@@ -1223,7 +1261,7 @@ def strict_card_validation_errors(path: Path) -> list[str]:
     if not card_id:
         errors.append("active card missing frontmatter id")
 
-    checks = section_text(text, "Проверки")
+    checks_heading, checks = section_text_for_aliases(text, CHECKS_SECTION_ALIASES)
     if not checks:
         errors.append("active card missing strict `Проверки` section")
         return errors
@@ -1247,14 +1285,15 @@ def strict_card_validation_errors(path: Path) -> list[str]:
         )
 
     normative_checks = remove_subsection(checks, "Исторические результаты")
-    if re.search(r"^```(?:bash|sh)\s*$", normative_checks, re.MULTILINE):
-        errors.append("runbook command block in `Проверки` outside `Исторические результаты`")
-    for line_number, line in enumerate(normative_checks.splitlines(), start=1):
-        if COMMAND_RUNBOOK_RE.search(line):
-            errors.append(
-                "runbook command leakage in `Проверки` outside "
-                f"`Исторические результаты` at section line {line_number}: {line.strip()}"
-            )
+    for error in command_runbook_errors(checks_heading, normative_checks):
+        errors.append(f"{error} outside `Исторические результаты`")
+
+    for group_name, aliases in NORMATIVE_COMMAND_SECTION_GROUPS:
+        heading, section = section_text_for_aliases(text, aliases)
+        if not section:
+            continue
+        for error in command_runbook_errors(heading or group_name, section):
+            errors.append(error)
     return errors
 
 

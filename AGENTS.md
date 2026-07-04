@@ -10,6 +10,15 @@ Skill `fork` является владельцем правил обслужив
 миграции, проверок покрытия, локальной разработки, сборки и skill-owned scripts.
 Не дублируй эти правила в `AGENTS.md`.
 
+Для задач в fork-scope общие Rust/App-server/TUI инструкции ниже остаются
+требованиями к качеству и покрытию, но не задают прямые команды запуска.
+Форматирование, генераторы, тесты, snapshot-проверки и сборка выполняются через
+skill-owned команды `.codex/skills/fork/scripts/fork`.
+
+Если нужный шаг из общих разделов еще не покрыт skill-owned command, сначала
+обнови skill-owned workflow или зафиксируй blocker. Не обходи fork workflow
+прямым запуском внутренних `just`/`cargo` команд.
+
 ## Rust code
 
 In the codex-rs folder where the rust code lives:

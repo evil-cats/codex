@@ -9,13 +9,14 @@ Skill-owned scripts являются активным интерфейсом for
 scripts удалены после switch и не являются runtime dependency skill-owned
 commands.
 
-## Skill commands
+## Skill-owned команды
 
 Интерфейс:
 
 ```bash
 .codex/skills/fork/scripts/fork preflight --version X.Y.Z
 .codex/skills/fork/scripts/fork format --check
+.codex/skills/fork/scripts/fork format --fix
 .codex/skills/fork/scripts/fork generators
 .codex/skills/fork/scripts/fork tests --mode list
 .codex/skills/fork/scripts/fork tests --mode list --card CARD_ID_OR_PATH
@@ -36,7 +37,53 @@ commands.
 `--card`. Значение может быть `id` карточки, путь `docs/fork/*.md`, имя файла
 или `id` без префикса `fork-`. Фильтр запускает или печатает только строки
 `CARD_TESTS`, относящиеся к выбранной карточке. `--mode full` не принимает
-`--card`, потому что полный проход не является card-level runner.
+`--card`, потому что полный проход не является card-level запуском.
+
+## Модель владения командами
+
+В fork-scope различай внешнюю workflow-команду и внутренний argv. Skill-owned
+command является workflow-командой; `just`/`cargo` argv внутри него является
+деталью реализации, подтверждением для аудита или отладочной подсказкой, но не
+пользовательским runbook.
+
+### Обертки над требованиями `AGENTS.md`
+
+Эти команды выполняют обычные требования уровня репозитория из `AGENTS.md`, но
+через fork-owned интерфейс, логи и предусловия:
+
+| Требование | Команда | Примечание |
+| --- | --- | --- |
+| Форматирование после правок | `fork format --fix` | Запускает repo format recipe |
+| Проверка форматирования | `fork format --check` | Финальный check без правок |
+| Артефакты config/app-server schema | `fork generators` | Обновляет schema artifacts |
+| Тесты карточки | `fork tests --mode cards --card CARD` | argv живут в `CARD_TESTS` |
+| Полный регрессионный проход | `fork tests --mode full` | Полный набор тестов и pending snapshots |
+| Быстрая release-сборка | `fork build-fast` | Fast build и проверка бинарника |
+
+Если `AGENTS.md` требует шаг, которого нет в этой таблице или другом
+skill-owned command, это пробел workflow. Сначала обнови skill-owned command или
+зафиксируй blocker; не выполняй внутренний `just`/`cargo` argv напрямую.
+
+Просмотр и принятие snapshot также должны иметь skill-owned владельца. Если
+текущий workflow покрывает только проверку pending snapshots, а для задачи нужен
+просмотр или принятие snapshot, добавь skill-owned command или зафиксируй
+blocker вместо прямого запуска `cargo insta ...` как fork gate.
+
+### Fork-specific gates
+
+Эти команды не являются заменой одного `just` recipe и не сводятся к общему
+Rust workflow:
+
+| Skill-owned command | Назначение |
+| --- | --- |
+| `fork cards list` | Навигация по fork-карточкам |
+| `fork cards validate` | Строгая связь active cards, `CARD_TESTS` и формы `Проверки` |
+| `fork tests --mode list` | Печать исполняемой карты без запуска внутренних argv |
+| `fork tests --mode cards` | Card-level запуск с предусловиями и логами |
+| `fork preflight` | Составной gate для skill/files/cards/untracked/conflicts/markdown |
+| `fork check-source-coverage` | Structural coverage gate переноса skill workflow |
+| `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
+| `fork build-fast` | Fork build gate с проверкой бинарника и версии |
 
 ## Skill-owned scripts и логи
 
@@ -54,8 +101,10 @@ skill-owned совместимый log directory. При ошибке на эк�
 открой указанный `LOG`, найди настоящую причину, исправь ее и повтори ту же
 skill-owned команду.
 
-Не обходи skill-owned команду ручным запуском ее внутренних команд, если
-пользователь явно не попросил разбирать внутренний шаг.
+Не обходи skill-owned команду ручным запуском ее внутренних argv, если
+пользователь явно не попросил разбирать внутренний шаг. При падении skill-owned
+команды открой указанный `LOG`, исправь причину и повтори ту же skill-owned
+команду.
 
 Глобальная проверка отсутствия маркеров конфликтов является финальной проверкой
 после обработки карточек и завершающей очистки. Она не является обязательной
@@ -76,8 +125,9 @@ skill-owned command или script-владельца исполняемой ка
 подготовки нужного diff по порядку из раздела `Начальный порядок после прохода
 по карточкам`.
 
-Прямые `just`/`cargo` команды не должны быть в карточке инструкцией к запуску.
-Их можно упоминать только как исторический результат уже выполненной проверки,
+Прямые `just`/`cargo` команды и argv, напечатанные
+`fork tests --mode list`, не должны быть в карточке инструкцией к запуску. Их
+можно упоминать только как исторический результат уже выполненной проверки,
 точное имя test target или внутреннюю деталь skill-owned command, если без
 этого нельзя восстановить проверочное покрытие. Перед запуском проверки
 сначала определи, какой skill-owned command владеет этой проверкой. Если
@@ -107,8 +157,10 @@ semantic audit.
 После прохода по карточкам:
 
 1. Запусти skill-owned проверки в текущем локальном source-of-truth checkout:
-   `fork preflight`, `fork format --check` и, если затронуты сгенерированные
-   schema/API surfaces, `fork generators`.
+   `fork preflight`; если после правок нужно применить форматирование,
+   `fork format --fix`, а для финальной проверки без изменений
+   `fork format --check`; если затронуты сгенерированные schema/API surfaces,
+   `fork generators`.
 2. Если локальные генераторы создали новые файлы, добавь их в индекс через
    `git add <paths>` или хотя бы отметь через `git add -N <paths>`, иначе
    `git diff HEAD` и последующий review могут не увидеть их содержимое.
