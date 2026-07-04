@@ -18,7 +18,9 @@ commands.
 .codex/skills/fork/scripts/fork format --check
 .codex/skills/fork/scripts/fork generators
 .codex/skills/fork/scripts/fork tests --mode list
+.codex/skills/fork/scripts/fork tests --mode list --card CARD_ID_OR_PATH
 .codex/skills/fork/scripts/fork tests --mode cards --version X.Y.Z
+.codex/skills/fork/scripts/fork tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z
 .codex/skills/fork/scripts/fork tests --mode full --version X.Y.Z
 .codex/skills/fork/scripts/fork build-fast --version X.Y.Z
 .codex/skills/fork/scripts/fork cards list
@@ -29,6 +31,12 @@ commands.
 
 `--version` можно опустить, если команда однозначно выводит версию из текущей
 ветки `hermione-X.Y.Z` или единственной `docs/fork/migration-X.Y.Z.md`.
+
+`fork tests --mode list` и `fork tests --mode cards` принимают повторяемый
+`--card`. Значение может быть `id` карточки, путь `docs/fork/*.md`, имя файла
+или `id` без префикса `fork-`. Фильтр запускает или печатает только строки
+`CARD_TESTS`, относящиеся к выбранной карточке. `--mode full` не принимает
+`--card`, потому что полный проход не является card-level runner.
 
 ## Skill-owned scripts и логи
 
@@ -198,6 +206,7 @@ artifact или правил запуска сборки.
 - `generators`;
 - `tests --mode list`;
 - `tests --mode cards --version X.Y.Z`;
+- `tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z`;
 - `tests --mode full --version X.Y.Z`;
 - `build-fast --version X.Y.Z`.
 

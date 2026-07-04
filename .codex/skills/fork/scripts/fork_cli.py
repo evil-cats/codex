@@ -984,6 +984,91 @@ def card_test_ids() -> set[str]:
     return {test.card_id for test in CARD_TESTS}
 
 
+def add_card_alias(aliases: dict[str, str], alias: str, card_id: str) -> None:
+    alias = alias.strip()
+    if alias:
+        aliases.setdefault(alias, card_id)
+
+
+def card_test_aliases(repo_root: Path) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for card_id in sorted(card_test_ids()):
+        add_card_alias(aliases, card_id, card_id)
+        if card_id.startswith("fork-"):
+            add_card_alias(aliases, card_id.removeprefix("fork-"), card_id)
+
+    for path in fork_doc_paths(repo_root):
+        card_id = first_id(path)
+        if not card_id:
+            continue
+
+        add_card_alias(aliases, card_id, card_id)
+        if card_id.startswith("fork-"):
+            add_card_alias(aliases, card_id.removeprefix("fork-"), card_id)
+        add_card_alias(aliases, path.name, card_id)
+        add_card_alias(aliases, path.stem, card_id)
+        add_card_alias(aliases, str(path), card_id)
+        try:
+            add_card_alias(aliases, str(path.relative_to(repo_root)), card_id)
+        except ValueError:
+            pass
+
+    return aliases
+
+
+def available_card_test_ids() -> str:
+    return "\n".join(f"  {card_id}" for card_id in sorted(card_test_ids()))
+
+
+def card_tests_for_filters(
+    repo_root: Path, card_filters: list[str] | None
+) -> tuple[list[CardTest], str | None]:
+    if not card_filters:
+        return list(CARD_TESTS), None
+
+    aliases = card_test_aliases(repo_root)
+    requested: list[str] = []
+    unknown: list[str] = []
+    for raw_filter in card_filters:
+        value = raw_filter.strip()
+        card_id = aliases.get(value)
+        if not card_id:
+            path = Path(value)
+            if not path.is_absolute():
+                path = repo_root / path
+            if path.exists():
+                card_id = first_id(path)
+
+        if card_id:
+            requested.append(card_id)
+        else:
+            unknown.append(raw_filter)
+
+    if unknown:
+        return (
+            [],
+            "unknown card filter(s): "
+            + ", ".join(unknown)
+            + "\nAvailable card ids with tests:\n"
+            + available_card_test_ids(),
+        )
+
+    requested_ids = set(requested)
+    tests = [test for test in CARD_TESTS if test.card_id in requested_ids]
+    tested_ids = {test.card_id for test in tests}
+    missing = sorted(requested_ids - tested_ids)
+    if missing:
+        return (
+            [],
+            "card(s) have no CARD_TESTS entries: "
+            + ", ".join(missing)
+            + "\nAvailable card ids with tests:\n"
+            + available_card_test_ids(),
+        )
+
+    return tests, None
+
+
 def status_count(text: str, status: str) -> int:
     return len(re.findall(rf"\|\s*{re.escape(status)}\s*\|", text))
 
@@ -1379,9 +1464,22 @@ def cmd_generators(args: argparse.Namespace) -> int:
 def cmd_tests(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     version = resolved_version(args, repo_root)
+    card_filters = args.card or []
+
+    if card_filters and args.mode == "full":
+        print(
+            "ERROR: --card is only supported with --mode list or --mode cards",
+            file=sys.stderr,
+        )
+        return 2
+
+    selected_tests, filter_error = card_tests_for_filters(repo_root, card_filters)
+    if filter_error:
+        print(f"ERROR: {filter_error}", file=sys.stderr)
+        return 2
 
     if args.mode == "list":
-        for test in CARD_TESTS:
+        for test in selected_tests:
             print(f"{test.card_id:<36} {test.purpose:<24} {shell_quote(test.argv)}")
         return 0
 
@@ -1396,7 +1494,7 @@ def cmd_tests(args: argparse.Namespace) -> int:
         return result
 
     if args.mode == "cards":
-        for test in CARD_TESTS:
+        for test in selected_tests:
             result = session.run_step(f"{test.card_id}: {test.purpose}", list(test.argv))
             if result != 0:
                 return result
@@ -1515,6 +1613,15 @@ def build_parser() -> argparse.ArgumentParser:
     tests.add_argument("--repo-root")
     tests.add_argument("--version")
     tests.add_argument("--skip-branch-check", action="store_true")
+    tests.add_argument(
+        "--card",
+        action="append",
+        metavar="CARD",
+        help=(
+            "Limit --mode list/cards to a card id, docs/fork/*.md path, file name, "
+            "or id without the fork- prefix. Can be repeated."
+        ),
+    )
     tests.set_defaults(func=cmd_tests)
 
     build_fast = sub.add_parser("build-fast")
