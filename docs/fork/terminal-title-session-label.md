@@ -188,6 +188,23 @@ TerminalTitleItem::SessionLabel => {
 
 ## Проверки
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "terminal title",
+      "argv": ["just", "test", "-p", "codex-tui", "terminal_title"]
+    }
+  ]
+}
+```
+
 Для повторения:
 
 1. На `f-ms-dev`, если пользователь разрешил:

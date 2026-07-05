@@ -21,7 +21,7 @@ core function tools видимы в TUI как понятные пользова
 | Основной элемент protocol | `CoreToolActivity` |
 | Файл core-логики | `codex-rs/core/src/tools/core_tool_activity.rs` |
 | Renderer истории TUI | `codex-rs/tui/src/history_cell/core_tool_activity.rs` |
-| Метка `CARD_TESTS` | `fork-tui-core-tool-activity` |
+| Метка `fork tests` | `fork-tui-core-tool-activity` |
 
 Первая область:
 
@@ -106,7 +106,7 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
-| `.codex/skills/fork/scripts/fork_cli.py` | Добавляет регрессионное покрытие карточки в `CARD_TESTS` для метки `fork-tui-core-tool-activity` |
+| `.codex/skills/fork/scripts/fork_cli.py` | Читает блоки `fork-tests.v1` из карточек и исполняет проверки через `fork tests` |
 | `docs/fork/tui-core-tool-activity.md` | Владеющий handoff-артефакт: UI-контракт, перенос, проверки и ограничения fork-доработки |
 
 Намеренно несемантический touch:
@@ -325,7 +325,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    `Inspecting/Inspected -> System time`.
 8. Поддержать app-server v2 conversion и thread history replay, если переносимый
    upstream еще не знает `CoreToolActivity`.
-9. Синхронизировать `CARD_TESTS`, schema artifacts и исторические результаты
+9. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
    карточки через skill-owned workflow.
 
 ## Проверки
@@ -351,7 +351,47 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 
 | Владелец | Метка | Статус |
 | --- | --- | --- |
-| `fork tests` | `fork-tui-core-tool-activity` | `required`: `CARD_TESTS` содержит TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `fork tests` | `fork-tui-core-tool-activity` | `required`: исполняемая карта содержит TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "tui snapshots",
+      "argv": ["just", "test", "-p", "codex-tui", "core_tool_activity"]
+    },
+    {
+      "purpose": "thread history replay",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-app-server-protocol",
+        "core_tool_activity"
+      ]
+    },
+    {
+      "purpose": "protocol item model",
+      "argv": ["just", "test", "-p", "codex-protocol"]
+    },
+    {
+      "purpose": "analytics reducer",
+      "argv": ["just", "test", "-p", "codex-analytics"]
+    },
+    {
+      "purpose": "pending snapshots",
+      "argv": [
+        "cargo",
+        "insta",
+        "pending-snapshots",
+        "--manifest-path",
+        "codex-rs/tui/Cargo.toml"
+      ]
+    }
+  ]
+}
+```
 
 ### Дополнительные gates
 
@@ -370,7 +410,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork format --fix` | `ok` | Последний успешный wrapper-log: `target/fork-migration/format-logs/fix-20260704T175800Z.log` |
 | `.codex/skills/fork/scripts/fork format --check` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260704T181058Z.log` |
 | `.codex/skills/fork/scripts/fork generators` | `ok` | Schema artifacts обновлены; wrapper-log: `target/fork-migration/generator-logs/generators-20260704T174534Z.log` |
-| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` | `ok` | `CARD_TESTS` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
 | `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260704T175814Z.log` |
 | `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260704T180255Z.log` |
@@ -429,7 +469,7 @@ Runtime-проверка этой карточки должна подтверж
 | Старый shell `Read` не переименовывается этой карточкой | `перенесено в карточку` | `Карта файлов`, `Проверки`, `Риски и ограничения` |
 | Model-visible output core tools не меняется | `перенесено в карточку` | `Карта файлов`, `Итоговый контракт`, `Архитектурное решение` |
 | Telemetry contract не расширяется этой UI-карточкой | `перенесено в карточку` | `Карта файлов`, `Итоговый контракт`, `Проверки` |
-| `CARD_TESTS` должен владеть card-level запуском | `перенесено в карточку` | `Проверки`, `Владелец исполняемой карты` |
+| `fork tests` должен владеть card-level запуском, а блок `fork-tests.v1` - данными запуска | `перенесено в карточку` | `Проверки`, `Владелец исполняемой карты` |
 | Старые tool-карточки не правятся в этом diff | `перенесено в карточку` | `Карта файлов`, `Известные падения и пропуски`, `Риски и ограничения` |
 
 ## Открытые вопросы

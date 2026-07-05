@@ -412,6 +412,67 @@ inline_output_max_tokens = 1000
 Для этой fork-доработки в исполняемой карте должно быть представлено такое
 покрытие:
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "inline token limit",
+      "argv": ["just", "test", "-p", "codex-core", "inline_output_max_tokens"]
+    },
+    {
+      "purpose": "spill output",
+      "argv": ["just", "test", "-p", "codex-core", "output_spill"]
+    },
+    {
+      "purpose": "spill formatting",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_tool_output_formats_spill"
+      ]
+    },
+    {
+      "purpose": "large output spill",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_spills_large_completed_output_to_file"
+      ]
+    },
+    {
+      "purpose": "glob deny policy",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "unified_exec_enforces_glob_deny_read_policy"
+      ]
+    },
+    {
+      "purpose": "timeout poll",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "unified_exec_timeout_and_followup_poll"
+      ]
+    }
+  ]
+}
+```
+
 | Область покрытия | Что должно проверяться |
 | --- | --- |
 | Config parsing/default | `[tools.exec].inline_output_max_tokens`, положительное значение и default `1000` |

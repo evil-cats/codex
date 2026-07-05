@@ -170,6 +170,35 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 
 ## Проверки
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "cli metadata",
+      "argv": ["just", "test", "-p", "codex-cli"]
+    },
+    {
+      "purpose": "tui metadata",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "--",
+        "--skip",
+        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route"
+      ]
+    }
+  ]
+}
+```
+
 Для повторения доработки:
 
 1. На `f-ms-dev:/home/slader/Projects/codex`, если пользователь разрешил:

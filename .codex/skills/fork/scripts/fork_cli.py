@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 import shlex
@@ -15,6 +16,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
 SOURCE_COVERAGE = SKILL_ROOT / "references" / "source-coverage.md"
+FORK_TESTS_SCHEMA = "fork-tests.v1"
 
 OPEN_STATUSES = (
     "draft",
@@ -234,344 +236,131 @@ def card_test(card_id: str, purpose: str, *argv: str) -> CardTest:
     return CardTest(card_id=card_id, purpose=purpose, argv=argv)
 
 
-CARD_TESTS = (
-    card_test(
-        "fork-codex-agent-env-var",
-        "exec environment",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "exec_env",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "agent name",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "agent_name",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "thread info",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "thread_info",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "identity restore",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "exec env overlay",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "env_overlay_for_exec_server_keeps_runtime_changes_only",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "shell context",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "shell_command_handler_to_exec_params_uses_session_shell_and_turn_context",
-    ),
-    card_test(
-        "fork-codex-agent-env-var",
-        "protocol shell env",
-        "just",
-        "test",
-        "-p",
-        "codex-protocol",
-        "shell_environment",
-    ),
-    card_test(
-        "fork-core-read-file-tool",
-        "runtime contract",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "read_file",
-    ),
-    card_test(
-        "fork-core-read-file-tool",
-        "tool visibility",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "environment_count_controls_environment_backed_tools",
-    ),
-    card_test(
-        "fork-core-system-time-tool",
-        "system time",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "system_time",
-    ),
-    card_test(
-        "fork-core-system-time-tool",
-        "prompt tool cache",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "prompt_tools_are_consistent_across_requests",
-    ),
-    card_test(
-        "fork-core-thread-info-tool",
-        "agent name",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "agent_name",
-    ),
-    card_test(
-        "fork-core-thread-info-tool",
-        "thread info",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "thread_info",
-    ),
-    card_test(
-        "fork-core-thread-info-tool",
-        "prompt tool cache",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "prompt_tools_are_consistent_across_requests",
-    ),
-    card_test(
-        "fork-developer-instructions-files",
-        "developer instructions",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "developer_instructions",
-    ),
-    card_test(
-        "fork-environment-context-project-name",
-        "environment context",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "environment_context",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "inline token limit",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "inline_output_max_tokens",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "spill output",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "output_spill",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "spill formatting",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "exec_command_tool_output_formats_spill",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "large output spill",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "exec_command_spills_large_completed_output_to_file",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "glob deny policy",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "unified_exec_enforces_glob_deny_read_policy",
-    ),
-    card_test(
-        "fork-exec-command-output-spill-files",
-        "timeout poll",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "unified_exec_timeout_and_followup_poll",
-    ),
-    card_test("fork-hermione-version-metadata", "cli metadata", "just", "test", "-p", "codex-cli"),
-    card_test(
-        "fork-hermione-version-metadata",
-        "tui metadata",
-        "just",
-        "test",
-        "-p",
-        "codex-tui",
-        "--",
-        "--skip",
-        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
-    ),
-    card_test(
-        "fork-memory-read-template-path",
-        "stdio fixture binary",
-        "cargo",
-        "build",
-        "--manifest-path",
-        "codex-rs/Cargo.toml",
-        "-p",
-        "codex-rmcp-client",
-        "--bin",
-        "test_stdio_server",
-    ),
-    card_test(
-        "fork-memory-read-template-path",
-        "core config",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "config",
-    ),
-    card_test(
-        "fork-memory-read-template-path",
-        "memories extension",
-        "just",
-        "test",
-        "-p",
-        "codex-memories-extension",
-    ),
-    card_test(
-        "fork-terminal-title-session-label",
-        "terminal title",
-        "just",
-        "test",
-        "-p",
-        "codex-tui",
-        "terminal_title",
-    ),
-    card_test(
-        "fork-tui-history-image-previews",
-        "core view image",
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "view_image",
-    ),
-    card_test(
-        "fork-tui-history-image-previews",
-        "tui render",
-        "just",
-        "test",
-        "-p",
-        "codex-tui",
-        "--",
-        "--skip",
-        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route",
-    ),
-    card_test(
-        "fork-tui-history-image-previews",
-        "app server protocol",
-        "just",
-        "test",
-        "-p",
-        "codex-app-server-protocol",
-    ),
-    card_test(
-        "fork-tui-history-image-previews",
-        "protocol",
-        "just",
-        "test",
-        "-p",
-        "codex-protocol",
-    ),
-    card_test(
-        "fork-tui-history-image-previews",
-        "pending snapshots",
-        "cargo",
-        "insta",
-        "pending-snapshots",
-        "--manifest-path",
-        "codex-rs/tui/Cargo.toml",
-    ),
-    card_test(
-        "fork-tui-core-tool-activity",
-        "tui snapshots",
-        "just",
-        "test",
-        "-p",
-        "codex-tui",
-        "core_tool_activity",
-    ),
-    card_test(
-        "fork-tui-core-tool-activity",
-        "thread history replay",
-        "just",
-        "test",
-        "-p",
-        "codex-app-server-protocol",
-        "core_tool_activity",
-    ),
-    card_test(
-        "fork-tui-core-tool-activity",
-        "protocol item model",
-        "just",
-        "test",
-        "-p",
-        "codex-protocol",
-    ),
-    card_test(
-        "fork-tui-core-tool-activity",
-        "analytics reducer",
-        "just",
-        "test",
-        "-p",
-        "codex-analytics",
-    ),
-    card_test(
-        "fork-tui-core-tool-activity",
-        "pending snapshots",
-        "cargo",
-        "insta",
-        "pending-snapshots",
-        "--manifest-path",
-        "codex-rs/tui/Cargo.toml",
-    ),
-)
+def fenced_json_blocks(text: str) -> list[tuple[int, str]]:
+    blocks: list[tuple[int, str]] = []
+    in_json_block = False
+    block_start = 0
+    block_lines: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not in_json_block:
+            if stripped == "```json":
+                in_json_block = True
+                block_start = line_number + 1
+                block_lines = []
+            continue
+
+        if stripped == "```":
+            blocks.append((block_start, "\n".join(block_lines)))
+            in_json_block = False
+            block_lines = []
+            continue
+
+        block_lines.append(line)
+    return blocks
+
+
+def card_tests_from_payload(
+    path: Path, card_id: str, block_start: int, payload: object
+) -> tuple[list[CardTest], list[str]]:
+    block_label = f"{path}: fork-tests.v1 block at line {block_start}"
+    if not isinstance(payload, dict):
+        return [], [f"{block_label}: payload must be a JSON object"]
+
+    schema = payload.get("schema")
+    if schema != FORK_TESTS_SCHEMA:
+        return [], [f"{block_label}: schema must be {FORK_TESTS_SCHEMA!r}"]
+
+    tests_value = payload.get("tests")
+    if not isinstance(tests_value, list):
+        return [], [f"{block_label}: `tests` must be a JSON array"]
+
+    tests: list[CardTest] = []
+    errors: list[str] = []
+    seen_purposes: set[str] = set()
+    for index, entry in enumerate(tests_value, start=1):
+        entry_label = f"{block_label}: tests[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{entry_label}: entry must be a JSON object")
+            continue
+
+        raw_purpose = entry.get("purpose")
+        argv = entry.get("argv")
+        entry_errors: list[str] = []
+        if not isinstance(raw_purpose, str) or not raw_purpose.strip():
+            entry_errors.append(f"{entry_label}: `purpose` must be a non-empty string")
+            purpose = ""
+        else:
+            purpose = raw_purpose.strip()
+
+        if purpose and purpose in seen_purposes:
+            entry_errors.append(f"{entry_label}: duplicate purpose {purpose!r}")
+
+        if not isinstance(argv, list) or not argv:
+            entry_errors.append(f"{entry_label}: `argv` must be a non-empty array")
+        elif not all(isinstance(arg, str) and arg for arg in argv):
+            entry_errors.append(f"{entry_label}: `argv` entries must be non-empty strings")
+
+        if entry_errors:
+            errors.extend(entry_errors)
+            continue
+
+        assert isinstance(argv, list)
+        seen_purposes.add(purpose)
+        tests.append(card_test(card_id, purpose, *argv))
+
+    return tests, errors
+
+
+def card_tests_in_card(path: Path) -> tuple[list[CardTest], list[str]]:
+    text = read_text(path)
+    matching_blocks = [
+        (block_start, raw)
+        for block_start, raw in fenced_json_blocks(text)
+        if FORK_TESTS_SCHEMA in raw
+    ]
+    if not matching_blocks:
+        return [], []
+
+    card_id = first_id(path)
+    if not card_id:
+        return [], [f"{path}: fork-tests.v1 block exists but frontmatter id is missing"]
+
+    tests: list[CardTest] = []
+    errors: list[str] = []
+    for block_start, raw in matching_blocks:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                f"{path}: invalid fork-tests.v1 JSON block at line "
+                f"{block_start}: {exc.msg}"
+            )
+            continue
+
+        block_tests, block_errors = card_tests_from_payload(
+            path, card_id, block_start, payload
+        )
+        tests.extend(block_tests)
+        errors.extend(block_errors)
+
+    return tests, errors
+
+
+def card_tests(
+    repo_root: Path, *, active_only: bool = True
+) -> tuple[list[CardTest], list[str]]:
+    tests: list[CardTest] = []
+    errors: list[str] = []
+    for path in fork_doc_paths(repo_root):
+        if path.name.startswith("migration-"):
+            continue
+        if active_only and first_status(path) != "active":
+            continue
+        card_tests_for_path, path_errors = card_tests_in_card(path)
+        tests.extend(card_tests_for_path)
+        errors.extend(path_errors)
+    return tests, errors
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -1082,8 +871,8 @@ def command_runbook_errors(section_name: str, section: str) -> list[str]:
     return errors
 
 
-def card_test_ids() -> set[str]:
-    return {test.card_id for test in CARD_TESTS}
+def card_test_ids(tests: list[CardTest]) -> set[str]:
+    return {test.card_id for test in tests}
 
 
 def add_card_alias(aliases: dict[str, str], alias: str, card_id: str) -> None:
@@ -1092,9 +881,9 @@ def add_card_alias(aliases: dict[str, str], alias: str, card_id: str) -> None:
         aliases.setdefault(alias, card_id)
 
 
-def card_test_aliases(repo_root: Path) -> dict[str, str]:
+def card_test_aliases(repo_root: Path, tests: list[CardTest]) -> dict[str, str]:
     aliases: dict[str, str] = {}
-    for card_id in sorted(card_test_ids()):
+    for card_id in sorted(card_test_ids(tests)):
         add_card_alias(aliases, card_id, card_id)
         if card_id.startswith("fork-"):
             add_card_alias(aliases, card_id.removeprefix("fork-"), card_id)
@@ -1118,17 +907,21 @@ def card_test_aliases(repo_root: Path) -> dict[str, str]:
     return aliases
 
 
-def available_card_test_ids() -> str:
-    return "\n".join(f"  {card_id}" for card_id in sorted(card_test_ids()))
+def available_card_test_ids(tests: list[CardTest]) -> str:
+    return "\n".join(f"  {card_id}" for card_id in sorted(card_test_ids(tests)))
 
 
 def card_tests_for_filters(
     repo_root: Path, card_filters: list[str] | None
 ) -> tuple[list[CardTest], str | None]:
-    if not card_filters:
-        return list(CARD_TESTS), None
+    all_tests, load_errors = card_tests(repo_root)
+    if load_errors:
+        return [], "\n".join(load_errors)
 
-    aliases = card_test_aliases(repo_root)
+    if not card_filters:
+        return all_tests, None
+
+    aliases = card_test_aliases(repo_root, all_tests)
     requested: list[str] = []
     unknown: list[str] = []
     for raw_filter in card_filters:
@@ -1152,20 +945,20 @@ def card_tests_for_filters(
             "unknown card filter(s): "
             + ", ".join(unknown)
             + "\nAvailable card ids with tests:\n"
-            + available_card_test_ids(),
+            + available_card_test_ids(all_tests),
         )
 
     requested_ids = set(requested)
-    tests = [test for test in CARD_TESTS if test.card_id in requested_ids]
+    tests = [test for test in all_tests if test.card_id in requested_ids]
     tested_ids = {test.card_id for test in tests}
     missing = sorted(requested_ids - tested_ids)
     if missing:
         return (
             [],
-            "card(s) have no CARD_TESTS entries: "
+            "card(s) have no fork-tests.v1 entries: "
             + ", ".join(missing)
             + "\nAvailable card ids with tests:\n"
-            + available_card_test_ids(),
+            + available_card_test_ids(all_tests),
         )
 
     return tests, None
@@ -1337,14 +1130,17 @@ def strict_card_validation_errors(path: Path) -> list[str]:
     owner = subsection_text(checks, "Владелец исполняемой карты")
     has_fork_tests_owner = "`fork tests`" in owner or "fork tests" in owner
     has_manual_exception = "`manual-required`" in owner or "`not-applicable`" in owner
-    has_card_tests = card_id in card_test_ids()
+    card_level_tests, card_test_errors = card_tests_in_card(path)
+    errors.extend(card_test_errors)
+    has_card_tests = bool(card_level_tests)
     if has_card_tests and not has_fork_tests_owner:
         errors.append(
-            "CARD_TESTS entry exists but `Владелец исполняемой карты` does not name `fork tests`"
+            "fork-tests.v1 block exists but `Владелец исполняемой карты` "
+            "does not name `fork tests`"
         )
     if not has_card_tests and not has_manual_exception:
         errors.append(
-            "active card has no CARD_TESTS entry and no "
+            "active card has no fork-tests.v1 block and no "
             "`manual-required`/`not-applicable` exception"
         )
 
@@ -1382,8 +1178,9 @@ def cmd_cards_validate(args: argparse.Namespace) -> int:
             for error in errors:
                 failures.append(f"{rel}: {error}")
 
-    for test_id in sorted(card_test_ids() - active_card_ids):
-        failures.append(f"CARD_TESTS: label has no active fork card: {test_id}")
+    all_tests, _ = card_tests(repo_root, active_only=False)
+    for test_id in sorted(card_test_ids(all_tests) - active_card_ids):
+        failures.append(f"fork-tests.v1: label has no active fork card: {test_id}")
 
     for failure in failures:
         print(f"ERROR: {failure}", file=sys.stderr)

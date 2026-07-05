@@ -391,6 +391,33 @@ Tool будет часто вызываться ради одной строки
 Проверки уже выполнены для этой доработки. Важно: full `codex-core` suite на
 remote не считается зеленым; известные падения записаны отдельно.
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "system time",
+      "argv": ["just", "test", "-p", "codex-core", "system_time"]
+    },
+    {
+      "purpose": "prompt tool cache",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "prompt_tools_are_consistent_across_requests"
+      ]
+    }
+  ]
+}
+```
+
 | Проверка | Где запускалась | Результат | Что подтверждает |
 | --- | --- | --- | --- |
 | `git diff --check` | local | пройдено | Diff не содержит whitespace errors |

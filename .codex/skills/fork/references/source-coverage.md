@@ -53,7 +53,7 @@ Structural coverage по-прежнему не доказывает семант
 | `assets/templates/migration-card.md` | Шаблон migration-карты | перенесено |
 | `assets/templates/parent-subagent-prompt.md` | Шаблон prompt для подагента | перенесено |
 | `scripts/fork` | Skill-owned CLI entrypoint | перенесено |
-| `scripts/fork_cli.py` | Строгая validation для связи active cards с `CARD_TESTS` и исполняемыми картами | перенесено |
+| `scripts/fork_cli.py` | Строгая validation для связи active cards с блоками `fork-tests.v1` и исполняемыми картами | перенесено |
 
 ## Status values
 
@@ -80,7 +80,7 @@ Structural coverage по-прежнему не доказывает семант
 | `### Шаблон prompt для подагента одной карточки` | `assets/templates/parent-subagent-prompt.md` | перенесено с нормализацией | Legacy subagent source заменен на skill reference, parent-only запрет добавлен |
 | `После прохода по карточкам` | `references/checks-and-gates.md` | перенесено с нормализацией | Legacy `local-*` команды заменены на skill-owned `fork ...` команды |
 | `### Wrapper-скрипты миграции и логи` | `references/checks-and-gates.md`, `scripts/fork` | перенесено с нормализацией | Legacy wrappers заменены на skill-owned commands; parity rows остаются ниже |
-| `### Обновление скриптов при изменении fork-карточек` | `references/checks-and-gates.md`, `scripts/fork_cli.py` | перенесено с нормализацией | Legacy script names заменены на skill-owned исполняемые карты; `fork cards validate` проверяет связь active cards с `CARD_TESTS` |
+| `### Обновление скриптов при изменении fork-карточек` | `references/checks-and-gates.md`, `scripts/fork_cli.py` | перенесено с нормализацией | Legacy script names заменены на skill-owned исполняемые карты; `fork cards validate` проверяет связь active cards с блоками `fork-tests.v1` |
 | `## Source-of-truth checkout на f-ms-dev` | `references/local-development.md` | перенесено с нормализацией | Host-specific часть заменена на текущий локальный checkout |
 
 ## `docs/migration-one-card-for-agent.md` coverage

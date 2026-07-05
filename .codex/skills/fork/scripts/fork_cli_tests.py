@@ -13,6 +13,33 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(fork_cli)
 
 
+FORK_TESTS_BLOCK = textwrap.dedent(
+    """\
+    ```json
+    {
+      "schema": "fork-tests.v1",
+      "tests": [
+        {
+          "purpose": "runtime contract",
+          "argv": ["just", "test", "-p", "codex-core", "read_file"]
+        },
+        {
+          "purpose": "tool visibility",
+          "argv": [
+            "just",
+            "test",
+            "-p",
+            "codex-core",
+            "environment_count_controls_environment_backed_tools"
+          ]
+        }
+      ]
+    }
+    ```
+    """
+)
+
+
 class InstallPathTests(unittest.TestCase):
     def test_default_install_target_uses_home_local_bin(self) -> None:
         self.assertEqual(
@@ -56,11 +83,21 @@ class CardTestFilterTests(unittest.TestCase):
         docs_fork = repo_root / "docs/fork"
         docs_fork.mkdir(parents=True)
         (docs_fork / "core-read-file-tool.md").write_text(
-            "---\n"
-            "id: fork-core-read-file-tool\n"
-            "status: active\n"
-            "---\n"
-            "# Read file\n",
+            (
+                "---\n"
+                "id: fork-core-read-file-tool\n"
+                "status: active\n"
+                "---\n"
+                "# Read file\n"
+                "\n"
+                "## Проверки\n"
+                "\n"
+                "### Владелец исполняемой карты\n"
+                "\n"
+                "`fork tests` владеет запуском.\n"
+                "\n"
+                f"{FORK_TESTS_BLOCK}"
+            ),
             encoding="utf-8",
         )
         (docs_fork / "planned-only.md").write_text(
@@ -69,6 +106,18 @@ class CardTestFilterTests(unittest.TestCase):
             "status: planned\n"
             "---\n"
             "# Planned only\n",
+            encoding="utf-8",
+        )
+        (docs_fork / "planned-with-tests.md").write_text(
+            (
+                "---\n"
+                "id: fork-planned-with-tests\n"
+                "status: planned\n"
+                "---\n"
+                "# Planned with tests\n"
+                "\n"
+                f"{FORK_TESTS_BLOCK}"
+            ),
             encoding="utf-8",
         )
         return repo_root
@@ -100,6 +149,12 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual({test.card_id for test in tests}, {"fork-core-read-file-tool"})
 
+    def test_ignores_non_active_card_test_blocks(self) -> None:
+        tests, error = fork_cli.card_tests_for_filters(self.make_repo(), None)
+
+        self.assertIsNone(error)
+        self.assertEqual({test.card_id for test in tests}, {"fork-core-read-file-tool"})
+
     def test_unknown_card_reports_available_ids(self) -> None:
         tests, error = fork_cli.card_tests_for_filters(self.make_repo(), ["missing"])
 
@@ -117,7 +172,7 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertEqual(tests, [])
         self.assertIsNotNone(error)
         assert error is not None
-        self.assertIn("card(s) have no CARD_TESTS entries: fork-planned-only", error)
+        self.assertIn("card(s) have no fork-tests.v1 entries: fork-planned-only", error)
 
 
 class CardValidationTests(unittest.TestCase):
@@ -130,6 +185,7 @@ class CardValidationTests(unittest.TestCase):
             "Исторический запуск |"
         ),
         owner_detail: str = "`fork tests` владеет запуском; внутренние argv не являются runbook.",
+        fork_tests_block: str = FORK_TESTS_BLOCK,
     ) -> Path:
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
@@ -176,6 +232,8 @@ class CardValidationTests(unittest.TestCase):
 
                 {{owner_detail}}
 
+                {{fork_tests_block}}
+
                 ### Дополнительные gates
 
                 `not-applicable`: дополнительных gates нет.
@@ -204,6 +262,7 @@ class CardValidationTests(unittest.TestCase):
         path.write_text(
             template.replace("{{transfer_body}}", transfer_body)
             .replace("{{owner_detail}}", owner_detail)
+            .replace("{{fork_tests_block}}", fork_tests_block)
             .replace("{{historical_results}}", historical_results),
             encoding="utf-8",
         )
@@ -213,6 +272,22 @@ class CardValidationTests(unittest.TestCase):
         errors = fork_cli.strict_card_validation_errors(self.write_card())
 
         self.assertEqual(errors, [])
+
+    def test_rejects_invalid_fork_tests_json(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                fork_tests_block=(
+                    "```json\n"
+                    '{ "schema": "fork-tests.v1", "tests": [\n'
+                    "```\n"
+                )
+            )
+        )
+
+        self.assertTrue(
+            any("invalid fork-tests.v1 JSON block" in error for error in errors),
+            errors,
+        )
 
     def test_rejects_command_runbook_in_transfer_section(self) -> None:
         errors = fork_cli.strict_card_validation_errors(

@@ -328,6 +328,37 @@ tool текущего runtime, а не app-server API и не extension tool.
 
 Запланированные проверки для этой доработки:
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "agent name",
+      "argv": ["just", "test", "-p", "codex-core", "agent_name"]
+    },
+    {
+      "purpose": "thread info",
+      "argv": ["just", "test", "-p", "codex-core", "thread_info"]
+    },
+    {
+      "purpose": "prompt tool cache",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "prompt_tools_are_consistent_across_requests"
+      ]
+    }
+  ]
+}
+```
+
 | Команда | Где запускать | Ожидаемый результат |
 | --- | --- | --- |
 | `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |

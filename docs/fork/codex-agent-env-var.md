@@ -433,6 +433,65 @@ rollout не удалось получить.
 
 Запланированные проверки для этой доработки:
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "exec environment",
+      "argv": ["just", "test", "-p", "codex-core", "exec_env"]
+    },
+    {
+      "purpose": "agent name",
+      "argv": ["just", "test", "-p", "codex-core", "agent_name"]
+    },
+    {
+      "purpose": "thread info",
+      "argv": ["just", "test", "-p", "codex-core", "thread_info"]
+    },
+    {
+      "purpose": "identity restore",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env"
+      ]
+    },
+    {
+      "purpose": "exec env overlay",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "env_overlay_for_exec_server_keeps_runtime_changes_only"
+      ]
+    },
+    {
+      "purpose": "shell context",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "shell_command_handler_to_exec_params_uses_session_shell_and_turn_context"
+      ]
+    },
+    {
+      "purpose": "protocol shell env",
+      "argv": ["just", "test", "-p", "codex-protocol", "shell_environment"]
+    }
+  ]
+}
+```
+
 | Команда | Где запускать | Ожидаемый результат |
 | --- | --- | --- |
 | `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |

@@ -67,7 +67,6 @@ Skill-owned scripts не вызывают retired legacy scripts как runtime 
 `Проверки`, обязательное покрытие, crate/test target, tool spec, config/schema,
 prompt или model-visible context, прочитай `references/checks-and-gates.md`.
 
-Перед финалом такой задачи синхронизируй skill-owned исполняемые карты и
+Перед финалом такой задачи синхронизируй блоки `fork-tests.v1` в карточках и
 проверь `fork tests --mode list`. `fork cards validate` является строгим gate
-связи карточек с исполняемыми картами, но не заменяет
-`fork tests --mode list`.
+связи карточек с исполняемыми картами, но не заменяет `fork tests --mode list`.

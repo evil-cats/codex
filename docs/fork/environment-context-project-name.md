@@ -328,6 +328,23 @@ elements.
 Существующие тесты для filesystem reconstruction остаются важными, потому что
 новая логика переиспользует тот же `workspace_roots_from_turn_context_item`.
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "environment context",
+      "argv": ["just", "test", "-p", "codex-core", "environment_context"]
+    }
+  ]
+}
+```
+
 ## Проверки для повторения
 
 ### Локально

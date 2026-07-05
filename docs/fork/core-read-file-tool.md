@@ -393,9 +393,30 @@ Error: line 10 exceeds ReadFile content token limit
 | --- | --- | --- |
 | `fork tests` | `fork-core-read-file-tool` | `required` |
 
-Исполняемая карта card-level проверок живет в `CARD_TESTS` внутри
-`.codex/skills/fork/scripts/fork_cli.py`. Карточка не является runbook запуска
-проверок.
+Исполняемая карта card-level проверок хранится в блоке `fork-tests.v1`, который
+читает `fork tests`. Карточка не является runbook запуска проверок.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "runtime contract",
+      "argv": ["just", "test", "-p", "codex-core", "read_file"]
+    },
+    {
+      "purpose": "tool visibility",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "environment_count_controls_environment_backed_tools"
+      ]
+    }
+  ]
+}
+```
 
 ### Дополнительные gates
 
@@ -520,7 +541,7 @@ Bazel lock updates не требовались. `codex-rs/core/BUILD.bazel` ис
 | Текстовый output с согласованным header, не JSON | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение` |
 | MVP только для обычных текстовых UTF-8 файлов | `перенесено в карточку` | `Карта файлов`, `Риски и ограничения` |
 | Model-visible description направляет к `read_file` вместо shell-команд чтения | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
-| Исполняемая карта живет в `CARD_TESTS`, а не в карточке | `перенесено в карточку` | `Проверки` |
+| Данные исполняемой карты перенесены в блок `fork-tests.v1`; `fork tests` владеет запуском | `перенесено в карточку` | `Проверки` |
 | Вернуться к отдельным prompt/system/developer instructions после поведенческого тестирования | `перенесено в карточку` | `Обзор`, `Проверки`, `Риски и ограничения` |
 
 ## Открытые вопросы

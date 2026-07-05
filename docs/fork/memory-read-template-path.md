@@ -231,6 +231,40 @@ unknown placeholder должен возвращать `None`.
 Историческая карточка не утверждает, что проверки были запущены в текущем turn.
 Для повторения доработки разумные проверки:
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "stdio fixture binary",
+      "argv": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "codex-rs/Cargo.toml",
+        "-p",
+        "codex-rmcp-client",
+        "--bin",
+        "test_stdio_server"
+      ]
+    },
+    {
+      "purpose": "core config",
+      "argv": ["just", "test", "-p", "codex-core", "config"]
+    },
+    {
+      "purpose": "memories extension",
+      "argv": ["just", "test", "-p", "codex-memories-extension"]
+    }
+  ]
+}
+```
+
 1. На `f-ms-dev:/home/slader/Projects/codex`:
    - `just write-config-schema`;
    - целевые тесты для `codex-core` config и `codex-ext-memories`, если

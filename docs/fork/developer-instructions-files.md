@@ -197,6 +197,23 @@ Schema должна показывать `developer_instructions_files` как a
 
 ## Проверки
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "developer instructions",
+      "argv": ["just", "test", "-p", "codex-core", "developer_instructions"]
+    }
+  ]
+}
+```
+
 Для повторения доработки:
 
 1. На `f-ms-dev:/home/slader/Projects/codex`, если пользователь разрешил:

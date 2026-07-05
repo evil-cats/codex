@@ -329,6 +329,53 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `view_image` handler/spec tests for `preview_size`;
 - app-server protocol tests and schema fixtures.
 
+Исполняемая карта `fork tests`:
+
+Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+`fork tests`.
+
+```json
+{
+  "schema": "fork-tests.v1",
+  "tests": [
+    {
+      "purpose": "core view image",
+      "argv": ["just", "test", "-p", "codex-core", "view_image"]
+    },
+    {
+      "purpose": "tui render",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "--",
+        "--skip",
+        "ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route"
+      ]
+    },
+    {
+      "purpose": "app server protocol",
+      "argv": ["just", "test", "-p", "codex-app-server-protocol"]
+    },
+    {
+      "purpose": "protocol",
+      "argv": ["just", "test", "-p", "codex-protocol"]
+    },
+    {
+      "purpose": "pending snapshots",
+      "argv": [
+        "cargo",
+        "insta",
+        "pending-snapshots",
+        "--manifest-path",
+        "codex-rs/tui/Cargo.toml"
+      ]
+    }
+  ]
+}
+```
+
 Snapshot:
 
 - `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
