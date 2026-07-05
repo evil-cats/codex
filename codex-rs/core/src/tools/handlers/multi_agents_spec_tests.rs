@@ -36,6 +36,19 @@ fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
     }
 }
 
+fn spawn_agent_tool_v1_description(options: SpawnAgentToolOptions) -> String {
+    let tool = create_spawn_agent_tool_v1(options);
+    let ToolSpec::Namespace(namespace) = tool else {
+        panic!("spawn_agent v1 should be a namespace tool");
+    };
+    let Some(ResponsesApiNamespaceTool::Function(ResponsesApiTool { description, .. })) =
+        namespace.tools.into_iter().next()
+    else {
+        panic!("spawn_agent should be a namespace function tool");
+    };
+    description
+}
+
 #[test]
 fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
@@ -161,6 +174,77 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
             .and_then(|schema| schema.description.as_deref()),
         Some(SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION)
     );
+}
+
+#[test]
+fn spawn_agent_tool_v1_uses_session_policy_scoped_guidance() {
+    let description = spawn_agent_tool_v1_description(SpawnAgentToolOptions {
+        available_models: vec![model_preset("visible", /*show_in_picker*/ true)],
+        agent_type_description: "role help".to_string(),
+        hide_agent_type_model_reasoning: false,
+        usage_hint_text: None,
+    });
+
+    assert!(
+        description.contains(
+            "This spawn_agent tool creates a sub-agent for an already selected concrete,"
+        )
+    );
+    assert!(description.contains("The session delegation policy owns when to consider delegation"));
+    assert!(description.contains("Spawned agents inherit your current model by default."));
+    assert!(description.contains("Give each sub-agent a self-contained task message"));
+    assert!(description.contains("For read-only tasks, ask for concise findings with file paths"));
+    assert!(description.contains("For coding tasks, prefer concrete code-change worker subtasks"));
+    assert!(
+        description.contains("If agent roles are available, use them to choose the best owner")
+    );
+    assert!(description.contains("selected subtask."));
+    assert!(description.contains("wait for all agents in the current"));
+    assert!(description.contains("close them when they are no longer needed"));
+    assert!(description.contains("then continue substantive parent work"));
+    assert!(
+        description
+            .contains("Available model overrides (optional; inherited parent model is preferred):")
+    );
+    assert!(!description.contains("### Delegation workflow"));
+    assert!(
+        !description.contains("Use sub-agents when the user's task can be usefully decomposed")
+    );
+    assert!(!description.contains("Do not spawn sub-agents for trivial single-step work"));
+    assert!(
+        !description.contains(
+            "Do not perform the delegated work yourself while the sub-agents are running."
+        )
+    );
+    assert!(!description.contains(
+        "Do not spawn sub-agents unless the user explicitly asks for sub-agents, delegation, or parallel agent work."
+    ));
+    assert!(!description.contains(
+        "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
+    ));
+    assert!(!description.contains(
+        "Agent-role guidance below only helps choose which agent to use after spawning is already authorized"
+    ));
+    assert!(!description.contains("alongside useful local work"));
+    assert!(!description.contains("While the subagent is running in the background"));
+}
+
+#[test]
+fn spawn_agent_tool_v1_usage_hint_text_replaces_default_guidance() {
+    let description = spawn_agent_tool_v1_description(SpawnAgentToolOptions {
+        available_models: Vec::new(),
+        agent_type_description: "role help".to_string(),
+        hide_agent_type_model_reasoning: false,
+        usage_hint_text: Some("Custom v1 usage hint.".to_string()),
+    });
+
+    assert!(description.contains("Spawn a sub-agent for a well-scoped task."));
+    assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
+    assert!(description.contains("Custom v1 usage hint."));
+    assert!(!description.contains("This spawn_agent tool gives you access to sub-agents"));
+    assert!(!description.contains("### Delegation workflow"));
+    assert!(!description.contains("Do not perform the delegated work yourself"));
+    assert!(!description.contains("This spawn_agent tool creates a sub-agent"));
 }
 
 #[test]
