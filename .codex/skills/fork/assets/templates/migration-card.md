@@ -42,3 +42,9 @@
 - `fork tests --mode cards`:
 - `fork build-fast`:
 - `fork tests --mode full`:
+
+Фиксируй только команду/gate, результат и существенное подтверждение вроде
+версии, binary/install target или причины падения. Не записывай локальные
+артефакты логов: `target/fork-migration/...`, абсолютные пути с
+`/target/fork-migration/...`, `wrapper-log`, `последний wrapper-log` или
+`LOG: ...`.

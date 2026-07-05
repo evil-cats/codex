@@ -341,18 +341,12 @@ upstream tag `rust-v0.142.5`.
 ## Общие проверки
 
 - `fork cards validate`: `OK`.
-- `fork preflight --version 0.142.5`: `OK`;
-  `target/fork-migration/preflight-logs/0.142.5-preflight-20260705T104325Z.log`.
-- `fork format --fix`: `OK`;
-  `target/fork-migration/format-logs/fix-20260705T104308Z.log`.
-- `fork format --check`: `OK`;
-  `target/fork-migration/format-logs/check-20260705T104325Z.log`.
-- `fork generators --version 0.142.5`: `OK`;
-  `target/fork-migration/generator-logs/generators-20260705T094918Z.log`.
+- `fork preflight --version 0.142.5`: `OK`.
+- `fork format --fix`: `OK`.
+- `fork format --check`: `OK`.
+- `fork generators --version 0.142.5`: `OK`.
 - `fork tests --mode list --version 0.142.5`: `OK`.
-- `fork tests --mode cards --version 0.142.5`: `OK`;
-  `target/fork-migration/test-logs/0.142.5-cards-20260705T103038Z.log`.
-- `fork build-fast --version 0.142.5`: `OK`;
-  `target/fork-migration/build-logs/0.142.5-build-fast-20260705T103457Z.log`.
+- `fork tests --mode cards --version 0.142.5`: `OK`.
+- `fork build-fast --version 0.142.5`: `OK`.
 - `fork tests --mode full`: не запускался; card gates покрывают owner-карточки
   текущей миграции, а полный workspace suite оставлен вне этого прохода.

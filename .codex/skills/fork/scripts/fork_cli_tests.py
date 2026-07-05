@@ -273,6 +273,56 @@ class CardValidationTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_rejects_local_log_artifact_in_active_card(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                historical_results=(
+                    "| `fork build-fast` | `passed` | Wrapper-log: "
+                    "`target/fork-migration/build-logs/build-fast.log` |"
+                )
+            )
+        )
+
+        self.assertTrue(
+            any(
+                "committed local log artifact breadcrumb" in error
+                and "target/fork-migration" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_rejects_local_log_artifact_in_migration_card(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        path = Path(temp_dir.name) / "migration-0.142.5.md"
+        path.write_text(
+            textwrap.dedent(
+                """\
+                # Миграция Codex fork на `0.142.5`
+
+                Статус: `complete`
+
+                ## Общие проверки
+
+                - `fork preflight --version 0.142.5`: `OK`;
+                  `target/fork-migration/preflight-logs/preflight.log`.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        errors = fork_cli.strict_card_validation_errors(path)
+
+        self.assertTrue(
+            any(
+                "committed local log artifact breadcrumb" in error
+                and "target/fork-migration" in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_rejects_invalid_fork_tests_json(self) -> None:
         errors = fork_cli.strict_card_validation_errors(
             self.write_card(

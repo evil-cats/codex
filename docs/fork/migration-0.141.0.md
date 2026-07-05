@@ -112,17 +112,17 @@ upstream tag `rust-v0.141.0`.
 `f-ms-dev`; с 2026-06-29 текущий workflow запускает только `local-*` wrappers в
 source-of-truth checkout `/home/slader/Projects/codex`.
 
-| Проверка | Результат | Лог |
+| Проверка | Результат | Примечание |
 | --- | --- | --- |
-| `scripts/fork-migration/local-preflight.sh 0.141.0` | `RESULT: ok` | `target/fork-migration/preflight-logs/0.141.0-preflight-20260621T181627Z.log` |
-| `scripts/fork-migration/local-format.sh check` | `RESULT: ok` | `target/fork-migration/format-logs/check-20260621T181632Z.log` |
-| `scripts/fork-migration/local-generators.sh` | `RESULT: ok` | `target/fork-migration/generator-logs/generators-20260621T181642Z.log` |
-| Подготовка checkout на `f-ms-dev` перед card tests | `RESULT: ok` | Исторический лог 2026-06-21 |
-| Применение проверяемого diff на `f-ms-dev` перед card tests | `RESULT: ok`; diff checksum `a76fb3733702eb359397da93730f36755ae4092d60d190c250de0f0d90d88dc9` | Исторический лог 2026-06-21 |
-| `scripts/fork-migration/local-tests.sh 0.141.0 cards` на `f-ms-dev` | `RESULT: ok` | `/home/slader/Projects/codex/target/fork-migration/test-logs/0.141.0-cards-20260621T183241Z.log` |
-| Подготовка checkout на `f-ms-dev` перед release-fast build | `RESULT: ok`; migration-карта была обновлена перед сборкой | Исторический лог 2026-06-21 |
-| Применение проверяемого diff на `f-ms-dev` перед release-fast build | `RESULT: ok`; diff checksum `191fce319705094fc4a6e9cb30f2d3e4c9a1e1b88f039393052dd65ab8486dbb` | Исторический лог 2026-06-21 |
-| `scripts/fork-migration/local-build-fast.sh 0.141.0` на `f-ms-dev` | `RESULT: ok`; release-fast build, binary file metadata и binary version прошли; binary: `/home/slader/Projects/codex/codex-rs/target/release-fast/codex` | `/home/slader/Projects/codex/target/fork-migration/build-logs/0.141.0-build-fast-20260621T190935Z.log` |
+| `scripts/fork-migration/local-preflight.sh 0.141.0` | `RESULT: ok` | Предварительные проверки прошли |
+| `scripts/fork-migration/local-format.sh check` | `RESULT: ok` | Проверка форматирования прошла |
+| `scripts/fork-migration/local-generators.sh` | `RESULT: ok` | Генераторы прошли |
+| Подготовка checkout на `f-ms-dev` перед card tests | `RESULT: ok` | Подготовка прошла |
+| Применение проверяемого diff на `f-ms-dev` перед card tests | `RESULT: ok`; diff checksum `a76fb3733702eb359397da93730f36755ae4092d60d190c250de0f0d90d88dc9` | Diff применен |
+| `scripts/fork-migration/local-tests.sh 0.141.0 cards` на `f-ms-dev` | `RESULT: ok` | Card-level проверки прошли |
+| Подготовка checkout на `f-ms-dev` перед release-fast build | `RESULT: ok`; migration-карта была обновлена перед сборкой | Подготовка прошла |
+| Применение проверяемого diff на `f-ms-dev` перед release-fast build | `RESULT: ok`; diff checksum `191fce319705094fc4a6e9cb30f2d3e4c9a1e1b88f039393052dd65ab8486dbb` | Diff применен |
+| `scripts/fork-migration/local-build-fast.sh 0.141.0` на `f-ms-dev` | `RESULT: ok`; release-fast build, binary file metadata и binary version прошли | Build gate прошел |
 
 ## Проверенные карточки
 

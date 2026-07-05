@@ -435,7 +435,7 @@ Error: line 10 exceeds ReadFile content token limit
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |
 | `just test -p codex-core read_file` | `passed` | Прошло `17` tests |
 | `just test -p codex-core environment_count_controls_environment_backed_tools` | `passed` | Проверена visibility логика для environment-backed tools |
-| `fork build-fast --version 0.141.0 --skip-branch-check` | `passed` | Собран binary `codex-rs/target/release-fast/codex`; log: `target/fork-migration/build-logs/0.141.0-build-fast-20260704T150302Z.log` |
+| `fork build-fast --version 0.141.0 --skip-branch-check` | `passed` | Собран binary `codex-rs/target/release-fast/codex` |
 | `codex-hermione --version` после установки | `passed` | Установленный binary вернул `codex-cli 0.141.0+hermione`; предупреждение про PATH aliases связано с read-only filesystem и не заблокировало запуск |
 | `just fix -p codex-core` | `passed` | Успешно проверил crate через Clippy после финальной правки |
 | `just test -p codex-core` | `failed` | Широкий crate run упал на `6` tests вне `read_file` coverage; новый integration test в этом запуске прошел |

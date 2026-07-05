@@ -146,6 +146,13 @@ COMMAND_RUNBOOK_RE = re.compile(
     r"\.codex/skills/fork/scripts/fork\s+\S+|fork\s+\S+\s+--\S+)"
 )
 
+LOCAL_LOG_ARTIFACT_MARKERS = (
+    "target/fork-migration/",
+    "wrapper-log",
+    "последний wrapper-log",
+    "LOG:",
+)
+
 SOURCE_LIKE_SUFFIXES = (
     ".bazel",
     ".bzl",
@@ -871,6 +878,19 @@ def command_runbook_errors(section_name: str, section: str) -> list[str]:
     return errors
 
 
+def local_log_artifact_errors(text: str) -> list[str]:
+    errors = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        for marker in LOCAL_LOG_ARTIFACT_MARKERS:
+            if marker in line:
+                errors.append(
+                    "committed local log artifact breadcrumb at line "
+                    f"{line_number}: {line.strip()}"
+                )
+                break
+    return errors
+
+
 def card_test_ids(tests: list[CardTest]) -> set[str]:
     return {test.card_id for test in tests}
 
@@ -1101,6 +1121,7 @@ def strict_card_validation_errors(path: Path) -> list[str]:
     errors = []
     if not first_heading(path):
         errors.append("missing top-level heading")
+    errors.extend(local_log_artifact_errors(text))
 
     status = first_status(path)
     if path.name.startswith("migration-") or status == "reverted":

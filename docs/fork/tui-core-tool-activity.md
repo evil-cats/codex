@@ -491,35 +491,35 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Просмотр кода текущего пути `read_file` | `observed` | `read_file` является Responses function tool и возвращает `FunctionCallOutput`, отдельного TUI item нет |
 | Просмотр кода текущего shell exploration renderer | `observed` | shell `cat`/`sed -n` отображаются через `Exploring/Explored -> Read` |
 | Реализация `CoreToolActivity` в рабочем дереве | `implemented` | Новый item, сопоставление, TUI renderer, replay и snapshots добавлены в текущем diff |
-| `.codex/skills/fork/scripts/fork format --fix` | `ok` | Последний успешный wrapper-log: `target/fork-migration/format-logs/fix-20260704T175800Z.log` |
-| `.codex/skills/fork/scripts/fork format --check` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260704T181058Z.log` |
-| `.codex/skills/fork/scripts/fork generators` | `ok` | Schema artifacts обновлены; wrapper-log: `target/fork-migration/generator-logs/generators-20260704T174534Z.log` |
+| `.codex/skills/fork/scripts/fork format --fix` | `ok` | Форматирование применено |
+| `.codex/skills/fork/scripts/fork format --check` | `ok` | Проверка форматирования прошла |
+| `.codex/skills/fork/scripts/fork generators` | `ok` | Schema artifacts обновлены |
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
-| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260704T175814Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` | `ok` | Все пять card-level checks прошли |
 | Дополнение 2026-07-05: компактная сгруппированная история `File` | `implemented` | `read_file` показывает короткие имена без диапазонов строк, группирует соседние `File` activity и дедуплицирует повторные имена |
-| `.codex/skills/fork/scripts/fork format --fix` после дополнения 2026-07-05 | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T052658Z.log` |
+| `.codex/skills/fork/scripts/fork format --fix` после дополнения 2026-07-05 | `ok` | Форматирование применено |
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | `fork-tests.v1` по-прежнему печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
-| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | Все пять card-level checks прошли; последний wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T053212Z.log` |
-| `.codex/skills/fork/scripts/fork format --check` после дополнения 2026-07-05 | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T053149Z.log`; перед commit повторно пройден `target/fork-migration/format-logs/check-20260705T054326Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | Все пять card-level checks прошли |
+| `.codex/skills/fork/scripts/fork format --check` после дополнения 2026-07-05 | `ok` | Проверка форматирования прошла; перед commit повторно пройдена |
 | Дополнение 2026-07-05: смешанный exploration-блок `Search`/`File` | `implemented` | `read_file` добавляется в текущий `ExecCell` exploration tail, поэтому completed-only `File` после `Search` и active `Exploring` остаются в одном блоке |
-| `.codex/skills/fork/scripts/fork format --fix` после смешанного `Search`/`File` | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T061421Z.log` |
+| `.codex/skills/fork/scripts/fork format --fix` после смешанного `Search`/`File` | `ok` | Форматирование применено |
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после смешанного `Search`/`File` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
-| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после смешанного `Search`/`File` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T061436Z.log` |
-| `.codex/skills/fork/scripts/fork format --check` после смешанного `Search`/`File` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T061521Z.log` |
-| `.codex/skills/fork/scripts/fork build-fast` после смешанного `Search`/`File` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T061737Z.log` |
-| `.codex/skills/fork/scripts/fork install` после смешанного `Search`/`File` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T062139Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после смешанного `Search`/`File` | `ok` | Все пять card-level checks прошли |
+| `.codex/skills/fork/scripts/fork format --check` после смешанного `Search`/`File` | `ok` | Проверка форматирования прошла |
+| `.codex/skills/fork/scripts/fork build-fast` после смешанного `Search`/`File` | `ok` | Release-fast binary собран и проверен |
+| `.codex/skills/fork/scripts/fork install` после смешанного `Search`/`File` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 | Дополнение 2026-07-05: порядок `File start -> Search start` | `implemented` | Pending core `File` переносится из active `CoreToolActivityCell` в новый `ExecCell`, поэтому stale `Exploring -> File` не остается отдельной history-карточкой |
-| `.codex/skills/fork/scripts/fork format --fix` после порядка `File start -> Search start` | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T062858Z.log` |
+| `.codex/skills/fork/scripts/fork format --fix` после порядка `File start -> Search start` | `ok` | Форматирование применено |
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после порядка `File start -> Search start` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
-| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после порядка `File start -> Search start` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T062916Z.log` |
-| `.codex/skills/fork/scripts/fork format --check` после порядка `File start -> Search start` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T063026Z.log` |
-| `.codex/skills/fork/scripts/fork build-fast` после порядка `File start -> Search start` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T063100Z.log` |
-| `.codex/skills/fork/scripts/fork install` после порядка `File start -> Search start` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T063503Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после порядка `File start -> Search start` | `ok` | Все пять card-level checks прошли |
+| `.codex/skills/fork/scripts/fork format --check` после порядка `File start -> Search start` | `ok` | Проверка форматирования прошла |
+| `.codex/skills/fork/scripts/fork build-fast` после порядка `File start -> Search start` | `ok` | Release-fast binary собран и проверен |
+| `.codex/skills/fork/scripts/fork install` после порядка `File start -> Search start` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 | Live TUI smoke после перезапуска 2026-07-05 | `ok` | Подтверждены отдельный одиночный `File`, последующая grouped-строка, short names, отсутствие line ranges и dedupe повторного файла |
 | Миграционный проход `rust-v0.142.5`: сгенерированные артефакты схем v2 | `resolved-current-pass` | Убраны маркеры конфликтов в `ThreadItem.ts` и файлах JSON Schema; сохранены обе сгенерированные записи `definitions`: `ImagePreviewSize`, `LegacyAppPathString` и `McpToolCallAppContext` |
 | `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
-| `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; последний wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T053437Z.log` |
-| `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T053954Z.log` |
+| `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен |
+| `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 
 ### Известные падения и пропуски
 
