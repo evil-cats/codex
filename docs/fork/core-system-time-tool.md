@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-07-05
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -388,13 +388,35 @@ Tool будет часто вызываться ради одной строки
 
 ## Проверки
 
-Проверки уже выполнены для этой доработки. Важно: full `codex-core` suite на
-remote не считается зеленым; известные падения записаны отдельно.
+### Смысловое покрытие
 
-Исполняемая карта `fork tests`:
+| Согласованный или реализованный пункт | Статус | Где покрыт |
+| --- | --- | --- |
+| Нужен API системного времени без shell `date` | перенесено в карточку | `Зачем это нужно`, `Итоговый контракт` |
+| Чаще всего нужен форматированный local time | перенесено в карточку | `Согласованные решения`, `Почему local по умолчанию` |
+| `offset` по умолчанию равен `local` | перенесено в карточку | `Tool spec`, tests `defaults_to_local_offset_and_short_time_format` |
+| Функция должна брать host local time, если offset не передан | перенесено в карточку | `Выбор времени`, handler `Local::now()` |
+| Формат должен принимать `%H:%M` | перенесено в карточку | `Tool spec`, `Примеры поведения`, tests для strftime |
+| По умолчанию ответ должен содержать только `formatted` | перенесено в карточку | `Примеры поведения`, runtime-проверка `{"formatted":"00:45"}` |
+| `full: true` возвращает metadata | перенесено в карточку | `Полный ответ`, tests `full_response_includes_metadata` |
+| IANA timezone names не поддерживаются | перенесено в карточку | `Неподдержанная IANA timezone`, tests `rejects_iana_timezone_names` |
+| `utc` и fixed offset поддерживаются | перенесено в карточку | `UTC`, `Fixed offset`, tests `utc_offset_is_case_insensitive`, `parses_fixed_offsets` |
+| Invalid format должен быть model-facing error | перенесено в карточку | `Ошибочный формат`, tests `rejects_invalid_format_strings` |
+| Новый tool должен попадать в prompt tool list | перенесено в карточку | `Карта файлов`, `prompt_tools_are_consistent_across_requests` |
+| Новые source-файлы должны участвовать в diff-based workflow | перенесено в карточку | `Порядок повторения при переносе`; git rulebook также уточнен вне этой карточки |
+| Remote `f-ms-dev` является только build host | перенесено в карточку | `Согласованные решения`, `Исторические результаты` |
+| Full `codex-core` suite не была зеленой | перенесено в карточку | `Исторические результаты`, известные remote infra/sandbox падения |
+| Config schema не меняется | не применимо | Tool не добавляет config key |
+| App-server API не меняется | не применимо | Tool регистрируется только как core utility tool |
+| TUI не меняется | не применимо | Нет отдельной UI-поверхности |
+| Открытые вопросы по текущему контракту | open question | Возможная будущая поддержка IANA zones и совместимость `oneOf` schema |
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+### Владелец исполняемой карты
+
+Card-level проверки этой карточки запускает skill-owned команда `fork tests`.
+Внутренние argv и назначение targeted проверок живут только в блоке
+`fork-tests.v1` ниже; они не являются нормативным runbook для ручного запуска
+внутренних команд.
 
 ```json
 {
@@ -418,6 +440,22 @@ remote не считается зеленым; известные падения
 }
 ```
 
+### Дополнительные gates
+
+Дополнительных card-specific gates поверх `fork tests` эта карточка не вводит.
+В общем миграционном проходе родительский агент отвечает за строгую валидацию
+карточек и любые более широкие fork gates через skill-owned workflow.
+
+Эта доработка не меняет зависимости, config schema, app-server protocol, TUI или
+snapshot-поверхности, поэтому соответствующие gates намеренно не добавляются к
+исполняемой карте этой карточки.
+
+### Исторические результаты
+
+Проверки ниже уже выполнялись для исходной реализации этой доработки. Они
+сохранены как исторический результат и не являются инструкцией запускать прямые
+`just`/`cargo` команды при текущей миграции.
+
 | Проверка | Где запускалась | Результат | Что подтверждает |
 | --- | --- | --- | --- |
 | `git diff --check` | local | пройдено | Diff не содержит whitespace errors |
@@ -427,13 +465,6 @@ remote не считается зеленым; известные падения
 | `just test -p codex-core prompt_tools_are_consistent_across_requests` | `f-ms-dev` | пройдено, 1 test | Новый tool стабилен в списке prompt tools |
 | `just test -p codex-core` | `f-ms-dev` | скомпилировалось, затем завершилось ошибкой на 66 existing remote-infra/sandbox tests | Full suite был попробован, но не является сигналом regression этой доработки |
 | `just build-fast-release` | `f-ms-dev` | пройдено, `codex-cli 0.137.0+hermione` | Release-fast binary собирается с новым tool |
-
-Известные падения full suite на `f-ms-dev` относились к существующим remote
-infra/sandbox условиям: `bwrap` loopback, missing `test_stdio_server`,
-`tool_search` mocks, sandbox/permission suites. Их нельзя переписывать как
-зеленую проверку этой доработки.
-
-## Runtime, сборка и установка
 
 Удаленная сборка выполнялась на `f-ms-dev` в
 `/home/slader/Projects/codex`. В этом workflow remote является только host
@@ -470,6 +501,22 @@ Release-fast artifact:
 Эта проверка подтверждает именно краткий default output. Она не проверяет все
 ветки `offset` и `full`; для них есть unit tests.
 
+### Известные падения и пропуски
+
+- Full `codex-core` suite на `f-ms-dev` не считается зеленым результатом:
+  известные падения относились к существующим remote infra/sandbox условиям,
+  включая `bwrap` loopback, missing `test_stdio_server`, `tool_search` mocks и
+  sandbox/permission suites. Их нельзя переписывать как regression этой
+  доработки или как зеленую проверку.
+- Исторический локальный форматирующий recipe завершался ошибкой из-за
+  отсутствующего `uv` для Python SDK/scripts; Rust formatter внутри recipe при
+  этом отработал.
+- Живая runtime-проверка после установки покрывала только default-вызов `{}` и
+  short output `formatted`. Ветки `offset`, `full`, invalid format и IANA
+  rejection покрываются targeted tests, а не live smoke.
+- Config schema, app-server API, TUI и snapshots намеренно не проверялись для
+  этой доработки, потому что соответствующие поверхности не менялись.
+
 ## Риски и ограничения
 
 - `local` зависит от timezone host system. Это ожидаемый контракт, а не
@@ -490,6 +537,11 @@ Release-fast artifact:
 
 ## Проверка покрытия
 
+Эта итоговая owner-card section group сохранена отдельно от раздела `Проверки`,
+потому что ее наличие является структурным контрактом active fork-карточки.
+Детальное смысловое покрытие также оставлено в `Проверки` ->
+`Смысловое покрытие`.
+
 | Согласованный или реализованный пункт | Статус | Где покрыт |
 | --- | --- | --- |
 | Нужен API системного времени без shell `date` | перенесено в карточку | `Зачем это нужно`, `Итоговый контракт` |
@@ -504,8 +556,8 @@ Release-fast artifact:
 | Invalid format должен быть model-facing error | перенесено в карточку | `Ошибочный формат`, tests `rejects_invalid_format_strings` |
 | Новый tool должен попадать в prompt tool list | перенесено в карточку | `Карта файлов`, `prompt_tools_are_consistent_across_requests` |
 | Новые source-файлы должны участвовать в diff-based workflow | перенесено в карточку | `Порядок повторения при переносе`; git rulebook также уточнен вне этой карточки |
-| Remote `f-ms-dev` является только build host | перенесено в карточку | `Согласованные решения`, `Runtime, сборка и установка` |
-| Full `codex-core` suite не была зеленой | перенесено в карточку | `Проверки`, известные remote infra/sandbox падения |
+| Remote `f-ms-dev` является только build host | перенесено в карточку | `Согласованные решения`, `Исторические результаты` |
+| Full `codex-core` suite не была зеленой | перенесено в карточку | `Исторические результаты`, известные remote infra/sandbox падения |
 | Config schema не меняется | не применимо | Tool не добавляет config key |
 | App-server API не меняется | не применимо | Tool регистрируется только как core utility tool |
 | TUI не меняется | не применимо | Нет отдельной UI-поверхности |

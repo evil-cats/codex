@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-06-08
+updated: 2026-07-05
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -168,11 +168,21 @@ TerminalTitleItem::SessionLabel => {
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_mixed.snap`;
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`.
 
-## Регрессионное покрытие
+## Проверки
 
-Покрытие, которое должно быть в diff:
+### Смысловое покрытие
 
-- `terminal_title_can_include_configured_session_label`:
+Проверочное покрытие этой карточки должно подтверждать:
+
+- Слой config/TOML принимает опциональный ключ `[tui].terminal_title_label`.
+- Effective `Config` сохраняет значение как `tui_terminal_title_label`; это
+  отдельный обязательный слой, потому что при merge `0.137.0` поле однажды
+  потерялось именно там.
+- Элемент `session-label` для terminal title доступен в selector, preview model и
+  runtime-рендеринге.
+- Если значение config отсутствует, сегмент не выводится; если значение есть, строка
+  обрезается через `ChatWidget::truncate_terminal_title_part(..., 24)`.
+- Тест `terminal_title_can_include_configured_session_label`:
   - создаёт `ChatWidget`;
   - ставит `chat.config.tui_terminal_title_label = Some("hermione")`;
   - ставит `tui_terminal_title = ["session-label", "project-name", "run-state"]`;
@@ -183,12 +193,19 @@ TerminalTitleItem::SessionLabel => {
     hermione | project | Ready
     ```
 
-- Snapshot tests показывают новый item `session-label` в selector.
-- Config tests обновлены с `terminal_title_label: None` в expected defaults.
+- Snapshot-тесты показывают новый item `session-label` в selector.
+- Config-тесты обновлены с `terminal_title_label: None` в expected defaults.
+- `codex-rs/core/config.schema.json` содержит schema для
+  `terminal_title_label` после обновления config types.
 
-## Проверки
+### Владелец исполняемой карты
 
-Исполняемая карта `fork tests`:
+Регрессионным покрытием уровня карточки владеет skill-owned command `fork tests`.
+Внутренний argv для этой карточки живет в блоке `fork-tests.v1` ниже и является
+данными исполняемой карты, а не нормативной командой запуска из карточки.
+
+Идентификатор карточки для фильтрации и отчета `fork tests`:
+`fork-terminal-title-session-label`.
 
 Данные ниже являются текущим блоком `fork-tests.v1`, который читает
 `fork tests`.
@@ -205,16 +222,54 @@ TerminalTitleItem::SessionLabel => {
 }
 ```
 
-Для повторения:
+### Дополнительные gates
 
-1. На `f-ms-dev`, если пользователь разрешил:
-   - targeted terminal title tests in `codex-tui`;
-   - `just write-config-schema`;
-   - snapshot review/accept, если UI output changed intentionally;
-   - `just build-fast-release`.
-2. Локально без Rust/Cargo:
-   - `rg -n "terminal_title_label|session-label|SessionLabel" codex-rs`;
-   - `git diff --check`.
+- `fork generators` требуется, когда перенос этой карточки меняет config type
+  или schema artifact; исторический внутренний argv для этого gate сохранен в
+  `Исторические результаты`.
+- Snapshot review/accept требуется, если UI-вывод в selector snapshots меняется
+  намеренно. Затронутые snapshot-файлы перечислены в разделе
+  `Пошаговое воспроизведение`.
+- Быстрая release-сборка относится к общему fork gate после переноса карточек;
+  исторический argv из старой карточки сохранен в `Исторические результаты`.
+- Статический поиск `terminal_title_label|session-label|SessionLabel` и
+  проверка пробелов и чистоты diff сохраняются как диагностические проверки из
+  старой карточки, а не как канонический runbook текущей карточки.
+
+### Исторические результаты
+
+- Исторически TUI-покрытие уровня карточки фиксировалось целевыми тестами
+  terminal title в `codex-tui`; текущая исполняемая карта сохраняет внутренний argv
+  `["just", "test", "-p", "codex-tui", "terminal_title"]` в
+  `fork-tests.v1`.
+- Зафиксированное ожидаемое runtime-значение для настроенного session label:
+
+  ```text
+  hermione | project | Ready
+  ```
+
+- Исторически слой config/schema проверялся обновлением
+  `codex-rs/core/config.schema.json` после изменения config type; старая карточка
+  фиксировала внутренний argv `just write-config-schema`.
+- Исторически config tests были обновлены с `terminal_title_label: None` в
+  expected defaults.
+- Исторически TUI snapshot-покрытие показывало новый item `session-label` в
+  вариантах selector popup.
+- Старая карточка также сохраняла локальные диагностические команды:
+  `rg -n "terminal_title_label|session-label|SessionLabel" codex-rs` и
+  `git diff --check`.
+- Датированных логов, exit codes или сохраненных путей к логам исходная карточка
+  не фиксировала.
+
+### Известные падения и пропуски
+
+- Checkpoint перед карточкой был пропущен по явному разрешению пользователя от
+  2026-06-08; это исторический skip, а не текущий блокер.
+- Известный сценарий отказа при миграции: при merge `0.137.0`
+  `Tui.terminal_title_label` существовал, но effective `Config` потерял поле.
+  Будущие переносы должны проверять оба слоя.
+- В исходной карточке не было зафиксированных активных красных результатов для
+  terminal title tests, config tests, генерации schema или snapshot review.
 
 ## Ограничения
 
@@ -233,12 +288,14 @@ TerminalTitleItem::SessionLabel => {
   в нескольких popup variants.
 - Long labels должны truncate'иться, иначе terminal title становится шумным.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
-| Добавить `[tui].terminal_title_label` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Добавить item `session-label` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Прокинуть value в effective `Config` | перенесено | "Итоговый контракт", "Риски" |
-| Проверить rendering `hermione`, `project`, `Ready` | перенесено | "Регрессионное покрытие" |
-| Зафиксировать `0.137.0` migration gotcha | перенесено | "Пошаговое воспроизведение", "Риски" |
+| Добавить `[tui].terminal_title_label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
+| Добавить item `session-label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
+| Прокинуть значение в effective `Config` | перенесено в карточку | `Итоговый контракт`, `Проверки`, `Риски` |
+| Проверить рендеринг `hermione`, `project`, `Ready` | перенесено в карточку | `Проверки` |
+| Сохранить владельца `fork tests` и блок `fork-tests.v1` | перенесено в карточку | `Проверки` |
+| Сохранить исторические команды и результаты проверок | перенесено в карточку | `Проверки` |
+| Зафиксировать migration gotcha из `0.137.0` | перенесено в карточку | `Пошаговое воспроизведение`, `Проверки`, `Риски` |

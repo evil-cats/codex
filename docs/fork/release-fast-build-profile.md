@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-06-29
+updated: 2026-07-05
 source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
@@ -11,7 +11,9 @@ source_scope: rust-v0.140.0..hermione-0.140.0
 ## Обзор
 
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет быстрый
-optimized build path: Cargo profile `release-fast` и `just build-fast-release`.
+optimized build path: Cargo profile `release-fast` и skill-owned gate сборки
+`fork build-fast`. В исходниках этому gate соответствует target
+`build-fast-release` в корневом `justfile`.
 
 Эта доработка нужна для сборок fork binary на `f-ms-dev`, когда нужен быстрый
 optimized compile-check с более высокой параллельностью финальных стадий. В
@@ -27,7 +29,7 @@ release profile для workflow, где binary остается пригодны
 | Основные commits | `6be4eae58`, `f2797c6e8` |
 | Migration repair commits | `46cdb741f`, `671afe3ee` |
 | Cargo profile | `[profile.release-fast]` |
-| Just target | `just build-fast-release` |
+| Just target | `build-fast-release` в root `justfile` |
 | Source-of-truth build path в текущем workflow | `f-ms-dev:/home/slader/Projects/codex` |
 | Артефакт установки | `codex-rs/target/release-fast/codex`, stripped |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
@@ -50,8 +52,9 @@ release profile для workflow, где binary остается пригодны
 
 Такой upstream release profile уместен для workflow упаковки, где symbols
 архивируются или обрабатываются отдельно. Для Hermione install workflow это
-лишнее: `just build-fast-release` используется как быстрый путь сборки на
-`f-ms-dev`, а его результат напрямую копируется в `codex-hermione`.
+лишнее: skill-owned `fork build-fast` использует target `build-fast-release` как
+быстрый путь сборки на `f-ms-dev`, а результат этой сборки напрямую копируется в
+`codex-hermione`.
 
 Если `release-fast` просто наследует upstream-настройки `debug` и `strip`,
 binary становится unstripped и может вырасти примерно до гигабайтного размера.
@@ -103,12 +106,10 @@ strip = "symbols"
 
 ### Just target
 
-Root `justfile` должен содержать:
-
-```just
-build-fast-release:
-    cargo build -p codex-cli --profile release-fast
-```
+Корневой `justfile` должен сохранять target `build-fast-release`. Этот target
+остаётся деталью реализации для skill-owned `fork build-fast`: он собирает
+package `codex-cli` с Cargo profile `release-fast`, но не является нормативной
+workflow-командой карточки.
 
 Артефакт сборки:
 
@@ -118,7 +119,7 @@ codex-rs/target/release-fast/codex
 
 Этот артефакт должен быть stripped. Проверочная команда `file` не должна
 показывать `with debug_info, not stripped` для результата
-`just build-fast-release`.
+skill-owned build gate.
 
 ### Source-of-truth workflow
 
@@ -134,7 +135,7 @@ f-ms-dev:/home/slader/Projects/codex
 Тесты и debug-команды требуют отдельного согласия, если они не были явно
 оговорены в текущей задаче.
 
-## Пошаговое воспроизведение
+## Порядок повторения при переносе
 
 ### 1. Добавить profile
 
@@ -145,30 +146,19 @@ f-ms-dev:/home/slader/Projects/codex
 workflow упаковки. Hermione `release-fast` должен переопределять только
 fork-specific настройки артефакта установки.
 
-### 2. Добавить just target
+### 2. Проверить owned target в `justfile`
 
-В root `justfile` добавить:
+В root `justfile` должен оставаться target `build-fast-release`. Он живёт рядом
+с release/build targets, чтобы skill-owned `fork build-fast` имел стабильный
+внутренний build target и не зависел от ручной команды в карточке.
 
-```just
-build-fast-release:
-    cargo build -p codex-cli --profile release-fast
-```
+### 3. Передать build gate родительскому проходу
 
-Target должен жить рядом с release/build commands, чтобы команда была видна в
-обычном build workflow.
-
-### 3. Проверить build на `f-ms-dev`
-
-Если пользователь разрешил compile-check, в source-of-truth checkout
-`f-ms-dev:/home/slader/Projects/codex` запускать:
-
-```bash
-just build-fast-release
-```
-
-Ожидаемый результат: успешная optimized сборка в
-`target/release-fast/codex`. Артефакт должен быть stripped без дополнительного
-ручного `strip`.
+Если пользователь разрешил compile-check, общий проверочный проход должен
+включить skill-owned `fork build-fast` в source-of-truth checkout
+`f-ms-dev:/home/slader/Projects/codex`. Ожидаемый результат: успешная optimized
+сборка в `target/release-fast/codex`. Артефакт должен быть stripped без
+дополнительного ручного `strip`.
 
 ### 4. При migration на новый upstream проверить не только build profile
 
@@ -261,53 +251,69 @@ strip = "symbols"
 ```
 
 Это не откат upstream release profile, а отдельный compile-check на `f-ms-dev` и
-путь сборки для установки. В `0.140.0` migration локально подтверждены code anchors
+путь сборки для установки. В `0.140.0` migration должны сохраняться code anchors
 `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`,
-`strip = "symbols"` и `just build-fast-release`; сборка на `f-ms-dev`
-выполняется через `just build-fast-release`.
-
-## Регрессионное покрытие
-
-У commits `6be4eae58`, `f2797c6e8`, `46cdb741f`, `671afe3ee` не было
-отдельных тестовых additions, закрепляющих именно profile. Поэтому проверка
-этой доработки в основном build-oriented:
-
-- `just build-fast-release`;
-- проверка артефакта:
-
-  ```text
-  file codex-rs/target/release-fast/codex
-  codex-rs/target/release-fast/codex --version
-  ```
-
-  `file` должен показывать stripped binary, а `--version` должен возвращать
-  ожидаемую Hermione version metadata.
-
-- для migration repair: targeted TUI/config tests, если пользователь разрешил.
-
-Исторически commit `697bad938` позже указывал `just build-fast-release` как
-выполненную verification-команду, но эта карточка не утверждает, что этот build
-запускался в текущем turn. Для переноса на `0.140.0` текущий запуск выполнен на
-`f-ms-dev`.
+`strip = "symbols"` и owned target `build-fast-release`; проверка сборки
+принадлежит skill-owned `fork build-fast`.
 
 ## Проверки
 
-Для повторения:
+### Смысловое покрытие
 
-1. На `f-ms-dev:/home/slader/Projects/codex`:
-   - `just build-fast-release`;
-   - `file codex-rs/target/release-fast/codex`;
-   - при install: проверить `codex --version` или целевой binary path.
-2. Локально без Rust/Cargo:
-   - `rg -n "release-fast|build-fast-release|codegen-units = 32|debug = \"none\"|strip = \"symbols\"" codex-rs/Cargo.toml justfile`;
-   - `git diff --check`.
+| Контракт | Обязательность | Где покрывается |
+| --- | --- | --- |
+| `[profile.release-fast]` наследует `release` и задаёт `lto = "thin"`, `codegen-units = 32`, `debug = "none"`, `strip = "symbols"` | `required` | `codex-rs/Cargo.toml`; skill-owned gate сборки `fork build-fast` |
+| Корневой `justfile` сохраняет owned target `build-fast-release` для сборки `codex-cli` с Cargo profile `release-fast` | `required` | `justfile`; skill-owned gate сборки `fork build-fast` |
+| Артефакт установки остаётся `codex-rs/target/release-fast/codex` и должен быть stripped без ручного `strip` | `required` | `fork build-fast`; install workflow для `codex-hermione` |
+| Source-of-truth build path остаётся `f-ms-dev:/home/slader/Projects/codex` | `required` | общий fork workflow и gate сборки `fork build-fast` |
+| Migration repair для `0.137.0` сохраняет effective config и TUI history conversions после upstream API changes | `conditional` | gate сборки `fork build-fast`; targeted TUI/config tests только по отдельному разрешению пользователя |
+
+### Владелец исполняемой карты
+
+`not-applicable`: у этой карточки нет блока `fork-tests.v1`, потому что
+release-fast profile contract покрывается gate сборки, а не card-level test argv.
+Не придумывать автоматизированные card-level tests для профиля без отдельной
+реализации.
+
+Skill-owned owner для проверки доработки: `fork build-fast`.
+
+### Дополнительные gates
+
+| Gate | Когда нужен | Что подтверждает |
+| --- | --- | --- |
+| `fork build-fast` | общий проверочный проход, если пользователь разрешил compile-check | release-fast build, stripped binary и version evidence для `codex-hermione` |
+| `fork cards validate` | общий проверочный проход после правки карточек | strict-форма `## Проверки`, отсутствие runbook command leakage и machine-readable исключение для отсутствующего `fork-tests.v1` |
+
+### Исторические результаты
+
+| Проверка или источник | Результат | Примечание |
+| --- | --- | --- |
+| Commit `6be4eae58` | добавлен Cargo profile `release-fast` с `codegen-units = 16` | исходная fork-доработка |
+| Commit `f2797c6e8` | `release-fast` поднят до `codegen-units = 32` | текущий fork contract сохраняет это значение |
+| Commit `46cdb741f` | восстановлен release-fast build после migration `0.137.0` | terminal title config и TUI history line type repair |
+| Commit `671afe3ee` | lockfile formatting/version normalization и small rustfmt-style layout changes | semantic intent: сохранить build после migration, а не добавить новую feature |
+| Исторический внутренний argv для just target | `cargo build -p codex-cli --profile release-fast` | это деталь реализации target `build-fast-release`, не нормативный runbook карточки |
+| Историческая проверочная команда commit `697bad938` | `just build-fast-release` | была зафиксирована как выполненная verification-команда; текущий turn её не запускал |
+| Историческая форма проверки артефакта | `file codex-rs/target/release-fast/codex`; `codex-rs/target/release-fast/codex --version` | `file` должен показывать stripped binary, а `--version` должен возвращать ожидаемую Hermione version metadata |
+| Migration `0.140.0` | локально подтверждены anchors `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`, `strip = "symbols"` и target `build-fast-release`; сборка была зафиксирована на `f-ms-dev` | эта карточка не утверждает, что build запускался в текущем turn |
+
+### Известные падения и пропуски
+
+- У commits `6be4eae58`, `f2797c6e8`, `46cdb741f`, `671afe3ee` не было
+  отдельных тестовых additions, закрепляющих именно profile.
+- Checkpoint перед карточкой был пропущен по явному разрешению пользователя от
+  2026-06-08.
+- Текущая one-card правка не запускает сборку, тесты, генераторы, форматирование
+  или markdownlint; это обязанность родительского проверочного прохода.
+- Targeted TUI/config tests для migration repair выполняются только если
+  пользователь отдельно разрешил такие проверки.
 
 ## Ограничения
 
 - Не заменять upstream `release` profile: он нужен для canonical
   release-артефакта.
-- Не запускать `cargo build --release` для обычной Hermione compile-check:
-  это проверяет canonical release path, а не быстрый fork build path.
+- Не использовать canonical release build path для обычной Hermione compile-check:
+  он проверяет upstream release profile, а не быстрый fork build path.
 - Не полагаться на ручной `strip` после сборки: он легко теряется при переносе
   и не должен быть частью обычного install workflow.
 - Не строить workflow вокруг локальной сборки с последующим переносом на
@@ -327,14 +333,14 @@ strip = "symbols"
   Hermione patches: terminal title, TUI images, history cells. Карточка
   фиксирует это как обязательную проверочную развилку.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
-| Добавить `[profile.release-fast]` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Добавить `[profile.release-fast]` | перенесено | "Итоговый контракт", "Порядок повторения при переносе" |
 | Использовать thin LTO и `codegen-units = 32` | перенесено | "Итоговый контракт" |
 | Зафиксировать stripped-артефакт, готовый к установке | перенесено | "Обзор", "Зачем это нужно", "Итоговый контракт", "Проверки" |
-| Добавить `just build-fast-release` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Сохранить owned target `build-fast-release` и владельца `fork build-fast` | перенесено | "Итоговый контракт", "Порядок повторения при переносе", "Проверки" |
 | Сохранить `f-ms-dev` как source-of-truth для Rust/Cargo/`just` workflow | перенесено | "Итоговый контракт", "Проверки", "Ограничения" |
 | Зафиксировать `0.137.0` migration repair | перенесено | "Migration repair: `0.137.0`" |
 | Проверить перенос profile на `0.140.0` | перенесено; сборка на `f-ms-dev` должна подтвердить stripped-артефакт | "Migration check: `0.140.0`", "Проверки" |

@@ -393,6 +393,8 @@ inline_output_max_tokens = 1000
 переносе доработки. Исполняемая карта конкретных проверок живет в skill-owned
 `fork tests`.
 
+### Смысловое покрытие
+
 Минимальное смысловое покрытие для реализации:
 
 | Проверка | Ожидаемый результат |
@@ -409,13 +411,27 @@ inline_output_max_tokens = 1000
 | Ошибка сохранения | Tool response не становится failed, есть bounded warning и excerpt |
 | `max_output_tokens` меньше config | Excerpt уважает меньший effective limit |
 
-Для этой fork-доработки в исполняемой карте должно быть представлено такое
-покрытие:
+Смысловые области, которые должны оставаться представленными в исполняемой
+карте:
 
-Исполняемая карта `fork tests`:
+| Область покрытия | Что должно проверяться |
+| --- | --- |
+| Config parsing/default | `[tools.exec].inline_output_max_tokens`, положительное значение и default `1000` |
+| Spill helper | Effective limit, отсутствие файла ниже лимита, sanitized path и exact bytes |
+| Model-visible format | `Output:` без spill и `Output excerpt:` при saved/failure spill |
+| Immediate-finished branch | Завершенная команда выше лимита создает output-файл и bounded excerpt |
+| Отказ sandbox-политики | `SandboxDenied` не создает output-файл и остается обычным `Output:` |
+| Long-running/polling branch | Initial running process и follow-up polling не получают spill |
+
+### Владелец исполняемой карты
+
+Проверки уровня карточки для этой fork-доработки запускает skill-owned владелец
+`fork tests`. Карточка хранит внутренние argv только как машиночитаемые данные
+для этого владельца, а не как нормативную инструкцию для прямого запуска
+`just`/`cargo`.
 
 Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+`fork tests`:
 
 ```json
 {
@@ -473,18 +489,42 @@ inline_output_max_tokens = 1000
 }
 ```
 
-| Область покрытия | Что должно проверяться |
-| --- | --- |
-| Config parsing/default | `[tools.exec].inline_output_max_tokens`, положительное значение и default `1000` |
-| Spill helper | Effective limit, отсутствие файла ниже лимита, sanitized path и exact bytes |
-| Model-visible format | `Output:` без spill и `Output excerpt:` при saved/failure spill |
-| Immediate-finished branch | Завершенная команда выше лимита создает output-файл и bounded excerpt |
-| Отказ sandbox-политики | `SandboxDenied` не создает output-файл и остается обычным `Output:` |
-| Long-running/polling branch | Initial running process и follow-up polling не получают spill |
+### Дополнительные gates
 
 Запуск проверок не задается этой карточкой. Общий порядок запуска принадлежит
-project skill `fork`; конкретные внутренние команды принадлежат skill-owned
+проектному skill `fork`; конкретные внутренние команды принадлежат skill-owned
 wrappers.
+
+Дополнительные gates для общего проверочного прохода:
+
+| Проверочный gate | Когда нужен | Владелец |
+| --- | --- | --- |
+| Структурная форма карточки со статусом `active` | После изменения раздела `Проверки`, блока `fork-tests.v1` или статуса карточки | `fork cards validate` |
+| Исполняемая карта проверок уровня карточки | После изменения списка обязательного покрытия, crate/test target или имени теста | `fork tests` |
+| Артефакт config schema | Если diff реализации меняет `[tools.exec].inline_output_max_tokens` или связанные сгенерированные файлы schema | skill-owned generator wrapper |
+
+### Исторические результаты
+
+В старом разделе не было отдельной таблицы датированных запусков, exit code или
+логов. Исторический смысл сохранен так:
+
+| Исторический факт | Как сохранен |
+| --- | --- |
+| Код, schema и тесты для доработки были отмечены как реализованные в рабочем дереве | Статус сохранен в top-level секции `## Проверка покрытия` |
+| Внутренние `just` argv уже были перечислены в карточке | Они оставлены только внутри блока `fork-tests.v1` как данные для `fork tests`, а не вынесены в runbook |
+| Запуск проверок принадлежит общему fork workflow, а не этой карточке | Явно сохранено в подразделе `Дополнительные gates` |
+
+### Известные падения и пропуски
+
+В старом разделе не было зафиксированных известных падений конкретных проверок.
+Осознанные пропуски и границы покрытия:
+
+| Область | Статус |
+| --- | --- |
+| `write_stdin`, interactive PTY/SSH, MCP tool outputs, code mode и legacy shell | Не входят в MVP этой карточки |
+| Running process после initial yield и follow-up polling | В MVP не получают spill; это ожидаемая ветка покрытия, а не падение |
+| `SandboxDenied` | Не проходит через spill и остается обычным `Output:`; отсутствие output-файла является ожидаемым результатом |
+| Прямой запуск внутренних argv из `fork-tests.v1` | Не является нормативной инструкцией запуска; запуск выполняет skill-owned workflow |
 
 ## Риски и ограничения
 

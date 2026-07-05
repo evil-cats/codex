@@ -2,7 +2,7 @@
 id: fork-internal-docs-workflow
 status: active
 created: 2026-06-08
-updated: 2026-06-19
+updated: 2026-07-05
 source_scope: rust-v0.141.0..hermione-0.141.0
 ---
 
@@ -268,6 +268,54 @@ fork-specific внутренних документов в `docs/`.
 
 ## Проверки
 
+### Смысловое покрытие
+
+Проверочный смысл этой карточки:
+
+- правило `AGENTS.md` сохраняет запрет на широкую пользовательскую документацию
+  upstream Codex и разрешает fork-specific внутренние документы в `docs/`;
+- текущий handoff по fork-доработкам живет в `docs/fork/`, а project skill
+  `fork` остается владельцем workflow подагента одной карточки;
+- старые каталоги `docs/architecture`, `docs/plans`, `docs/follow-ups` и
+  `docs/backlog` не являются обязательными для текущей миграции и не
+  восстанавливаются механически;
+- `docs/.markdownlint-cli2.yaml` остается локальной lint-конфигурацией для
+  внутренних документов, а `docs/table-rendering-long-links-test.md` остается
+  историческим визуальным fixture;
+- видимые заголовки, labels и обычная проза в fork-документах остаются
+  русскими, а machine-readable status enum values остаются английскими;
+- исторические lint-заметки сохранены как контекст будущей очистки, если
+  legacy docs-каталоги снова появятся или будут проверяться по старой истории.
+
+### Владелец исполняемой карты
+
+Машинно проверяемое исключение: `manual-required` - у карточки нет отдельного
+блока `fork-tests.v1`, потому что она фиксирует документационный
+workflow-контракт, а не runtime, API, schema, config, TUI или protocol-поведение
+с регрессионной проверкой уровня карточки.
+
+Смысловое подтверждение этой карточки выполняет review родителя: нужно
+сверить правило `AGENTS.md`, текущий handoff-каталог `docs/fork/`, отсутствие
+обязательности legacy docs-каталогов и сохранение исторических lint-заметок.
+Если будущая задача превратит этот контракт в автоматизированное покрытие
+уровня карточки, тогда нужно добавить реальный блок `fork-tests.v1` и связать
+его со skill-owned владельцем запуска.
+
+### Дополнительные gates
+
+- Общий родительский проход должен проверить форму active fork-карточек после
+  этой правки.
+- Для Markdown-проверки использовать локальную конфигурацию
+  `docs/.markdownlint-cli2.yaml` и явные пути или globs; простой запуск только с
+  config исторически мог проверить ноль файлов.
+- Проверка whitespace/diff для документации относится к общему проверочному
+  проходу родителя, а не к нормативному runbook этой карточки.
+- Gates для schema, generator, snapshot, build и install не требуются этой
+  карточке, пока будущая задача не меняет код, config/schema, UI, API или
+  release артефакты.
+
+### Исторические результаты
+
 Историческая read-only inventory запускала:
 
 - `git status --short`;
@@ -277,19 +325,45 @@ fork-specific внутренних документов в `docs/`.
 - `markdownlint-cli2 --config docs/.markdownlint-cli2.yaml`;
 - explicit markdownlint globs для docs-каталогов.
 
-Для будущего cleanup или воспроизведения:
+Результаты, уже зафиксированные при инвентаризации:
+
+- `markdownlint-cli2 --config docs/.markdownlint-cli2.yaml` сам по себе не
+  проверил ни одного файла в одном read-only запуске;
+- явные globs проверили 18 Markdown-файлов и нашли существующие lint issues в
+  committed docs;
+- для `docs/fork/*.md` работает прямой вызов по пути:
+  `markdownlint-cli2 --config docs/.markdownlint-cli2.yaml docs/fork/*.md`;
+- `git diff --check rust-v0.137.0..HEAD -- docs` был частью исторической
+  inventory для области `docs/`.
+
+Сохраненные исторические команды для воспроизведения прежней inventory или
+cleanup-проверки, а не нормативный runbook текущей миграции:
 
 ```bash
+git status --short
+git diff --name-status rust-v0.137.0..HEAD -- docs
+git diff --stat rust-v0.137.0..HEAD -- docs
 git diff --check rust-v0.137.0..HEAD -- docs
+markdownlint-cli2 --config docs/.markdownlint-cli2.yaml
 markdownlint-cli2 --config docs/.markdownlint-cli2.yaml "docs/architecture/**/*.md" "docs/plans/**/*.md" "docs/follow-ups/**/*.md" "docs/table-rendering-long-links-test.md"
-```
-
-Для текущих карточек `docs/fork`:
-
-```bash
 markdownlint-cli2 --config docs/.markdownlint-cli2.yaml docs/fork/*.md
 git diff --check
 ```
+
+### Известные падения и пропуски
+
+- Исторические lint issues перечислены в разделе `Исторические lint-заметки`:
+  `MD038/no-space-in-code`, `MD056/table-column-count` и unused reference
+  definitions в legacy docs-каталогах.
+- В текущей миграции на `rust-v0.141.0` legacy paths могут отсутствовать; не
+  восстанавливай `docs/architecture`, `docs/plans`, `docs/follow-ups` или
+  `docs/backlog` только ради этой карточки.
+- Простой markdownlint-вызов с config может проверить ноль файлов; для реальной
+  проверки нужны explicit globs или прямые пути.
+- Workflow checker для legacy-каталогов намеренно не запускается, пока проект не
+  перенесет эти каталоги в текущую workflow-модель.
+- Не утверждать, что markdownlint чист для committed docs, пока не прошли
+  explicit globs.
 
 ## Ограничения
 
@@ -314,7 +388,7 @@ git diff --check
 - Исторические docs могут расходиться с текущим checkout. Считай старые
   каталоги историческим контекстом, пока текущая задача не вернет их явно.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |

@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-06-20
+updated: 2026-07-05
 source_scope: rust-v0.141.0..HEAD
 ---
 
@@ -117,13 +117,14 @@ read_template_path: toml.read_template_path,
 
 ### 2. Обновить schema
 
-Если меняется `ConfigToml` или nested config type, проектное правило требует
-обновить `codex-rs/core/config.schema.json` через `just write-config-schema`.
-Для этой fork-доработки schema должна содержать поле `read_template_path` внутри
-definitions для memories config.
+Если меняется `ConfigToml` или nested config type, schema-артефакт
+`codex-rs/core/config.schema.json` должен быть синхронизирован через
+skill-owned владельца `fork generators`. Для этой fork-доработки schema должна
+содержать поле `read_template_path` внутри definitions для memories config.
 
-Важно: в текущем workflow Rust/Cargo/`just` запускаются только на
-`f-ms-dev:/home/slader/Projects/codex`, если пользователь не разрешил иначе.
+Карточка не является runbook запуска генератора. Историческое упоминание
+внутреннего argv генерации сохранено ниже только как след старого формата
+карточки, а не как нормативный шаг воспроизведения.
 
 ### 3. Прокинуть путь в extension config
 
@@ -206,13 +207,38 @@ unknown placeholders делают read-path prompt unavailable.
 `codex-rs/ext/memories/templates/memories/read_path.md`, а не исторический путь
 в `codex-rs/memories/read`.
 
-## Регрессионное покрытие
+## Проверки
+
+### Смысловое покрытие
 
 Покрытие, которое должно присутствовать в diff:
 
+- `codex-rs/config/src/types.rs`:
+  - `MemoriesToml` содержит `read_template_path: Option<AbsolutePathBuf>`;
+  - `MemoriesConfig` содержит такое же поле;
+  - `Default for MemoriesConfig` ставит `read_template_path: None`;
+  - `From<MemoriesToml> for MemoriesConfig` переносит значение без дополнительной
+    нормализации.
+- `codex-rs/core/config.schema.json` содержит schema-подтверждение для
+  `read_template_path` внутри definitions memories config; актуализация этого
+  сгенерированного артефакта принадлежит `fork generators`.
+- `codex-rs/ext/memories/src/extension.rs` прокидывает
+  `config.memories.read_template_path.clone()` в `MemoriesExtensionConfig` и
+  передает `config.read_template_path.as_ref()` в prompt builder.
+- `codex-rs/ext/memories/src/prompts.rs` выбирает embedded template при `None`,
+  асинхронно читает configured template при `Some(path)`, рендерит только
+  placeholders `{{ base_path }}` и `{{ memory_summary }}` и возвращает `None`
+  при unreadable, unparsable или unknown-placeholder template.
+- `codex-rs/memories/README.md` документирует `[memories].read_template_path`,
+  разрешенные placeholders, fail-closed поведение для unknown placeholders и
+  фактический путь к runtime-шаблону
+  `codex-rs/ext/memories/templates/memories/read_path.md`.
+
+Регрессионное покрытие, которое должна сохранять доработка:
+
 - `codex-rs/core/src/config/config_tests.rs`:
   - `test_toml_parsing` проверяет `[memories].read_template_path`;
-  - effective `MemoriesConfig` содержит `read_template_path`.
+  - итоговый `MemoriesConfig` содержит `read_template_path`.
 - `codex-rs/ext/memories/src/prompts_tests.rs`:
   - `build_memory_tool_developer_instructions_renders_embedded_template`
     вызывает builder с `None`;
@@ -220,21 +246,17 @@ unknown placeholders делают read-path prompt unavailable.
     создаёт temp template, использующий `{{ base_path }}` и
     `{{ memory_summary }}`, и проверяет точный результат.
 - `codex-rs/ext/memories/src/tests.rs`:
-  - test configs явно задают `read_template_path: None`, если создают
+  - тестовые конфигурации явно задают `read_template_path: None`, если создают
     `MemoriesExtensionConfig` напрямую.
 
-Полезный дополнительный тест при будущей правке: configured template с
-unknown placeholder должен возвращать `None`.
+Полезный дополнительный тест при будущей правке: configured template с unknown
+placeholder должен возвращать `None`.
 
-## Проверки
+### Владелец исполняемой карты
 
-Историческая карточка не утверждает, что проверки были запущены в текущем turn.
-Для повторения доработки разумные проверки:
-
-Исполняемая карта `fork tests`:
-
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+Проверки уровня карточки запускает `fork tests`. Внутренние argv живут в блоке
+`fork-tests.v1` ниже и являются данными для skill-owned владельца, а не ручным
+runbook для прямого запуска `cargo` или `just`.
 
 ```json
 {
@@ -265,35 +287,65 @@ unknown placeholder должен возвращать `None`.
 }
 ```
 
-1. На `f-ms-dev:/home/slader/Projects/codex`:
-   - `just write-config-schema`;
-   - целевые тесты для `codex-core` config и `codex-ext-memories`, если
-     пользователь разрешил тесты.
-2. Локально без Rust/Cargo:
-   - `git diff --check`;
-   - `rg -n "read_template_path|build_memory_tool_developer_instructions" codex-rs`.
+### Дополнительные gates
+
+- Форму карточки, наличие strict-подразделов `Проверки` и связь с блоком
+  `fork-tests.v1` проверяет `fork cards validate`.
+- Gate schema/generator для `codex-rs/core/config.schema.json` принадлежит
+  `fork generators`; прямой внутренний argv генерации не должен быть
+  нормативным шагом в карточке.
+- Общий проверочный проход родительского агента выбирает нужные skill-owned
+  проверки после прохода по карточкам. Эта карточка не должна подменять его
+  списком прямых `just`/`cargo` команд.
+
+### Исторические результаты
+
+- Историческая карточка не утверждает, что проверки были запущены в текущем
+  turn.
+- Checkpoint перед карточкой был пропущен по явному разрешению пользователя от
+  2026-06-08.
+- Старый формат карточки указывал `just write-config-schema` как прямой способ
+  обновить `codex-rs/core/config.schema.json`. В новом формате это сохранено
+  только как исторический контекст старого подтверждения schema/generator;
+  активный владелец такого обновления - `fork generators`.
+- Старый формат карточки также перечислял локальные ручные smoke-подсказки
+  `git diff --check` и
+  `rg -n "read_template_path|build_memory_tool_developer_instructions" codex-rs`.
+  Они не были зафиксированы как результат текущего запуска и не являются
+  нормативным runbook карточки.
+
+### Известные падения и пропуски
+
+- Если configured template нельзя прочитать или нельзя распарсить, memory
+  developer prompt становится недоступным (`None`), а config load не падает.
+- Если configured template содержит unknown placeholder, prompt становится
+  недоступным (`None`); частичный render запрещен.
+- Если `memory_summary.md` пустая или отсутствует, prompt не добавляется.
+- Дополнительный регрессионный тест на unknown placeholder полезен при будущей
+  правке, но в текущем `fork-tests.v1` отдельным argv не закреплен.
 
 ## Ограничения
 
-- Не менять пользовательский `hermione.config.toml` в рамках этой doработки.
+- Не менять пользовательский `hermione.config.toml` в рамках этой доработки.
 - Не писать сам template в repo, если задача только добавляет config surface.
 - Не использовать unknown placeholders как частичный render: это должно быть
   fail-closed через `None`.
-- Не запускать Rust/Cargo/`just` локально в текущем workflow; использовать
-  `f-ms-dev`, если пользователь разрешил нужную проверку.
+- Не запускать Rust/Cargo/`just` как нормативный шаг из карточки. Для fork
+  workflow использовать skill-owned владельцев, а внутренние argv хранить только
+  в `fork-tests.v1` или историческом подтверждении.
 
 ## Риски
 
-- Upstream может переносить memory extension code между crates. При rebase
-  искать живой owner по `build_memory_tool_developer_instructions`, а не
+- Upstream может переносить код memory extension между crates. При rebase
+  искать живого владельца по `build_memory_tool_developer_instructions`, а не
   полагаться на старый путь.
-- Silent `None` при unreadable template означает, что профиль может лишиться
-  memory instructions без config-load ошибки. Это осознанная деградация, но при
+- Тихий `None` при unreadable template означает, что профиль может лишиться
+  memory instructions без ошибки загрузки config. Это осознанная деградация, но при
   диагностике prompt нужно проверять путь и placeholders.
-- Если schema не обновить, config key будет работать в Rust type, но tooling и
+- Если schema не обновить, config key будет работать в Rust type, но инструменты и
   редакторские подсказки будут устаревшими.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
@@ -302,4 +354,5 @@ unknown placeholder должен возвращать `None`.
 | Поддержать только `base_path` и `memory_summary` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Учесть перенос owner crate после upstream merge | перенесено | "Пошаговое воспроизведение", "Риски" |
 | Синхронизировать README с фактическим путём к runtime-шаблону | перенесено | "Карта файлов", "Пошаговое воспроизведение" |
-| Зафиксировать тесты и проверки | перенесено | "Регрессионное покрытие", "Проверки" |
+| Зафиксировать тесты, gates и владельца исполняемой карты | перенесено | "Проверки" |
+| Сохранить историческое подтверждение schema/generator без нормативного прямого runbook | перенесено | "Проверки", "Ограничения" |

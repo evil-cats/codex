@@ -2,7 +2,7 @@
 id: fork-hermione-version-metadata
 status: active
 created: 2026-06-08
-updated: 2026-06-19
+updated: 2026-07-05
 source_scope: rust-v0.141.0..hermione-0.141.0
 ---
 
@@ -155,9 +155,11 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 
 Это нужно, чтобы tests не зависели от текущего package version.
 
-## Регрессионное покрытие
+## Проверки
 
-Покрытие, которое должно быть в diff:
+### Смысловое покрытие
+
+Обязательное покрытие для diff:
 
 - `codex-rs/cli/src/doctor/updates.rs`:
   - `is_newer_ignores_build_metadata`;
@@ -167,13 +169,21 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
   - `build_metadata_is_ignored_for_version_comparison`;
   - проверяет тот же parsing и comparison.
 - Existing tests для plain semver, prerelease и whitespace должны остаться.
+- Version metadata evidence должно подтверждать, что:
+  - `codex-cli` и `codex-tui` имеют explicit
+    `version = "0.141.0+hermione"`;
+  - `Cargo.lock` фиксирует `codex-cli` и `codex-tui` как
+    `0.141.0+hermione`;
+  - остальные workspace packages синхронизированы с upstream workspace version
+    `0.141.0`;
+  - TUI version constant берет package version at compile time, но в tests
+    остается стабильным `CODEX_CLI_VERSION = "0.0.0"`.
 
-## Проверки
+### Владелец исполняемой карты
 
-Исполняемая карта `fork tests`:
-
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+Card-level проверки этой карточки запускает skill-owned `fork tests`.
+Внутренние argv живут в блоке `fork-tests.v1` ниже; карточка хранит их как
+данные исполняемой карты, а не как нормативный runbook ручного запуска.
 
 ```json
 {
@@ -199,7 +209,25 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 }
 ```
 
-Для повторения доработки:
+### Дополнительные gates
+
+Для общего проверочного прохода родительского агента нужны:
+
+- card-level CLI/TUI проверки через владельца исполняемой карты `fork tests`;
+- fast build/version evidence через skill-owned build gate;
+- проверка `codex --version` установленного binary только если задача включает
+  install workflow;
+- текстовая сверка manifests, lockfile, `split_once('+')` и
+  `CARGO_PKG_VERSION`, если Rust/Cargo запуск недоступен или отложен.
+
+Точные внутренние argv для card-level проверок не повторяются здесь как runbook:
+они принадлежат блоку `fork-tests.v1` выше.
+
+### Исторические результаты
+
+Старый формат карточки хранил следующий checklist как исторический контекст.
+Эти команды и маршруты оставлены только как historical evidence; актуальный
+запуск проверок принадлежит skill-owned workflow.
 
 1. На `f-ms-dev:/home/slader/Projects/codex`, если пользователь разрешил:
    - целевые тесты для CLI/TUI update version modules;
@@ -209,6 +237,23 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 2. Локально без Rust/Cargo:
    - `rg -n "0\\.141\\.0\\+hermione|split_once\\('\\+'\\)|CARGO_PKG_VERSION" codex-rs`;
    - `git diff --check`.
+
+В этой карточке не было зафиксировано свежих stdout/stderr, log path, timestamp
+или pass/fail результата для этих исторических команд. Build/version evidence
+зафиксировано как contract: shipped CLI/TUI crates должны показывать
+`0.141.0+hermione`, а update comparison должен сравнивать base version без
+build metadata.
+
+### Известные падения и пропуски
+
+- TUI card-level argv сохраняет known skip:
+  `ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route`.
+- Checkpoint перед карточкой пропущен по явному разрешению пользователя от
+  2026-06-08.
+- Install/version check требуется только если задача включает install workflow.
+- Свежие сборка, тесты, генераторы, форматирование и `fix` в рамках этой
+  subagent-карточки не запускались; их выполняет общий проверочный проход
+  родительского агента.
 
 ## Ограничения
 
@@ -229,12 +274,14 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 - Lockfile diff может быть большим после upstream migration. Нужно отделять
   semantic Hermione version metadata от Cargo formatting/version normalization.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
 | Explicit `0.141.0+hermione` для CLI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Explicit `0.141.0+hermione` для TUI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Ignore build metadata in update comparison | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
+| Ignore build metadata in update comparison | перенесено | "Итоговый контракт", "Проверки" |
 | Stable TUI test version | перенесено | "Пошаговое воспроизведение" |
 | Lockfile migration nuance | перенесено | "Пошаговое воспроизведение", "Риски" |
+| Card-level проверки принадлежат `fork tests` | перенесено | "Проверки" |
+| Исторические команды не являются runbook | перенесено | "Проверки" |

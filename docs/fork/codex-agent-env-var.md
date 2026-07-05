@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-06-19
+updated: 2026-07-05
 source_scope: working-tree
 ---
 
@@ -427,15 +427,37 @@ rollout не удалось получить.
 
 ## Проверки
 
-Проверки должны запускаться на `f-ms-dev:/home/slader/Projects/codex`, потому
-что локально в этом workflow исходники правятся, а Rust/Cargo/`just` сборка и
-тесты выполняются на удаленной сборочной машине.
+### Смысловое покрытие
 
-Запланированные проверки для этой доработки:
+Проверочное покрытие этой карточки должно подтверждать следующие контракты:
 
-Исполняемая карта `fork tests`:
+- `codex-protocol` объявляет `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`,
+  `CODEX_ROLLOUT_ENV_VAR` рядом с `CODEX_THREAD_ID_ENV_VAR`.
+- `RuntimeEnv` добавляет `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и
+  `CODEX_THREAD_ID` после `ShellEnvironmentPolicy.include_only`, `exclude` и
+  `set`.
+- Runtime-переменные перезаписывают одноименные значения из inherited env и
+  shell env policy, если значение текущего запуска известно.
+- `CODEX_AGENT` использует тот же helper имени агента, что
+  `get_thread_info.agent_name`.
+- `shell_command` передает в env имя агента, `ToolInvocation.call_id`,
+  `Session.thread_id` и best-effort `Session::hook_transcript_path()`.
+- Пользовательская `/shell`-команда генерирует UUID `CODEX_CALL_ID` до сборки
+  env и использует тот же id в `ExecCommandBegin`/`ExecCommandEnd`.
+- Unified exec добавляет runtime-переменные поверх `local_policy_env`, чтобы
+  exec-server overlay видел их как runtime-only изменение.
+- Обертка shell snapshot восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`,
+  `CODEX_ROLLOUT` и `CODEX_THREAD_ID` из live env после `source` snapshot.
+- `CODEX_ROLLOUT` остается best-effort подсказкой: отсутствие пути не блокирует
+  запуск CLI-команды.
+- Config schema, app-server protocol, TUI и persisted data model не меняются
+  этой доработкой.
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
+### Владелец исполняемой карты
+
+Проверки уровня карточки запускает skill-owned command `fork tests` для карточки
+`fork-codex-agent-env-var`. Внутренние argv не являются runbook карточки: они
+живут в блоке `fork-tests.v1` ниже как данные исполняемой карты, которые читает
 `fork tests`.
 
 ```json
@@ -492,32 +514,37 @@ rollout не удалось получить.
 }
 ```
 
-| Команда | Где запускать | Ожидаемый результат |
-| --- | --- | --- |
-| `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |
-| `just test -p codex-core exec_env` | `f-ms-dev`, `codex-rs/` | Проходят tests сборки shell env и вставки runtime-переменных |
-| `just test -p codex-core agent_name` | `f-ms-dev`, `codex-rs/` | Проходят tests общего helper-а имени агента |
-| `just test -p codex-core thread_info` | `f-ms-dev`, `codex-rs/` | `get_thread_info` сохраняет прежний контракт `agent_name` через общий helper |
-| `just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | `f-ms-dev`, `codex-rs/` | Snapshot wrapper сохраняет runtime-переменные |
-| `just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | `f-ms-dev`, `codex-rs/` | Exec-server overlay включает runtime-переменные как runtime-изменения |
-| `just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | `f-ms-dev`, `codex-rs/` | `shell_command` env получает `CODEX_CALL_ID`, `CODEX_ROLLOUT`, `CODEX_AGENT` и `CODEX_THREAD_ID` |
-| `just test -p codex-protocol shell_environment` | `f-ms-dev`, `codex-rs/` | Protocol env builder вставляет runtime-переменные после `include_only` |
-| `just fix -p codex-core` | `f-ms-dev`, `codex-rs/` | Clippy/fix pass не оставляет обязательных исправлений |
-| `just fix -p codex-protocol` | `f-ms-dev`, `codex-rs/` | Protocol clippy/fix pass не оставляет обязательных исправлений |
-| `just build-fast-release` | `f-ms-dev`, `codex-rs/` | Release-fast binary собирается для установки |
+### Дополнительные gates
+
+- `fork format` покрывает обязательное форматирование после кодовых изменений.
+  Для текущей карточки этот gate нужен, когда перенос меняет Rust-код или
+  сгенерированные артефакты, связанные с Rust.
+- `fork build-fast` покрывает release-fast сборку, если общий проход должен
+  подтвердить устанавливаемый fork-бинарник.
+- `fork install` не является обязательным gate карточки; установка выполняется
+  только после отдельного явного решения.
+- `fork generators` для этой карточки `not-applicable`: доработка не вводит
+  config key, app-server API, protocol schema fixture или другой сгенерированный
+  артефакт.
+
+### Исторические результаты
+
+Исторические команды ниже сохранены как подтверждение старого удаленного workflow на
+`f-ms-dev:/home/slader/Projects/codex`. Они не являются нормативным runbook
+карточки; текущий запуск проверок должен идти через skill-owned commands.
 
 Фактические результаты 2026-06-17:
 
 | Команда | Результат |
 | --- | --- |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fmt` | прошла на `f-ms-dev`; rustfmt изменил `codex-rs/core/src/exec_env_tests.rs` и `codex-rs/protocol/src/shell_environment.rs`, изменения синхронизированы локально |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 tests run, 12 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core agent_name` | прошла: 6 tests run, 6 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core thread_info` | прошла: 5 tests run, 5 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 tests run, 2 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 test run, 1 passed |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 тестов запущены, 12 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core agent_name` | прошла: 6 тестов запущены, 6 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core thread_info` | прошла: 5 тестов запущены, 5 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 теста запущены, 2 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" cargo check -p codex-cli -p codex-app-server -p codex-rmcp-client -p codex-exec-server -p codex-linux-sandbox` | прошла за 2m00s; проверены crates с обновленными точками вызова `create_env(..., agent_name)` |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m05s |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-protocol` | прошла за 37.68s |
@@ -529,22 +556,17 @@ rollout не удалось получить.
 | Команда | Результат |
 | --- | --- |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fmt` | прошла на `f-ms-dev`; remote diff совпал с локальным diff |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 tests run, 12 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 tests run, 2 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_defaults_to_non_login_when_disallowed` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol` | прошла: 229 tests run, 229 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core` | запуск выполнен; итог `2680 passed, 68 failed, 15 skipped`. Видимые причины failures относятся к окружению сборочной машины: `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, отсутствие `target/debug/test_stdio_server` для stdio MCP tests и timeouts в code-mode/network-denial сценариях |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 тестов запущены, 12 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 теста запущены, 2 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_defaults_to_non_login_when_disallowed` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol` | прошла: 229 тестов запущены, 229 прошли |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core` | запуск выполнен; итог `2680 passed, 68 failed, 15 skipped`. Видимые причины падений относятся к окружению сборочной машины: `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, отсутствие `target/debug/test_stdio_server` для тестов stdio MCP и тайм-ауты в code-mode/network-denial сценариях |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m59s |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-protocol` | прошла за 14.75s |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just build-fast-release` | прошла за 5m53s |
-
-Полный workspace `just test` не запускался: проектное правило требует
-отдельного подтверждения перед полным suite. Для текущей доработки выполнены
-узкие tests, полный `codex-protocol`, полный `codex-core` с окруженческими
-failures, `fix` и release-fast сборка.
 
 Фактическая проверка 2026-06-19 после merge нового upstream-релиза:
 
@@ -559,9 +581,25 @@ failures, `fix` и release-fast сборка.
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Обертка snapshot восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` из live-окружения после `source` snapshot |
 
 Кодовых изменений по этой карточке после проверки 2026-06-19 не потребовалось.
-Проверочные команды, сборка, форматирование, генераторы и `fix` в этом запуске
-не выполнялись по skill-owned one-card правилу; основной агент должен запустить
-нужные проверки отдельно.
+
+### Известные падения и пропуски
+
+- Полный запуск `codex-core` 2026-06-18 из исторических результатов завершился с
+  итогом `2680 passed, 68 failed, 15 skipped`. Видимые причины падений
+  относились к окружению сборочной машины:
+  `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, отсутствие
+  `target/debug/test_stdio_server` для тестов stdio MCP и тайм-ауты в
+  code-mode/network-denial сценариях.
+- Полный workspace-тестовый проход исторически не запускался: проектное правило
+  требовало отдельного подтверждения перед полным набором. Для этой доработки
+  были выполнены узкие тесты, полный `codex-protocol`, полный `codex-core` с
+  окруженческими падениями, `fix` и release-fast сборка.
+- Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+  запуске 2026-06-19 не выполнялись по skill-owned one-card правилу; основной
+  агент должен был запустить нужные проверки отдельно.
+- При текущем обновлении формата раздела `Проверки` проверки также не
+  запускались по one-card правилу; общий проверочный проход должен подтвердить
+  форму карточки и исполняемую карту через skill-owned workflow.
 
 ## Runtime, сборка и установка
 

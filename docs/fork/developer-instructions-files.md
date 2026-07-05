@@ -169,24 +169,25 @@ let developer_instructions = developer_instructions.or_else(|| {
 
 ### 4. Обновить schema
 
-После изменения `ConfigToml` обновить `codex-rs/core/config.schema.json` через
-`just write-config-schema` на `f-ms-dev`, если пользователь разрешил запуск.
+После изменения `ConfigToml` обновление `codex-rs/core/config.schema.json`
+принадлежит skill-owned gate `fork generators`.
 
-Schema должна показывать `developer_instructions_files` как array path values
-с default `[]`.
+Schema должна показывать `developer_instructions_files` как array со значениями
+paths и default `[]`.
 
-## Регрессионное покрытие
+## Ожидаемое покрытие diff
 
 Покрытие, которое должно быть в diff:
 
-- TOML parsing:
+- Парсинг TOML:
   - `developer_instructions_files = ["<abs-a>", "<abs-b>"]` десериализуется в
     `ConfigToml.developer_instructions_files`.
-- Relative path normalization:
-  - relative entries in array become absolute against config base dir.
-- Runtime assembly:
+- Нормализация relative paths:
+  - relative entries в array становятся absolute относительно base dir
+    config-файла.
+- Сборка runtime-значения:
   - `developer_instructions_files_are_appended_in_order` проверяет inline
-    section, первый файл и второй файл, соединённые через `\n\n`.
+     section, первый файл и второй файл, соединённые через `\n\n`.
   - `developer_instructions_files_skip_empty_files_with_warning` проверяет, что
     empty file пропущен, непустой файл добавлен, warning есть.
   - `developer_instructions_files_reject_missing_file` проверяет `NotFound` и
@@ -197,10 +198,31 @@ Schema должна показывать `developer_instructions_files` как a
 
 ## Проверки
 
-Исполняемая карта `fork tests`:
+### Смысловое покрытие
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+Покрытие уровня карточки должно подтверждать весь контракт
+`developer_instructions_files`:
+
+- парсинг TOML: `developer_instructions_files = ["<abs-a>", "<abs-b>"]`
+  десериализуется в `ConfigToml.developer_instructions_files`;
+- нормализация relative paths: relative entries в array становятся absolute
+  относительно base dir config-файла;
+- сборка runtime-значения: inline section, первый файл и второй файл
+  добавляются в порядке config list и соединяются через `\n\n`;
+- пустой файл пропускается, непустой файл добавляется, startup warning содержит
+  путь пустого файла;
+- missing file возвращает `NotFound`, а текст ошибки содержит путь и исходную
+  ошибку;
+- runtime override `developer_instructions` не читает файлы из config и
+  возвращает переданное override-значение;
+- schema artifact показывает `developer_instructions_files` как array со
+  значениями paths и default `[]`.
+
+### Владелец исполняемой карты
+
+Проверки уровня карточки запускает skill-owned command `fork tests`. Карточка
+хранит машиночитаемый блок `fork-tests.v1`; внутренние `argv` ниже являются
+данными для `fork tests`, а не пользовательским runbook прямого запуска.
 
 ```json
 {
@@ -214,24 +236,45 @@ Schema должна показывать `developer_instructions_files` как a
 }
 ```
 
-Для повторения доработки:
+### Дополнительные gates
 
-1. На `f-ms-dev:/home/slader/Projects/codex`, если пользователь разрешил:
-   - `just write-config-schema`;
-   - targeted config tests для `codex-core`;
-   - `just build-fast-release` как compile-check.
-2. Локально без Rust/Cargo:
-   - `git diff --check`;
-   - `rg -n "developer_instructions_files" codex-rs`.
+- Обновление schema для `codex-rs/core/config.schema.json` принадлежит
+  `fork generators`.
+- Регрессионное покрытие уровня карточки принадлежит skill-owned владельцу
+  `fork tests`; фильтр карточки и внутренние `argv` задаются skill-owned
+  workflow и блоком `fork-tests.v1`.
+- Проверка сборки в общем fork-проходе принадлежит `fork build-fast`.
+- Проверка формы и owner artifact карточки принадлежит `fork cards validate`.
+- Ручные audit-подсказки старого текста (`git diff --check` и поиск
+  `developer_instructions_files` по `codex-rs`) не являются заменой
+  skill-owned gates.
 
-В текущем turn карточка создана без запуска тестов/debug и без локального
-Rust/Cargo/`just`.
+### Исторические результаты
+
+В текущем проходе карточка создана без запуска тестов, отладочных команд и без
+локального Rust/Cargo/`just`.
 
 В миграционном проходе 2026-06-19 карточка сверена с текущей рабочей копией без
 запуска сборки, тестов, генераторов, форматирования или `fix` по ограничению
 основного агента. Для закрытия пробела покрытия добавлен тест
 `developer_instructions_override_skips_files`, но он не запускался в этом
 подагентском проходе.
+
+Старый текст карточки называл прямые команды `just write-config-schema` и
+`just build-fast-release` как маршрут повторения на `f-ms-dev` при разрешении
+пользователя. После перехода на skill-owned workflow они сохранены только как
+исторический след прежнего runbook: актуальные владельцы этих проверок -
+`fork generators` и `fork build-fast`.
+
+### Известные падения и пропуски
+
+- Тесты, сборка, генераторы, форматирование и `fix` не запускались в текущем
+  подагентском проходе.
+- Тест `developer_instructions_override_skips_files`, добавленный в
+  миграционном проходе 2026-06-19, не запускался в том подагентском проходе.
+- Известных зафиксированных падений для этой карточки нет; оставшийся риск -
+  schema artifact может устареть, если после изменения `ConfigToml` не пройти
+  `fork generators`.
 
 ## Ограничения
 
@@ -255,13 +298,13 @@ Rust/Cargo/`just`.
 - Если schema не обновить, поле может работать в runtime, но быть невидимым
   для config tooling.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
 | Добавить top-level `developer_instructions_files` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Сохранить inline `developer_instructions` первой секцией | перенесено | "Итоговый контракт" |
-| Читать файлы в заданном порядке | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
-| Empty file как warning | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
-| Missing file как error | перенесено | "Итоговый контракт", "Регрессионное покрытие" |
-| Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения", "Регрессионное покрытие" |
+| Читать файлы в заданном порядке | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
+| Empty file как warning | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
+| Missing file как error | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
+| Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения", "Ожидаемое покрытие diff" |

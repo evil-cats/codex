@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-06-08
+updated: 2026-07-05
 source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 ---
 
@@ -303,9 +303,11 @@ if let Some(project_name) = &self.project_name {
 потому что значение должно проходить XML-escaping так же, как другие text
 elements.
 
-## Регрессионное покрытие
+## Проверки
 
-Покрытие, которое должно быть в diff:
+### Смысловое покрытие
+
+Обязательное покрытие этой карточки:
 
 - `serialize_environment_context_with_project_name`:
   - создает `EnvironmentContext::new(...)`;
@@ -320,18 +322,19 @@ elements.
   - тем самым подтверждает, что используется workspace root, а не имя последнего
     компонента `cwd`.
 - `diff_environment_context_includes_changed_project_name`:
-  - создает old `TurnContextItem` с root `/old-repo`;
-  - создает new `EnvironmentContext` с `project_name = Some("new-repo")`;
+  - создает старый `TurnContextItem` с root `/old-repo`;
+  - создает новый `EnvironmentContext` с `project_name = Some("new-repo")`;
   - проверяет наличие `<project_name>new-repo</project_name>`;
   - проверяет отсутствие `<project_name>old-repo</project_name>`.
 
-Существующие тесты для filesystem reconstruction остаются важными, потому что
+Существующие тесты для восстановления `filesystem` остаются важными, потому что
 новая логика переиспользует тот же `workspace_roots_from_turn_context_item`.
 
-Исполняемая карта `fork tests`:
+### Владелец исполняемой карты
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+Проверки уровня карточки запускает skill-owned команда `fork tests`.
+Карточка не является нормативным runbook запуска `just` или `cargo`: внутренние
+argv хранятся только как данные для `fork tests` в блоке `fork-tests.v1` ниже.
 
 ```json
 {
@@ -345,14 +348,26 @@ elements.
 }
 ```
 
-## Проверки для повторения
+### Дополнительные gates
 
-### Локально
+- Доработка меняет видимый модели контекст в `codex-core`, поэтому
+  регрессионное покрытие уровня карточки принадлежит `fork tests` и блоку
+  `fork-tests.v1`.
+- Схема `Config`, протокол app-server и внешние API не меняются; отдельные
+  проверки генераторов schema/API для этой карточки не требуются.
+- TUI-поверхности не меняются; проверка snapshots для `codex-tui` не требуется.
+- `fork format`, широкий `fork tests` и `fork build-fast` относятся к общему
+  проверочному проходу родительского агента, а не к runbook этой карточки.
+- Локальный checkout в историческом описании использовался для разработки,
+  чтения и проверки diff; сборка и Rust-тесты в старом workflow выполнялись на
+  `f-ms-dev`. Текущие запуски должны проходить через skill-owned workflow, если
+  родительский агент решит их выполнять.
 
-Локальный checkout используется для разработки, чтения и проверки diff. Не
-собирать Codex локально на этом хосте.
+### Исторические результаты
 
-Полезные локальные проверки:
+Историческая карточка фиксировала следующие команды для повторения. Они
+сохранены как подтверждение старого workflow и не являются текущим нормативным
+runbook запуска:
 
 ```bash
 git diff --check -- \
@@ -364,9 +379,8 @@ rg -n "project_name|effective_workspace_roots|workspace_roots_from_turn_context_
   codex-rs/core/src/context/environment_context_tests.rs
 ```
 
-### На `f-ms-dev`
-
-Rust-форматирование, сборку и тесты запускать на `f-ms-dev`:
+Исторический блок для `f-ms-dev` фиксировал Rust-форматирование, сборку и
+тесты на удаленном checkout:
 
 ```bash
 ssh slader@f-ms-dev 'git -C /home/slader/Projects/codex diff --check -- codex-rs/core/src/context/environment_context.rs codex-rs/core/src/context/environment_context_tests.rs'
@@ -376,31 +390,31 @@ ssh slader@f-ms-dev 'cd /home/slader/Projects/codex/codex-rs && just fmt'
 ssh slader@f-ms-dev 'cd /home/slader/Projects/codex/codex-rs && just test -p codex-core environment_context'
 ```
 
-Если узкий тест требует `cargo-nextest`, установить его на `f-ms-dev`:
+Старый блок дополнительно фиксировал условное действие для `cargo-nextest` на
+`f-ms-dev`:
 
 ```bash
 cargo install --locked cargo-nextest
 ```
 
-Если полный тест crate нужен для дополнительной уверенности, использовать
-remote test environment:
+Для полного теста crate старая карточка фиксировала remote test environment:
 
 ```bash
 ssh slader@f-ms-dev 'cd /home/slader/Projects/codex && scripts/test-remote-env.sh'
 ```
 
-Затем выполнить `just test -p codex-core` с переменными из вывода скрипта.
+Старая инструкция также указывала: если полный тест crate нужен для
+дополнительной уверенности, использовать remote test environment, затем выполнить
+`just test -p codex-core` с переменными из вывода `scripts/test-remote-env.sh`.
 
-## Уже выполненная проверка
-
-Проверки, выполненные для этой доработки:
+Проверки, выполненные для первоначального переноса этой доработки:
 
 | Проверка | Где | Результат |
 | --- | --- | --- |
 | `git diff --check` для двух измененных core-файлов | локально | passed |
 | `git diff --check` для двух измененных core-файлов | `f-ms-dev` | passed |
 | SHA256 измененных файлов local vs remote | локально и `f-ms-dev` | совпали |
-| `just fmt` | локально и `f-ms-dev` | Rust formatter часть прошла, общая команда завершалась ошибкой из-за отсутствующего `uv` |
+| `just fmt` | локально и `f-ms-dev` | часть Rust formatter прошла, общая команда завершалась ошибкой из-за отсутствующего `uv` |
 | `just test -p codex-core environment_context` | `f-ms-dev` | passed, 22 tests passed |
 | `bench-smoke` после узкого теста | `f-ms-dev` | passed |
 | `just test -p codex-core` без remote env | `f-ms-dev` | failed из-за не связанной с доработкой тестовой инфраструктуры |
@@ -413,7 +427,7 @@ SHA256 контрольные суммы измененных файлов:
 | `codex-rs/core/src/context/environment_context.rs` | `2d0e9c481b5f6caef44254cf743c41b0b2e17a88f964d72e292501a07beb556c` |
 | `codex-rs/core/src/context/environment_context_tests.rs` | `25b1120b741406cc08f0f40925049ec22efa11432f78bd4fede5d318dbe6a6bc` |
 
-Причины падения полных crate tests на `f-ms-dev` были инфраструктурными и не
+Причины падения полных тестов crate на `f-ms-dev` были инфраструктурными и не
 относились к этой доработке:
 
 - `test_stdio_server` binary не найден;
@@ -427,6 +441,22 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 ```
 
 Команда не вернула контейнеров `codex-remote-test-env`.
+
+### Известные падения и пропуски
+
+- Локальная Rust-сборка и локальные Rust-тесты не выполнялись: исторический
+  локальный checkout использовался только для разработки, чтения и проверки
+  diff.
+- Форматирование repo recipe в историческом запуске проходило часть Rust
+  formatter, но общий шаг завершался ошибкой из-за отсутствующего `uv`.
+- Полный crate-level проход на `f-ms-dev` с remote env и без него падал по
+  инфраструктурным причинам, не связанным с этой доработкой:
+  - `test_stdio_server` binary не найден;
+  - `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`;
+  - request-permissions/network-denial remote exec failures.
+- Установка `cargo-nextest` была зафиксирована в старой карточке только как
+  условие для узкого теста при отсутствии инструмента на `f-ms-dev`; это не
+  является отдельным текущим gate карточки.
 
 ## Ограничения и граничные случаи
 
@@ -458,7 +488,7 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
   фрагменты context, нужно отдельно проверить, должен ли `project_name`
   оставаться в теле update.
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Требование | Статус | Где покрыто |
 | --- | --- | --- |
@@ -469,4 +499,4 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 | Сохранять XML escaping | перенесено | `push_text_element` и test с `repo & docs` |
 | Проверить workspace root вместо `cwd` | перенесено | `turn_context_item_project_name_uses_workspace_root_name` |
 | Проверить diff при смене проекта | перенесено | `diff_environment_context_includes_changed_project_name` |
-| Собирать и тестировать не локально, а на `f-ms-dev` | перенесено | раздел `Проверки для повторения` |
+| Собирать и тестировать не локально, а на `f-ms-dev` | перенесено | `## Проверки`, исторические результаты и известные пропуски |

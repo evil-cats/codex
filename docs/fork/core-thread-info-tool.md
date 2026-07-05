@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-06-19
+updated: 2026-07-05
 source_scope: working-tree
 ---
 
@@ -322,16 +322,36 @@ tool текущего runtime, а не app-server API и не extension tool.
 
 ## Проверки
 
-Проверки должны запускаться на `f-ms-dev:/home/slader/Projects/codex`, потому
-что локально в этом workflow исходники правятся, а Rust/Cargo/`just` сборка и
-тесты выполняются на удаленной сборочной машине.
+### Смысловое покрытие
 
-Запланированные проверки для этой доработки:
+Проверки этой карточки должны подтверждать следующий контракт:
 
-Исполняемая карта `fork tests`:
+- `get_thread_info` зарегистрирован как core utility tool и виден модели с
+  описанием различия между `thread_id` и `session_id`;
+- input schema содержит необязательный `thread_id`, а runtime-разбор отклоняет
+  неизвестные поля, пустую строку и невалидный UUID как model-facing ошибки;
+- вызов без аргументов обслуживает текущий concrete thread через live `Session`
+  и материализует текущий rollout path перед возвратом `rollout_path`;
+- явный UUID другого persisted thread читается через `ThreadStore` с
+  `include_archived: true` и `include_history: false`;
+- ответ всегда сохраняет форму `thread_id`, `session_id`, `rollout_path`,
+  `agent_name`, а `thread_id` остается ключом к конкретному JSONL rollout;
+- `agent_name` вычисляется через общий helper для текущего root, текущего
+  subagent и persisted thread, включая fallback-контракт `agent_role`,
+  `agent_path` и `agent_nickname`;
+- обход parent chain для persisted thread ограничен и возвращает `null`, если
+  root `session_id` нельзя определить честно;
+- cache-sensitive список prompt tools остается согласованным после добавления
+  нового tool.
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+### Владелец исполняемой карты
+
+Card-level проверки запускает skill-owned command `fork tests`. Карточка не
+является runbook запуска внутренних команд: конкретные argv хранятся только в
+машинно-читаемом блоке `fork-tests.v1`, который читает `fork tests`.
+
+Для этой карточки `fork tests` должен покрывать helper `agent_name`, runtime и
+spec-контракт `thread_info`, а также cache-sensitive тест списка prompt tools.
 
 ```json
 {
@@ -359,7 +379,28 @@ tool текущего runtime, а не app-server API и не extension tool.
 }
 ```
 
-| Команда | Где запускать | Ожидаемый результат |
+### Дополнительные gates
+
+Дополнительные gates для этой доработки принадлежат skill-owned workflow, а не
+тексту карточки:
+
+- форматирование и lints должны выполняться через fork-owned обертки, если
+  родительский проход менял код или сгенерированные артефакты;
+- card-level проверки должны идти через `fork tests` с этой карточкой, чтобы
+  использовать argv из блока `fork-tests.v1`;
+- crate-level regression для `codex-core` нужен, если родительский проход
+  меняет общий core-контракт за пределами уже покрытых точечных проверок;
+- build/install gates для этой карточки не являются отдельным требованием,
+  пока не менялись сборочные профили, установка или TUI.
+
+### Исторические результаты
+
+Старый формат карточки до перехода на skill-owned workflow хранил прямые
+`just`-команды как запланированное покрытие. Они сохранены ниже только как
+исторический контекст и как объяснение внутреннего покрытия, а не как
+нормативный runbook:
+
+| Историческая команда | Где запускалась | Ожидавшийся результат |
 | --- | --- | --- |
 | `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |
 | `just test -p codex-core thread_info` | `f-ms-dev`, `codex-rs/` | Проходят unit tests `thread_info*` |
@@ -377,16 +418,6 @@ tool текущего runtime, а не app-server API и не extension tool.
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core prompt_tools_are_consistent_across_requests` | прошла: 1 test run, 1 passed |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core` | запускалась; итог: 2747 tests run, 2679 passed, 68 failed, 15 skipped |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла; remote-generated изменения синхронизированы локально |
-
-Первый запуск `just test -p codex-core thread_info` поймал compile error
-`borrow of partially moved value: stored_thread`; ошибка исправлена до успешных
-проверок.
-
-Падения полного `just test -p codex-core` не связаны с `get_thread_info`:
-ключевой общий симптом - remote sandbox failure
-`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; также были
-падения code-mode/MCP tests из-за missing `test_stdio_server` и timeouts.
-Узкие проверки нового tool и cache-sensitive prompt tool list прошли.
 
 Дополнительные фактические результаты 2026-06-17 после выделения общего helper-а
 `codex-rs/core/src/agent/agent_name.rs`:
@@ -428,6 +459,20 @@ runtime env и ее дополнительные проверки зафикси
   persisted thread и fallback на `agent_nickname` для persisted thread;
 - команды форматирования, сборки, тестов, генераторов и `fix` в рамках этой
   миграционной сверки одной карточки не запускались по ограничению запуска.
+
+### Известные падения и пропуски
+
+- Первый узкий запуск проверки `thread_info` 2026-06-16 поймал compile error
+  `borrow of partially moved value: stored_thread`; ошибка была исправлена до
+  успешных узких проверок.
+- Падения полного crate-level regression 2026-06-16 не были связаны с
+  `get_thread_info`: ключевой общий симптом - remote sandbox failure
+  `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; также были
+  падения code-mode/MCP tests из-за missing `test_stdio_server` и timeouts.
+  Узкие проверки нового tool и cache-sensitive prompt tool list прошли.
+- При миграционной сверке 2026-06-19 команды форматирования, сборки, тестов,
+  генераторов и `fix` не запускались по ограничению запуска подагента одной
+  карточки; эти проверки должен включить родительский агент в общий проход.
 
 ## Runtime, сборка и установка
 

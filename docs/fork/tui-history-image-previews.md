@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-06-08
+updated: 2026-07-05
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -311,7 +311,27 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `[tui.history_image_preview]` config;
 - `HistoryImagePreviewConfig::rows_for`.
 
-## Регрессионное покрытие
+## Проверки
+
+### Смысловое покрытие
+
+Проверочное покрытие должно сохранять весь контракт TUI image preview:
+
+- пользовательские local image attachments отображаются как fallback-строка и
+  bitmap marker только в Rich mode;
+- `view_image` и `ImageGeneration.saved_path` входят в историю через доверенный
+  `AppEvent::InsertLocalImage`, а произвольный Markdown/plain text не создаёт
+  `LocalImage`;
+- пути replay/reflow, включая resize reflow, initial replay, thread-switch
+  tail replay и overlay-deferred history, не теряют typed marker;
+- обычные строки терминальной истории остаются `HyperlinkLine` на пути
+  `HistoryCellDisplayItem::Line(HyperlinkLine)` ->
+  `HistoryInsertItem::Line(HyperlinkLine)`;
+- Kitty history previews используют PNG payload, virtual placement и
+  placeholder anchoring вместо screen placement;
+- `view_image.preview_size`, `ImagePreviewSize`, `[tui.history_image_preview]`,
+  config schema и app-server protocol surfaces остаются синхронизированными;
+- snapshot-покрытие сохраняет форму отрисованной истории видимой для проверки.
 
 Покрытие, найденное в `HEAD`:
 
@@ -325,14 +345,21 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `history_image_prepare_kitty_payload_*`;
 - `kitty_png_virtual_placement_transmits_without_screen_placement`;
 - `kitty_file_virtual_placement_transmits_without_screen_placement`;
-- config tests for `[tui.history_image_preview]`;
-- `view_image` handler/spec tests for `preview_size`;
-- app-server protocol tests and schema fixtures.
+- config-тесты для `[tui.history_image_preview]`;
+- handler/spec-тесты `view_image` для `preview_size`;
+- тесты app-server protocol и schema fixtures.
 
-Исполняемая карта `fork tests`:
+Snapshot-подтверждение:
 
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
+
+### Владелец исполняемой карты
+
+Проверки уровня карточки запускает skill-owned команда `fork tests`.
+Внутренние argv не являются runbook карточки: они живут в блоке `fork-tests.v1`
+ниже и читаются `fork tests` для карточки `fork-tui-history-image-previews`.
+
+Данные ниже являются текущим блоком `fork-tests.v1`.
 
 ```json
 {
@@ -376,59 +403,68 @@ rows. Cursor movement внутри одной строки недостаточ�
 }
 ```
 
-Snapshot:
+### Дополнительные gates
 
-- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
+Для общего проверочного прохода после обработки карточек требуются не прямые
+команды из карточки, а skill-owned владельцы:
 
-Не копировать без перепроверки как existing tests:
+- `fork generators` нужен, если diff затрагивает или подтверждает
+  schema-артефакты config/app-server для `ImagePreviewSize`,
+  `[tui.history_image_preview]` или `previewSize`;
+- `fork build-fast` остаётся релевантным release-gate, потому что историческая
+  цепочка доработки включала сборку и установку бинарника;
+- ручной Kitty smoke остаётся `manual-required`: нужно подтвердить, что команда
+  terminal graphics показывает PNG, TUI `view_image` показывает изображение в
+  истории, preview переживает обычный resize, а крайне узкое окно отказывает без
+  потери fallback;
+- локальная проверка без Rust/Cargo сводится к review whitespace в diff и поиску
+  ключевых идентификаторов `LocalImage`, `InsertLocalImage`, `ImagePreviewSize`,
+  `preview_size`, `history_image_preview`, `KittyUnicodePlaceholder`.
 
-- `insert_history_items_with_wrap_policy_counts_image_rows`;
-- `kitty_placeholder_image_writes_text_anchored_cells`;
-- `kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history`.
+### Исторические результаты
 
-Explorer нашёл эти names только в docs, не как test functions in committed code.
-
-## Исторические проверки
-
-Commit messages/docs фиксировали такие проверки:
+Исторические commit messages и docs фиксировали такие проверки:
 
 - `bc35d2615`:
   - `cargo test -p codex-tui kitty`;
   - work-tracking check;
   - `git diff --check`.
 - `697bad938`:
-  - scoped `cargo check` for `codex-core`, `codex-tui`,
+  - scoped-запуск `cargo check` для `codex-core`, `codex-tui`,
     `codex-app-server-protocol`;
   - `just write-config-schema`;
   - `just write-app-server-schema`;
-  - focused `cargo test`;
+  - focused-запуск `cargo test`;
   - `just fix`;
   - `just build-fast-release`;
-  - install and `--version`;
-  - known unrelated full-suite failures.
+  - установка и `--version`;
+  - известные несвязанные падения full-suite.
 
-Текущая карточка не утверждает, что эти проверки запускались в текущем turn.
+Текущая карточка не утверждает, что эти проверки запускались в текущем запуске.
+Прямые команды `just`/`cargo` выше сохранены только как историческое подтверждение,
+а не как нормативный runbook.
 
-## Проверки для будущего переноса
+### Известные падения и пропуски
 
-Если пользователь разрешит тесты/debug-команды, разумный порядок:
+Не копировать без перепроверки как существующие тесты:
 
-1. На `f-ms-dev:/home/slader/Projects/codex`:
-   - targeted `codex-tui` tests for local image history, view_image, image
-     generation and Kitty;
-   - targeted `codex-core` tests for config and `view_image`;
-   - `codex-app-server-protocol` tests;
-   - `just write-config-schema`;
-   - `just write-app-server-schema`;
-   - `just build-fast-release`.
-2. Manual Kitty smoke:
-   - direct Kitty graphics command shows PNG;
-   - TUI `view_image` shows image in history;
-   - preview survives normal resize;
-   - extreme narrow window may fail gracefully with fallback.
-3. Локально без Rust/Cargo:
-   - `git diff --check`;
-   - `rg -n "LocalImage|InsertLocalImage|ImagePreviewSize|preview_size|history_image_preview|KittyUnicodePlaceholder" codex-rs`.
+- `insert_history_items_with_wrap_policy_counts_image_rows`;
+- `kitty_placeholder_image_writes_text_anchored_cells`;
+- `kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history`.
+
+Explorer нашёл эти имена только в docs, а не как тестовые функции в committed code.
+
+Внутренний argv для `codex-tui` в `fork-tests.v1` сохраняет skip
+`ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route`.
+Причина skip не подтверждена этой карточкой; это известный пропуск, который
+родительский общий проверочный проход должен сохранить или пересмотреть явно.
+
+Исторический `697bad938` фиксировал известные несвязанные падения full-suite. Эта
+карточка не утверждает, что такие падения остаются актуальными после текущей
+миграции.
+
+В текущем запуске подагента проверки, сборка, генераторы, форматирование и
+markdownlint не запускались по ограничению задачи.
 
 ## Ограничения
 
@@ -468,15 +504,18 @@ Commit messages/docs фиксировали такие проверки:
 - `docs/follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md`
 - `docs/follow-ups/archive/2026/FU-2026-006-tui-history-image-preview-size.md`
 
-## Сводка покрытия
+## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
-| User attachments render as preview plus fallback | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| `view_image` enters controlled local image path | перенесено | "Source contract", "Пошаговое воспроизведение" |
-| `ImageGeneration.saved_path` enters controlled local image path | перенесено | "Source contract", "Пошаговое воспроизведение" |
-| Replay/reflow preserve typed marker | перенесено | "Пошаговое воспроизведение", "Ограничения" |
-| `HyperlinkLine` migration contract preserved | перенесено | "Итоговый контракт", "Пошаговое воспроизведение", "Риски" |
-| Kitty history uses virtual placement and placeholders | перенесено | "Kitty contract", "Пошаговое воспроизведение" |
-| `preview_size` and config rows are distinct surfaces | перенесено | "Preview size contract" |
-| Known stale doc/test-name risk preserved | перенесено | "Регрессионное покрытие", "Риски" |
+| User attachments отображаются как preview и fallback | перенесено в карточку | "Итоговый контракт", "Пошаговое воспроизведение" |
+| `view_image` входит в controlled local image path | перенесено в карточку | "Source contract", "Пошаговое воспроизведение" |
+| `ImageGeneration.saved_path` входит в controlled local image path | перенесено в карточку | "Source contract", "Пошаговое воспроизведение" |
+| Replay/reflow сохраняет typed marker | перенесено в карточку | "Пошаговое воспроизведение", "Ограничения" |
+| Контракт миграции `HyperlinkLine` сохранён | перенесено в карточку | "Итоговый контракт", "Пошаговое воспроизведение", "Риски" |
+| Kitty history использует virtual placement и placeholders | перенесено в карточку | "Kitty contract", "Пошаговое воспроизведение" |
+| `preview_size` и config rows остаются разными surfaces | перенесено в карточку | "Preview size contract" |
+| Регрессионное покрытие, snapshot-подтверждение и test targets | перенесено в карточку | "Проверки" |
+| `fork tests` владеет исполняемой картой уровня карточки | перенесено в карточку | "Проверки" |
+| Исторические проверочные команды сохранены только как подтверждение | перенесено в карточку | "Проверки" |
+| Риск устаревших doc/test names сохранён | перенесено в карточку | "Проверки", "Риски" |
