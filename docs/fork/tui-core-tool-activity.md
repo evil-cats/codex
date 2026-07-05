@@ -52,6 +52,37 @@ core function tools видимы в TUI как понятные пользова
   └ File fork_cli.py, checks-and-gates.md, shell.md
 ```
 
+Core `File` должен коалеситься не только с соседними core `File`, но и с
+активным exploration-блоком shell-команд. Если последним незавершенным
+history cell является `Exploring` или `Explored` с `Search`, `List` или `Read`,
+новый `read_file` добавляется в него отдельной строкой `File`:
+
+```text
+• Explored
+  └ Search as_any in history_cell
+  └ File insert_history.rs
+```
+
+То же правило действует для активного состояния:
+
+```text
+• Exploring
+  └ Search as_any in history_cell
+  └ File insert_history.rs
+```
+
+Если `read_file` стартовал чуть раньше shell exploration-команды из-за
+параллельного запуска tools, его active `Exploring -> File` не должен
+закрепляться отдельной history-карточкой. При старте `Search`, `List` или
+`Read` такой pending `File` переносится в новый exploration-блок и дальше
+завершается там же:
+
+```text
+• Exploring
+  └ Search impl in tui
+  └ File model.rs
+```
+
 ```text
 • Inspecting
   └ Thread info current
@@ -108,11 +139,14 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Восстанавливает `CoreToolActivity` из `ItemStarted`/`ItemCompleted` при replay сохраненной thread history |
 | `codex-rs/analytics/src/reducer.rs` | Явно игнорирует `CoreToolActivity` в analytics reducer, чтобы новый UI/history item не расширял telemetry contract этой карточкой |
 | `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time`; для `File` показывает короткие имена, убирает диапазоны строк и дедуплицирует повторы |
+| `codex-rs/tui/src/exec_cell/model.rs` | Хранит core `File` как отдельную запись внутри существующего exploration cell, не маскируя `read_file` под shell command |
+| `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
-| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity в одну ячейку |
+| `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, чтобы порядок `File start -> Search start` не оставлял отдельный stale `Exploring -> File` |
+| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity и смешанные `Search`/`File` exploration-блоки в одну ячейку |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
 | `.codex/skills/fork/scripts/fork_cli.py` | Читает блоки `fork-tests.v1` из карточек и исполняет проверки через `fork tests` |
@@ -205,6 +239,13 @@ shell-read renderer может продолжать писать `Read`, пот�
 - последовательные события `read_file` activity коалессятся в один
   блок `Exploring`/`Explored`, пока поток работы не прерывается другим видимым
   history item;
+- если текущий active cell уже является exploration-блоком shell-команд
+  (`Search`, `List` или `Read`), `read_file` добавляется в него отдельной
+  строкой `File`; это правило действует и для активного `Exploring`, и для
+  завершенного, но еще не вытолкнутого в историю `Explored`;
+- если `read_file` стартует раньше shell exploration-команды, новый
+  `Search`/`List`/`Read` забирает pending `File` в свой `ExecCell` вместо того,
+  чтобы flush-ить stale `Exploring -> File` отдельной history-карточкой;
 - повторные чтения одного и того же короткого имени в таком блоке
   дедуплицируются;
 - `line_numbers=false` не меняет человекочитаемую подпись действия;
@@ -353,12 +394,13 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    возвращается модели как `FunctionCallOutput`.
 6. Добавить TUI rendering с точными labels из этой карточки.
 7. Для `read_file` в компактной истории показывать короткое имя файла без
-   диапазонов строк и коалесить соседние `File` activity в один блок без
-   повторов.
+   диапазонов строк; коалесить соседние `File` activity в один блок без
+   повторов и приклеивать `File` к текущему exploration-блоку shell
+   `Search`/`List`/`Read`, если он еще активен в transcript tail.
 8. Добавить snapshot-покрытие для active и completed состояний:
    `Exploring/Explored -> File`, `Inspecting/Inspected -> Thread info`,
    `Inspecting/Inspected -> System time`, а также для сгруппированной
-   `File` activity.
+   `File` activity и смешанного `Search`/`File` exploration-блока.
 9. Поддержать app-server v2 conversion и thread history replay, если переносимый
    upstream еще не знает `CoreToolActivity`.
 10. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
@@ -377,6 +419,8 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `read_file` в компактной истории показывает короткое имя файла без префикса пути | `required` | TUI snapshots `active_core_tool_activity_read_file_snapshot` и сгруппированная `File` activity |
 | `read_file` в компактной истории не показывает `:start-end` диапазоны строк | `required` | TUI snapshots для одиночной и сгруппированной `File` activity |
 | Последовательные `read_file` calls коалессятся в один блок `File` | `required` | TUI lifecycle test `sequential_core_tool_activity_files_coalesce_in_active_cell` |
+| `read_file` коалесится с текущим shell exploration-блоком `Search`/`List`/`Read` и для `Exploring`, и для `Explored` | `required` | TUI lifecycle test `core_tool_activity_file_coalesces_with_exec_exploration_cell` |
+| Pending `read_file`, стартовавший до shell `Search`/`List`/`Read`, переносится в новый exploration-блок без отдельного stale `Exploring -> File` | `required` | TUI lifecycle test `core_tool_activity_file_started_before_exec_exploration_is_adopted` |
 | Повторные чтения одного файла не повторяют имя в сгруппированном блоке `File` | `required` | TUI snapshot для сгруппированной `File` activity |
 | `get_thread_info` отображается как `Inspecting/Inspected -> Thread info` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
 | `get_system_time` отображается как `Inspecting/Inspected -> System time` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
@@ -457,6 +501,20 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | `fork-tests.v1` по-прежнему печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
 | `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | Все пять card-level checks прошли; последний wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T053212Z.log` |
 | `.codex/skills/fork/scripts/fork format --check` после дополнения 2026-07-05 | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T053149Z.log`; перед commit повторно пройден `target/fork-migration/format-logs/check-20260705T054326Z.log` |
+| Дополнение 2026-07-05: смешанный exploration-блок `Search`/`File` | `implemented` | `read_file` добавляется в текущий `ExecCell` exploration tail, поэтому completed-only `File` после `Search` и active `Exploring` остаются в одном блоке |
+| `.codex/skills/fork/scripts/fork format --fix` после смешанного `Search`/`File` | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T061421Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после смешанного `Search`/`File` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после смешанного `Search`/`File` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T061436Z.log` |
+| `.codex/skills/fork/scripts/fork format --check` после смешанного `Search`/`File` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T061521Z.log` |
+| `.codex/skills/fork/scripts/fork build-fast` после смешанного `Search`/`File` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T061737Z.log` |
+| `.codex/skills/fork/scripts/fork install` после смешанного `Search`/`File` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T062139Z.log` |
+| Дополнение 2026-07-05: порядок `File start -> Search start` | `implemented` | Pending core `File` переносится из active `CoreToolActivityCell` в новый `ExecCell`, поэтому stale `Exploring -> File` не остается отдельной history-карточкой |
+| `.codex/skills/fork/scripts/fork format --fix` после порядка `File start -> Search start` | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T062858Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после порядка `File start -> Search start` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после порядка `File start -> Search start` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T062916Z.log` |
+| `.codex/skills/fork/scripts/fork format --check` после порядка `File start -> Search start` | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T063026Z.log` |
+| `.codex/skills/fork/scripts/fork build-fast` после порядка `File start -> Search start` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T063100Z.log` |
+| `.codex/skills/fork/scripts/fork install` после порядка `File start -> Search start` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T063503Z.log` |
 | Live TUI smoke после перезапуска 2026-07-05 | `ok` | Подтверждены отдельный одиночный `File`, последующая grouped-строка, short names, отсутствие line ranges и dedupe повторного файла |
 | `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; последний wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T053437Z.log` |
@@ -485,8 +543,8 @@ Runtime-проверка этой карточки должна подтверж
 установкой или release-fast переносом.
 
 В текущем проходе release-fast binary собран и проверен wrapper-ом
-`fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник не
-устанавливался.
+`fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник установлен
+wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
 
 ## Риски и ограничения
 
@@ -516,6 +574,8 @@ Runtime-проверка этой карточки должна подтверж
 | `read_file` должен показывать в компактной истории короткие имена файлов без префикса пути | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | `read_file` не должен показывать номера строк в компактной истории | `перенесено в карточку` | `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
 | Последовательные `read_file` calls должны коалеситься в один блок `File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
+| `read_file` должен коалеситься с текущим shell exploration-блоком `Search`/`List`/`Read` для `Exploring` и `Explored` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
+| Pending `read_file`, стартовавший до shell exploration-команды, не должен оставлять отдельный stale `Exploring -> File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
 | Повторные чтения одного файла не должны повторять имя в сгруппированном блоке `File` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
 | `get_thread_info` должен отображаться как `Inspecting/Inspected -> Thread info` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | `get_system_time` должен отображаться как `Inspecting/Inspected -> System time` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
@@ -531,3 +591,9 @@ Runtime-проверка этой карточки должна подтверж
 - Вопрос о коалесинге последовательных core file activity calls закрыт
   2026-07-05: `read_file` должен группироваться по аналогии с exec exploration
   reads, но оставаться действием `File`, а не старым shell `Read`.
+- Вопрос о коалесинге смешанного `Search`/`File` tail закрыт 2026-07-05:
+  core `File` должен приклеиваться к последнему active exploration cell, если
+  другой видимый history item еще не прервал поток.
+- Вопрос о порядке `File start -> Search start` закрыт 2026-07-05: pending
+  `File` переносится в новый shell exploration cell и не остается отдельной
+  stale history-карточкой.

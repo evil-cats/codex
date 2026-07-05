@@ -22,6 +22,15 @@ struct CoreToolActivityEntry {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CoreToolActivityFileEntry {
+    pub(crate) id: String,
+    pub(crate) detail: String,
+    pub(crate) tool_name: String,
+    pub(crate) status: CoreToolActivityStatus,
+    pub(crate) error: Option<String>,
+}
+
 impl CoreToolActivityEntry {
     fn new(
         id: String,
@@ -84,14 +93,6 @@ impl CoreToolActivityCell {
         Some((kind, entry))
     }
 
-    pub(crate) fn call_id(&self) -> &str {
-        &self
-            .entries
-            .first()
-            .expect("core tool activity cell has at least one entry")
-            .id
-    }
-
     pub(crate) fn contains_call_id(&self, id: &str) -> bool {
         self.entries.iter().any(|entry| entry.id == id)
     }
@@ -108,6 +109,24 @@ impl CoreToolActivityCell {
         }
         self.entries.push(entry);
         true
+    }
+
+    pub(crate) fn file_activity_entries(&self) -> Option<Vec<CoreToolActivityFileEntry>> {
+        if self.kind != CoreToolActivityKind::File {
+            return None;
+        }
+        Some(
+            self.entries
+                .iter()
+                .map(|entry| CoreToolActivityFileEntry {
+                    id: entry.id.clone(),
+                    detail: entry.detail.clone(),
+                    tool_name: entry.tool_name.clone(),
+                    status: entry.status,
+                    error: entry.error.clone(),
+                })
+                .collect(),
+        )
     }
 
     pub(crate) fn complete(
@@ -227,10 +246,14 @@ impl CoreToolActivityCell {
 
 fn display_detail(kind: CoreToolActivityKind, detail: String) -> String {
     if kind == CoreToolActivityKind::File {
-        short_display_path(strip_line_range_suffix(detail.trim()))
+        display_file_activity_detail(&detail)
     } else {
         detail
     }
+}
+
+pub(crate) fn display_file_activity_detail(detail: &str) -> String {
+    short_display_path(strip_line_range_suffix(detail.trim()))
 }
 
 fn strip_line_range_suffix(detail: &str) -> &str {

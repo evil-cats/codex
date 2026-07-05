@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use super::model::CommandOutput;
+use super::model::CoreFileActivity;
 use super::model::ExecCall;
 use super::model::ExecCell;
 use crate::exec_command::strip_bash_lc_and_escape;
@@ -17,6 +18,7 @@ use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
 use codex_ansi_escape::ansi_escape_line;
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
+use codex_app_server_protocol::CoreToolActivityStatus;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_command::bash::extract_bash_command;
 use codex_utils_elapsed::format_duration;
@@ -59,6 +61,7 @@ pub(crate) fn new_active_exec_command(
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input,
+            core_file_activity: None,
         },
         animations_enabled,
     )
@@ -207,6 +210,10 @@ impl HistoryCell for ExecCell {
             if i > 0 {
                 lines.push("".into());
             }
+            if let Some(activity) = call.core_file_activity.as_ref() {
+                lines.push(core_file_activity_transcript_line(activity));
+                continue;
+            }
             let script = strip_bash_lc_and_escape(&call.command);
             let highlighted_script = highlight_bash_to_lines(&script);
             let cmd_display = adaptive_wrap_lines(
@@ -279,6 +286,27 @@ impl ExecCell {
         let mut out_indented = Vec::new();
         while !calls.is_empty() {
             let mut call = calls.remove(0);
+            if call.core_file_activity.is_some() {
+                let mut details = Vec::new();
+                append_core_file_detail(&call, &mut details);
+                while let Some(next) = calls.first() {
+                    if next.core_file_activity.is_some() {
+                        append_core_file_detail(next, &mut details);
+                        calls.remove(0);
+                    } else {
+                        break;
+                    }
+                }
+                let details = details.into_iter().unique();
+                let call_lines: Vec<(&str, Vec<Span<'static>>)> = vec![(
+                    "File",
+                    Itertools::intersperse(details.map(Into::into), ", ".dim()).collect(),
+                )];
+                for (title, line) in call_lines {
+                    push_exploring_line(title, line, width, &mut out_indented);
+                }
+                continue;
+            }
             if call
                 .parsed
                 .iter()
@@ -345,20 +373,11 @@ impl ExecCell {
             };
 
             for (title, line) in call_lines {
-                let line = Line::from(line);
-                let initial_indent = Line::from(vec![title.cyan(), " ".into()]);
-                let subsequent_indent = " ".repeat(initial_indent.width()).into();
-                let wrapped = adaptive_wrap_line(
-                    &line,
-                    RtOptions::new(width as usize)
-                        .initial_indent(initial_indent)
-                        .subsequent_indent(subsequent_indent),
-                );
-                push_owned_lines(&wrapped, &mut out_indented);
+                push_exploring_line(title, line, width, &mut out_indented);
             }
         }
 
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
+        out.extend(out_indented);
         out
     }
 
@@ -658,6 +677,62 @@ impl ExecCell {
     }
 }
 
+fn append_core_file_detail(call: &ExecCall, details: &mut Vec<String>) {
+    if let Some(activity) = call.core_file_activity.as_ref()
+        && !activity.detail.trim().is_empty()
+    {
+        details.push(activity.detail.clone());
+    }
+}
+
+fn push_exploring_line(
+    title: &'static str,
+    line: Vec<Span<'static>>,
+    width: u16,
+    out_indented: &mut Vec<Line<'static>>,
+) {
+    let line = Line::from(line);
+    let title_indent_width = UnicodeWidthStr::width(title) + 1;
+    let initial_indent = Line::from(vec!["  └ ".dim(), title.cyan(), " ".into()]);
+    let subsequent_indent = Line::from(vec!["    ".into(), " ".repeat(title_indent_width).into()]);
+    let wrapped = adaptive_wrap_line(
+        &line,
+        RtOptions::new(width as usize)
+            .initial_indent(initial_indent)
+            .subsequent_indent(subsequent_indent),
+    );
+    push_owned_lines(&wrapped, out_indented);
+}
+
+fn core_file_activity_transcript_line(activity: &CoreFileActivity) -> Line<'static> {
+    let mut line = format!(
+        "{} File",
+        core_file_activity_heading_for_status(activity.status)
+    );
+    if !activity.detail.trim().is_empty() {
+        line.push(' ');
+        line.push_str(&activity.detail);
+    }
+    line.push_str(&format!(" ({})", activity.tool_name));
+    if let Some(error) = activity
+        .error
+        .as_ref()
+        .filter(|error| !error.trim().is_empty())
+    {
+        line.push_str(": ");
+        line.push_str(error);
+    }
+    Line::from(line)
+}
+
+fn core_file_activity_heading_for_status(status: CoreToolActivityStatus) -> &'static str {
+    if matches!(status, CoreToolActivityStatus::InProgress) {
+        "Exploring"
+    } else {
+        "Explored"
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PrefixedBlock {
     initial_prefix: &'static str,
@@ -787,6 +862,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -936,6 +1012,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -968,6 +1045,7 @@ mod tests {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1002,6 +1080,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1043,6 +1122,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
@@ -1080,6 +1160,7 @@ mod tests {
             start_time: None,
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);

@@ -320,6 +320,17 @@ impl ChatWidget {
             self.request_redraw();
             return;
         }
+        if let Some(cell) = self
+            .transcript
+            .active_cell
+            .as_mut()
+            .and_then(|cell| cell.as_any_mut().downcast_mut::<ExecCell>())
+            && cell.try_add_core_file_activity(&item)
+        {
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            return;
+        }
 
         self.flush_active_cell();
         if let Some(cell) = history_cell::new_core_tool_activity_cell(item, self.config.animations)
@@ -359,13 +370,31 @@ impl ChatWidget {
             }
             handled = true;
         }
+        if !handled
+            && let Some(cell) = self
+                .transcript
+                .active_cell
+                .as_mut()
+                .and_then(|cell| cell.as_any_mut().downcast_mut::<ExecCell>())
+            && (cell.complete_core_file_activity(&item) || cell.try_add_core_file_activity(&item))
+        {
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            handled = true;
+        }
 
         if !handled {
             self.flush_active_cell();
             if let Some(cell) =
                 history_cell::new_core_tool_activity_cell(item, self.config.animations)
             {
-                self.add_to_history(cell);
+                if cell.should_flush_on_complete() {
+                    self.add_to_history(cell);
+                } else {
+                    self.transcript.active_cell = Some(Box::new(cell));
+                    self.bump_active_cell_revision();
+                    self.request_redraw();
+                }
             }
         }
         self.transcript.had_work_activity = true;

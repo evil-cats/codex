@@ -1732,6 +1732,7 @@ fn coalesces_sequential_reads_within_one_call() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1759,6 +1760,7 @@ fn coalesces_reads_across_multiple_calls() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1828,6 +1830,7 @@ fn coalesced_reads_dedupe_names() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1852,6 +1855,7 @@ fn multiline_command_wraps_with_extra_indent_on_subsequent_lines() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1878,6 +1882,7 @@ fn single_line_command_compact_when_fits() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1902,6 +1907,7 @@ fn single_line_command_wraps_with_four_space_continuation() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1925,6 +1931,7 @@ fn multiline_command_without_wrap_uses_branch_then_eight_spaces() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1949,6 +1956,7 @@ fn multiline_command_both_lines_wrap_with_correct_prefixes() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -1973,6 +1981,7 @@ fn stderr_tail_more_than_five_lines_snapshot() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );
@@ -2023,6 +2032,7 @@ fn ran_cell_multiline_with_stderr_snapshot() {
             start_time: Some(Instant::now()),
             duration: None,
             interaction_input: None,
+            core_file_activity: None,
         },
         /*animations_enabled*/ true,
     );

@@ -1056,6 +1056,106 @@ async fn sequential_core_tool_activity_files_coalesce_in_active_cell() {
 }
 
 #[tokio::test]
+async fn core_tool_activity_file_coalesces_with_exec_exploration_cell() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let begin_search = begin_exec(&mut chat, "call-search", "rg as_any history_cell");
+    end_exec(
+        &mut chat,
+        begin_search,
+        "history_cell/mod.rs:trait HistoryCell\n",
+        "",
+        0,
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed search should remain active for exploration grouping"
+    );
+
+    complete_core_file_activity(
+        &mut chat,
+        "call-insert-history",
+        "codex-rs/tui/src/chatwidget/insert_history.rs",
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed file activity should coalesce into the active search block"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Explored\n  └ Search as_any in history_cell\n  └ File insert_history.rs\n"
+    );
+
+    start_core_file_activity(
+        &mut chat,
+        "call-tool-lifecycle",
+        "codex-rs/tui/src/chatwidget/tool_lifecycle.rs",
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Exploring\n  └ Search as_any in history_cell\n  └ File insert_history.rs, tool_lifecycle.rs\n"
+    );
+
+    complete_core_file_activity(
+        &mut chat,
+        "call-tool-lifecycle",
+        "codex-rs/tui/src/chatwidget/tool_lifecycle.rs",
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed mixed exploration should stay active until interrupted"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Explored\n  └ Search as_any in history_cell\n  └ File insert_history.rs, tool_lifecycle.rs\n"
+    );
+}
+
+#[tokio::test]
+async fn core_tool_activity_file_started_before_exec_exploration_is_adopted() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    start_core_file_activity(
+        &mut chat,
+        "call-model",
+        "codex-rs/tui/src/exec_cell/model.rs",
+    );
+    assert_eq!(active_blob(&chat), "• Exploring\n  └ File model.rs\n");
+
+    let begin_search = begin_exec(&mut chat, "call-search", "rg impl tui");
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "started file activity should be adopted instead of flushed"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Exploring\n  └ Search impl in tui\n  └ File model.rs\n"
+    );
+
+    end_exec(&mut chat, begin_search, "tui/src/lib.rs:impl\n", "", 0);
+    assert_eq!(
+        active_blob(&chat),
+        "• Exploring\n  └ Search impl in tui\n  └ File model.rs\n"
+    );
+
+    complete_core_file_activity(
+        &mut chat,
+        "call-model",
+        "codex-rs/tui/src/exec_cell/model.rs",
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed mixed exploration should stay active until interrupted"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Explored\n  └ Search impl in tui\n  └ File model.rs\n"
+    );
+}
+
+#[tokio::test]
 async fn user_shell_command_renders_output_not_exploring() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

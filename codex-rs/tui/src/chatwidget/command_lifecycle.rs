@@ -280,6 +280,15 @@ impl ChatWidget {
             self.suppressed_exec_calls.insert(id);
             return;
         }
+        let pending_core_file_activities = self
+            .transcript
+            .active_cell
+            .as_ref()
+            .and_then(|cell| {
+                cell.as_any()
+                    .downcast_ref::<history_cell::CoreToolActivityCell>()
+            })
+            .and_then(history_cell::CoreToolActivityCell::file_activity_entries);
         if let Some(cell) = self
             .transcript
             .active_cell
@@ -296,16 +305,24 @@ impl ChatWidget {
             *cell = new_exec;
             self.bump_active_cell_revision();
         } else {
-            self.flush_active_cell();
-
-            self.transcript.active_cell = Some(Box::new(new_active_exec_command(
+            let mut new_exec = new_active_exec_command(
                 id,
                 command,
                 parsed_cmd,
                 source,
                 /*interaction_input*/ None,
                 self.config.animations,
-            )));
+            );
+            if let Some(entries) =
+                pending_core_file_activities.filter(|_| new_exec.is_exploring_cell())
+            {
+                for entry in entries {
+                    new_exec.add_core_file_activity_entry(entry);
+                }
+            } else {
+                self.flush_active_cell();
+            }
+            self.transcript.active_cell = Some(Box::new(new_exec));
             self.bump_active_cell_revision();
         }
 
