@@ -1214,7 +1214,59 @@ fn active_core_tool_activity_read_file_snapshot() {
     let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
 
     insta::assert_snapshot!(rendered, @"• Exploring
-  └ File docs/fork/core-read-file-tool.md:10-80");
+  └ File core-read-file-tool.md");
+}
+
+#[test]
+fn grouped_core_tool_activity_files_snapshot() {
+    let mut cell = new_core_tool_activity_cell(
+        codex_app_server_protocol::ThreadItem::CoreToolActivity {
+            id: "call-fork-cli-1".to_string(),
+            tool_name: "read_file".to_string(),
+            kind: codex_app_server_protocol::CoreToolActivityKind::File,
+            detail: ".codex/skills/fork/scripts/fork_cli.py:820-870".to_string(),
+            arguments: json!({
+                "path": ".codex/skills/fork/scripts/fork_cli.py",
+                "start_line": 820,
+                "end_line": 870,
+            }),
+            status: codex_app_server_protocol::CoreToolActivityStatus::Completed,
+            error: None,
+            duration_ms: Some(1),
+        },
+        /*animations_enabled*/ false,
+    )
+    .expect("core tool activity cell");
+
+    for (id, detail) in [
+        (
+            "call-fork-cli-2",
+            ".codex/skills/fork/scripts/fork_cli.py:560-640",
+        ),
+        (
+            "call-checks",
+            ".codex/skills/fork/references/checks-and-gates.md",
+        ),
+        ("call-shell", "/home/slader/.codex/rules/shell.md"),
+    ] {
+        assert!(cell.try_add_file_activity(
+            codex_app_server_protocol::ThreadItem::CoreToolActivity {
+                id: id.to_string(),
+                tool_name: "read_file".to_string(),
+                kind: codex_app_server_protocol::CoreToolActivityKind::File,
+                detail: detail.to_string(),
+                arguments: json!({"path": detail}),
+                status: codex_app_server_protocol::CoreToolActivityStatus::Completed,
+                error: None,
+                duration_ms: Some(1),
+            }
+        ));
+    }
+
+    let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
+
+    insta::assert_snapshot!(rendered, @"• Explored
+  └ File fork_cli.py, checks-and-gates.md, shell.md");
 }
 
 #[test]

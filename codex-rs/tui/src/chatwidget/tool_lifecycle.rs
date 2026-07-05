@@ -311,6 +311,16 @@ impl ChatWidget {
     pub(crate) fn handle_core_tool_activity_started_now(&mut self, item: ThreadItem) {
         self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
+        if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::CoreToolActivityCell>()
+        }) && cell.try_add_file_activity(item.clone())
+        {
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            return;
+        }
+
         self.flush_active_cell();
         if let Some(cell) = history_cell::new_core_tool_activity_cell(item, self.config.animations)
         {
@@ -333,11 +343,20 @@ impl ChatWidget {
         if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
             cell.as_any_mut()
                 .downcast_mut::<history_cell::CoreToolActivityCell>()
-        }) && cell.call_id() == id
+        }) && cell.contains_call_id(id)
         {
-            cell.complete(*status, error.clone());
+            let completed = cell.complete(id, *status, error.clone());
+            debug_assert!(
+                completed,
+                "active core tool activity cell should contain {id}"
+            );
+            let should_flush = cell.should_flush_on_complete();
             self.bump_active_cell_revision();
-            self.flush_active_cell();
+            if should_flush {
+                self.flush_active_cell();
+            } else {
+                self.request_redraw();
+            }
             handled = true;
         }
 

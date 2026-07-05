@@ -1000,6 +1000,62 @@ async fn exec_history_extends_previous_when_consecutive() {
 }
 
 #[tokio::test]
+async fn sequential_core_tool_activity_files_coalesce_in_active_cell() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    start_core_file_activity(
+        &mut chat,
+        "call-fork-cli-1",
+        ".codex/skills/fork/scripts/fork_cli.py:820-870",
+    );
+    complete_core_file_activity(
+        &mut chat,
+        "call-fork-cli-1",
+        ".codex/skills/fork/scripts/fork_cli.py:820-870",
+    );
+    start_core_file_activity(
+        &mut chat,
+        "call-fork-cli-2",
+        ".codex/skills/fork/scripts/fork_cli.py:560-640",
+    );
+    complete_core_file_activity(
+        &mut chat,
+        "call-fork-cli-2",
+        ".codex/skills/fork/scripts/fork_cli.py:560-640",
+    );
+    start_core_file_activity(
+        &mut chat,
+        "call-checks",
+        ".codex/skills/fork/references/checks-and-gates.md",
+    );
+    complete_core_file_activity(
+        &mut chat,
+        "call-checks",
+        ".codex/skills/fork/references/checks-and-gates.md",
+    );
+    start_core_file_activity(
+        &mut chat,
+        "call-shell",
+        "/home/slader/.codex/rules/shell.md",
+    );
+    complete_core_file_activity(
+        &mut chat,
+        "call-shell",
+        "/home/slader/.codex/rules/shell.md",
+    );
+
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed file activity group should remain active for consecutive reads"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Explored\n  └ File fork_cli.py, checks-and-gates.md, shell.md\n"
+    );
+}
+
+#[tokio::test]
 async fn user_shell_command_renders_output_not_exploring() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -1473,6 +1529,77 @@ async fn apply_patch_events_emit_history_cells() {
         cells.is_empty(),
         "no success cell should be emitted anymore"
     );
+}
+
+fn start_core_file_activity(chat: &mut ChatWidget, call_id: &str, detail: &str) {
+    handle_core_file_activity(
+        chat,
+        call_id,
+        detail,
+        codex_app_server_protocol::CoreToolActivityStatus::InProgress,
+    );
+}
+
+fn complete_core_file_activity(chat: &mut ChatWidget, call_id: &str, detail: &str) {
+    handle_core_file_activity(
+        chat,
+        call_id,
+        detail,
+        codex_app_server_protocol::CoreToolActivityStatus::Completed,
+    );
+}
+
+fn handle_core_file_activity(
+    chat: &mut ChatWidget,
+    call_id: &str,
+    detail: &str,
+    status: codex_app_server_protocol::CoreToolActivityStatus,
+) {
+    let item = AppServerThreadItem::CoreToolActivity {
+        id: call_id.to_string(),
+        tool_name: "read_file".to_string(),
+        kind: codex_app_server_protocol::CoreToolActivityKind::File,
+        detail: detail.to_string(),
+        arguments: json!({"path": detail}),
+        status,
+        error: None,
+        duration_ms: matches!(
+            status,
+            codex_app_server_protocol::CoreToolActivityStatus::Completed
+        )
+        .then_some(1),
+    };
+    let thread_id = chat.thread_id.map(|id| id.to_string()).unwrap_or_default();
+    let turn_id = chat
+        .turn_lifecycle
+        .last_turn_id
+        .clone()
+        .unwrap_or_else(|| "turn-1".to_string());
+    match status {
+        codex_app_server_protocol::CoreToolActivityStatus::InProgress => {
+            chat.handle_server_notification(
+                ServerNotification::ItemStarted(ItemStartedNotification {
+                    thread_id,
+                    turn_id,
+                    started_at_ms: 0,
+                    item,
+                }),
+                /*replay_kind*/ None,
+            );
+        }
+        codex_app_server_protocol::CoreToolActivityStatus::Completed
+        | codex_app_server_protocol::CoreToolActivityStatus::Failed => {
+            chat.handle_server_notification(
+                ServerNotification::ItemCompleted(ItemCompletedNotification {
+                    thread_id,
+                    turn_id,
+                    completed_at_ms: 0,
+                    item,
+                }),
+                /*replay_kind*/ None,
+            );
+        }
+    }
 }
 
 #[tokio::test]

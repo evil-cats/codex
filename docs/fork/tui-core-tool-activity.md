@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-04
+updated: 2026-07-05
 source_scope: working-tree
 ---
 
@@ -35,12 +35,21 @@ core function tools видимы в TUI как понятные пользова
 
 ```text
 • Exploring
-  └ File docs/fork/core-read-file-tool.md
+  └ File core-read-file-tool.md
 ```
 
 ```text
 • Explored
-  └ File docs/fork/core-read-file-tool.md
+  └ File core-read-file-tool.md
+```
+
+Последовательные чтения файлов через `read_file` должны коалеситься в один
+компактный блок истории по аналогии со старым renderer-ом
+`Exploring/Explored -> Read` для shell-команд:
+
+```text
+• Explored
+  └ File fork_cli.py, checks-and-gates.md, shell.md
 ```
 
 ```text
@@ -98,12 +107,12 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Экспортирует v2 `ThreadItem::CoreToolActivity`, wire enums, `id()` и conversion из core `TurnItem` |
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Восстанавливает `CoreToolActivity` из `ItemStarted`/`ItemCompleted` при replay сохраненной thread history |
 | `codex-rs/analytics/src/reducer.rs` | Явно игнорирует `CoreToolActivity` в analytics reducer, чтобы новый UI/history item не расширял telemetry contract этой карточкой |
-| `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time` |
+| `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time`; для `File` показывает короткие имена, убирает диапазоны строк и дедуплицирует повторы |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
-| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку |
+| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity в одну ячейку |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
 | `.codex/skills/fork/scripts/fork_cli.py` | Читает блоки `fork-tests.v1` из карточек и исполняет проверки через `fork tests` |
@@ -144,7 +153,7 @@ TUI должен показывать выбранные core tool calls чер�
 
 | Tool | Заголовок во время выполнения | Заголовок после завершения | Подпись действия | Деталь |
 | --- | --- | --- | --- | --- |
-| `read_file` | `Exploring` | `Explored` | `File` | Отображаемый путь и, если задан, диапазон строк |
+| `read_file` | `Exploring` | `Explored` | `File` | Короткие имена прочитанных файлов без диапазонов строк |
 | `get_thread_info` | `Inspecting` | `Inspected` | `Thread info` | `current` без аргумента или компактный явный `thread_id` |
 | `get_system_time` | `Inspecting` | `Inspected` | `System time` | `local`, `utc`, фиксированный offset или другой краткий detail из аргументов |
 
@@ -158,32 +167,52 @@ shell-read renderer может продолжать писать `Read`, пот�
 
 ```text
 • Exploring
-  └ File docs/fork/core-read-file-tool.md
+  └ File core-read-file-tool.md
 ```
 
 Минимальный вид завершенного вызова:
 
 ```text
 • Explored
-  └ File docs/fork/core-read-file-tool.md
+  └ File core-read-file-tool.md
 ```
 
-Если задан диапазон, detail должен оставаться коротким и grep-friendly:
+Если задан диапазон строк, компактная история все равно показывает только имя
+файла. Диапазон остается в structured `arguments` и диагностике, но не должен
+забивать обычную историю TUI:
 
 ```text
 • Explored
-  └ File docs/fork/core-read-file-tool.md:10-80
+  └ File core-read-file-tool.md
+```
+
+Если подряд прочитано несколько файлов, TUI должен группировать их в одну строку
+без повторов:
+
+```text
+• Explored
+  └ File fork_cli.py, checks-and-gates.md, shell.md
 ```
 
 Правила:
 
 - путь берется из аргумента `path`;
-- если путь находится внутри текущего workspace, TUI должен предпочитать
-  компактное workspace-relative отображение;
-- `start_line` и `end_line`, если заданы вместе, добавляются как `:start-end`;
+- обычная история TUI показывает только короткое имя файла, извлеченное из
+  `path` по смыслу старого shell `Read`: последний значимый компонент пути, без
+  префикса workspace/root и без служебных сегментов вроде `src`, `build`,
+  `dist` или `node_modules`;
+- `start_line` и `end_line` не добавляются в компактную историю;
+- последовательные события `read_file` activity коалессятся в один
+  блок `Exploring`/`Explored`, пока поток работы не прерывается другим видимым
+  history item;
+- повторные чтения одного и того же короткого имени в таком блоке
+  дедуплицируются;
 - `line_numbers=false` не меняет человекочитаемую подпись действия;
 - `complete=no` из результата может быть отражен в detail или вторичной строке,
   но это не должно заменять основное действие `File`.
+- полный `path`, `start_line`, `end_line`, `line_numbers` и исходные аргументы
+  сохраняются в structured payload; компактная история не является источником
+  точного диапазона чтения.
 
 ### `get_thread_info`
 
@@ -272,6 +301,8 @@ function tools, а не притворяться shell execution.
 - не показывать обобщенный `Tool read_file` как основной label;
 - добавить структурированное сопоставление выбранного core tool call с
   пользовательской activity;
+- для `read_file` повторить компактность старого shell `Read`: короткие имена
+  файлов, группировка соседних чтений и дедупликация повторов;
 - оставить старую shell-модель `Exploring/Explored -> Read/List/Search` как
   самостоятельный renderer для exploration через exec.
 
@@ -291,7 +322,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | App-server v2 | `ThreadItem::CoreToolActivity` |
 | Kind | `File`, `ThreadInfo`, `SystemTime` |
 | Status | `InProgress`, `Completed`, `Failed` |
-| Detail | Короткая строка, вычисленная из аргументов: путь/диапазон, `current`, `local`, `utc` или фиксированный offset |
+| Detail | Короткая строка, вычисленная из аргументов: имя файла для `read_file`, `current`, `local`, `utc` или фиксированный offset |
 | Raw diagnostics | `tool_name` и `arguments` сохраняются в structured payload |
 
 Главный инвариант: model-visible output остается `FunctionCallOutput`, а TUI
@@ -306,11 +337,12 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Притворяться shell-командой | Смешивает typed core tool с exec path и делает provenance ложным |
 | Делать видимыми все function tools сразу | Слишком широкая область влияния; первая область ограничена тремя согласованными tools |
 | Скрывать вызовы, полагаясь только на финальный ответ агента | Пользователь не видит, когда агент читает файл, thread metadata или время |
+| Показывать workspace-relative путь и диапазоны строк в компактной истории | При нескольких чтениях экран превращается в журнал обращений; короткие имена файлов дают ту же наблюдаемость без лишнего шума |
 
 ## Порядок повторения при переносе
 
 1. Проверить текущий upstream-путь TUI для shell exploration:
-   `Exploring/Explored -> Read/List/Search` в exec history renderer.
+   `Exploring/Explored -> Read/List/Search` в renderer-е истории exec.
 2. Проверить текущий путь обычных function tools:
    `FunctionCall` -> tool dispatch -> `FunctionCallOutput`.
 3. Выбрать или перенести минимальную структурированную поверхность для выбранной
@@ -320,12 +352,16 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 5. Сохранить model-visible outputs без изменений: результат tool call по-прежнему
    возвращается модели как `FunctionCallOutput`.
 6. Добавить TUI rendering с точными labels из этой карточки.
-7. Добавить snapshot-покрытие для active и completed состояний:
+7. Для `read_file` в компактной истории показывать короткое имя файла без
+   диапазонов строк и коалесить соседние `File` activity в один блок без
+   повторов.
+8. Добавить snapshot-покрытие для active и completed состояний:
    `Exploring/Explored -> File`, `Inspecting/Inspected -> Thread info`,
-   `Inspecting/Inspected -> System time`.
-8. Поддержать app-server v2 conversion и thread history replay, если переносимый
+   `Inspecting/Inspected -> System time`, а также для сгруппированной
+   `File` activity.
+9. Поддержать app-server v2 conversion и thread history replay, если переносимый
    upstream еще не знает `CoreToolActivity`.
-9. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
+10. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
    карточки через skill-owned workflow.
 
 ## Проверки
@@ -338,6 +374,10 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Контракт | Обязательность | Где покрывается |
 | --- | --- | --- |
 | `read_file` отображается как `Exploring/Explored -> File` | `required` | TUI snapshot `active_core_tool_activity_read_file_snapshot` |
+| `read_file` в компактной истории показывает короткое имя файла без префикса пути | `required` | TUI snapshots `active_core_tool_activity_read_file_snapshot` и сгруппированная `File` activity |
+| `read_file` в компактной истории не показывает `:start-end` диапазоны строк | `required` | TUI snapshots для одиночной и сгруппированной `File` activity |
+| Последовательные `read_file` calls коалессятся в один блок `File` | `required` | TUI lifecycle test `sequential_core_tool_activity_files_coalesce_in_active_cell` |
+| Повторные чтения одного файла не повторяют имя в сгруппированном блоке `File` | `required` | TUI snapshot для сгруппированной `File` activity |
 | `get_thread_info` отображается как `Inspecting/Inspected -> Thread info` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
 | `get_system_time` отображается как `Inspecting/Inspected -> System time` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
 | Обычный user-facing label не равен `read_file`, `get_thread_info` или `get_system_time` | `required` | TUI snapshots и renderer `CoreToolActivityCell` |
@@ -412,8 +452,15 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork generators` | `ok` | Schema artifacts обновлены; wrapper-log: `target/fork-migration/generator-logs/generators-20260704T174534Z.log` |
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` | `ok` | `fork-tests.v1` печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
 | `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` | `ok` | Все пять card-level checks прошли; wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260704T175814Z.log` |
+| Дополнение 2026-07-05: компактная сгруппированная история `File` | `implemented` | `read_file` показывает короткие имена без диапазонов строк, группирует соседние `File` activity и дедуплицирует повторные имена |
+| `.codex/skills/fork/scripts/fork format --fix` после дополнения 2026-07-05 | `ok` | Wrapper-log: `target/fork-migration/format-logs/fix-20260705T052658Z.log` |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | `fork-tests.v1` по-прежнему печатает TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после дополнения 2026-07-05 | `ok` | Все пять card-level checks прошли; последний wrapper-log: `target/fork-migration/test-logs/0.141.0-cards-20260705T053212Z.log` |
+| `.codex/skills/fork/scripts/fork format --check` после дополнения 2026-07-05 | `ok` | Wrapper-log: `target/fork-migration/format-logs/check-20260705T053149Z.log`; перед commit повторно пройден `target/fork-migration/format-logs/check-20260705T054326Z.log` |
+| Live TUI smoke после перезапуска 2026-07-05 | `ok` | Подтверждены отдельный одиночный `File`, последующая grouped-строка, short names, отсутствие line ranges и dedupe повторного файла |
 | `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
-| `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260704T180255Z.log` |
+| `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; последний wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T053437Z.log` |
+| `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T053954Z.log` |
 
 ### Известные падения и пропуски
 
@@ -446,6 +493,9 @@ Runtime-проверка этой карточки должна подтверж
 - Нужно не смешать user-facing activity item с model-visible
   `FunctionCallOutput`: первое нужно пользователю, второе нужно модели.
 - Нельзя подменять provenance: `read_file` не должен выглядеть как shell command.
+- Компактная история намеренно не показывает точный диапазон строк; точный
+  `path` и диапазоны строк нужно искать в structured payload или diagnostics, а
+  не в обычной строке истории.
 - Выбран item уровня protocol, поэтому нужно поддерживать app-server v2 schema,
   replay/history и обратную совместимость.
 - Динамическое значение времени может сделать snapshots нестабильными. Базовый snapshot
@@ -463,6 +513,10 @@ Runtime-проверка этой карточки должна подтверж
 | --- | --- | --- |
 | Новая доработка оформлена отдельно от runtime-контрактов core tools | `перенесено в карточку` | `Обзор`, `Карта файлов`, `Архитектурное решение` |
 | `read_file` должен отображаться как `Exploring/Explored -> File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
+| `read_file` должен показывать в компактной истории короткие имена файлов без префикса пути | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
+| `read_file` не должен показывать номера строк в компактной истории | `перенесено в карточку` | `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
+| Последовательные `read_file` calls должны коалеситься в один блок `File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
+| Повторные чтения одного файла не должны повторять имя в сгруппированном блоке `File` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
 | `get_thread_info` должен отображаться как `Inspecting/Inspected -> Thread info` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | `get_system_time` должен отображаться как `Inspecting/Inspected -> System time` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | Основной TUI label не должен быть сырым function tool name | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение` |
@@ -474,6 +528,6 @@ Runtime-проверка этой карточки должна подтверж
 
 ## Открытые вопросы
 
-- Нужно ли коалесить последовательные core tool activity calls в один history
-  cell по аналогии с exec exploration reads. Текущая реализация намеренно
-  показывает один bounded history cell на один selected core tool call.
+- Вопрос о коалесинге последовательных core file activity calls закрыт
+  2026-07-05: `read_file` должен группироваться по аналогии с exec exploration
+  reads, но оставаться действием `File`, а не старым shell `Read`.

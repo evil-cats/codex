@@ -106,17 +106,7 @@ fn parse_arguments_json(arguments: &str) -> JsonValue {
 
 fn read_file_detail(arguments: &JsonValue, cwd: &Path) -> String {
     let path = string_arg(arguments, "path").unwrap_or("unknown");
-    let mut detail = display_path_arg(path, cwd);
-    if let (Some(start), Some(end)) = (
-        number_arg(arguments, "start_line"),
-        number_arg(arguments, "end_line"),
-    ) {
-        detail.push(':');
-        detail.push_str(&start.to_string());
-        detail.push('-');
-        detail.push_str(&end.to_string());
-    }
-    detail
+    display_file_arg(path, cwd)
 }
 
 fn thread_info_detail(arguments: &JsonValue) -> String {
@@ -151,10 +141,6 @@ fn string_arg<'a>(arguments: &'a JsonValue, key: &str) -> Option<&'a str> {
     arguments.get(key)?.as_str()
 }
 
-fn number_arg(arguments: &JsonValue, key: &str) -> Option<u64> {
-    arguments.get(key)?.as_u64()
-}
-
 fn display_path_arg(path: &str, cwd: &Path) -> String {
     let candidate = Path::new(path);
     if candidate.is_absolute()
@@ -163,4 +149,24 @@ fn display_path_arg(path: &str, cwd: &Path) -> String {
         return relative.display().to_string();
     }
     path.to_string()
+}
+
+fn display_file_arg(path: &str, cwd: &Path) -> String {
+    short_display_path(&display_path_arg(path, cwd))
+}
+
+fn short_display_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+    let mut parts = trimmed.split('/').rev().filter(|part| {
+        !part.is_empty()
+            && *part != "build"
+            && *part != "dist"
+            && *part != "node_modules"
+            && *part != "src"
+    });
+    parts
+        .next()
+        .map(str::to_string)
+        .unwrap_or_else(|| trimmed.to_string())
 }
