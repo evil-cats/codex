@@ -34,3 +34,27 @@ fn parse_requested_thread_id_rejects_empty_id() {
         matches!(err, FunctionCallError::RespondToModel(message) if message.contains("non-empty UUID"))
     );
 }
+
+#[test]
+fn parse_requested_thread_id_rejects_invalid_uuid() {
+    let current = thread_id("00000000-0000-0000-0000-000000000001");
+
+    let err = parse_requested_thread_id(Some("not-a-thread-id".to_string()), current)
+        .expect_err("invalid thread id should fail");
+
+    assert!(
+        matches!(err, FunctionCallError::RespondToModel(message) if message.contains("invalid thread_id"))
+    );
+}
+
+#[test]
+fn thread_info_args_reject_unknown_fields() {
+    let err = crate::tools::handlers::parse_arguments::<ThreadInfoArgs>(
+        r#"{"thread_id":"00000000-0000-0000-0000-000000000001","extra":true}"#,
+    )
+    .expect_err("unknown fields should fail");
+
+    assert!(
+        matches!(err, FunctionCallError::RespondToModel(message) if message.contains("unknown field"))
+    );
+}

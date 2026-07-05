@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-07-05
 source_scope: discussion-2026-06-21
 ---
 
@@ -202,7 +202,8 @@ inline_output_max_tokens = 1000
 - значение должно быть положительным целым числом;
 - если model tool call задает `max_output_tokens` меньше config value, excerpt
   должен уважать меньший лимит;
-- excerpt limit не должен превышать `turn.truncation_policy.token_budget()`;
+- excerpt limit не должен превышать
+  `turn.model_info.truncation_policy.into().token_budget()`;
 - существующий top-level `tool_output_token_limit` не переиспользуется и
   остается общим механизмом ограничения tool/function outputs в context manager.
 
@@ -213,7 +214,7 @@ effective_inline_limit =
   min(
     config.tools.exec.inline_output_max_tokens.unwrap_or(1000),
     request.max_output_tokens.unwrap_or(usize::MAX),
-    turn.truncation_policy.token_budget()
+    turn.model_info.truncation_policy.into().token_budget()
   )
 ```
 
@@ -423,6 +424,14 @@ inline_output_max_tokens = 1000
 | Отказ sandbox-политики | `SandboxDenied` не создает output-файл и остается обычным `Output:` |
 | Long-running/polling branch | Initial running process и follow-up polling не получают spill |
 
+Заметка после переноса на `rust-v0.142.5`: проверка
+`exec_command_spills_large_completed_output_to_file` должна оставаться
+integration-level покрытием в `codex-rs/core/tests/suite/unified_exec.rs`.
+Unit-level проверка через `UnifiedExecProcessManager::exec_command` хрупко
+зависит от локальной sandbox startup path и может требовать отсутствующий
+landlock executable, тогда как контракт карточки требует проверить
+model-visible `exec_command` branch и сохранение spill-файла.
+
 ### Владелец исполняемой карты
 
 Проверки уровня карточки для этой fork-доработки запускает skill-owned владелец
@@ -452,7 +461,17 @@ inline_output_max_tokens = 1000
         "test",
         "-p",
         "codex-core",
-        "exec_command_tool_output_formats_spill"
+        "exec_command_tool_output_formats_spilled_response"
+      ]
+    },
+    {
+      "purpose": "spill save failure formatting",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_tool_output_formats_spill_save_failure"
       ]
     },
     {
@@ -466,23 +485,13 @@ inline_output_max_tokens = 1000
       ]
     },
     {
-      "purpose": "glob deny policy",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "unified_exec_enforces_glob_deny_read_policy"
-      ]
-    },
-    {
       "purpose": "timeout poll",
       "argv": [
         "just",
         "test",
         "-p",
         "codex-core",
-        "unified_exec_timeout_and_followup_poll"
+        "unified_exec_timeouts"
       ]
     }
   ]
@@ -524,10 +533,18 @@ wrappers.
 | `write_stdin`, interactive PTY/SSH, MCP tool outputs, code mode и legacy shell | Не входят в MVP этой карточки |
 | Running process после initial yield и follow-up polling | В MVP не получают spill; это ожидаемая ветка покрытия, а не падение |
 | `SandboxDenied` | Не проходит через spill и остается обычным `Output:`; отсутствие output-файла является ожидаемым результатом |
+| Покрытие ветки `SandboxDenied` | Проверка `unified_exec_enforces_glob_deny_read_policy` сохранена в `codex-rs/core/tests/suite/unified_exec.rs`; она подтверждает, что sandbox-denied output не получает spill-файл |
 | Прямой запуск внутренних argv из `fork-tests.v1` | Не является нормативной инструкцией запуска; запуск выполняет skill-owned workflow |
 
 ## Риски и ограничения
 
+- При переносе на upstream `rust-v0.142.5` старое обращение к
+  `turn.truncation_policy` заменено на
+  `turn.model_info.truncation_policy.into()`, потому что `TurnContext` хранит
+  политику усечения в `model_info`.
+- В ветке `UnifiedExecError::SandboxDenied` сохраняется `output_spill: None`;
+  retained output передается через заранее собранный `raw_output`, без повторного
+  `output_text.into_bytes()`.
 - Saved output file может содержать secrets, если команда вывела secrets.
   Это уже риск terminal output, но file artifact делает его дольше живущим.
   Файл должен создаваться в Codex-owned directory с безопасными permissions.
@@ -568,7 +585,7 @@ wrappers.
 | Поле token count после truncation не добавляется | перенесено в карточку |
 | Добавляется новый config key, а не reuse `tool_output_token_limit` | перенесено в карточку |
 | Предложенное имя key: `[tools.exec].inline_output_max_tokens` | перенесено в карточку |
-| Effective limit учитывает config, меньший `max_output_tokens` и `turn.truncation_policy` | перенесено в карточку |
+| Effective limit учитывает config, меньший `max_output_tokens` и `turn.model_info.truncation_policy.into()` | перенесено в карточку |
 | Output files являются Codex runtime artifacts, не workspace files | перенесено в карточку |
 | Предложенный путь: `<codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log` | перенесено в карточку |
 | Имя файла строится только из sanitized ids | перенесено в карточку |

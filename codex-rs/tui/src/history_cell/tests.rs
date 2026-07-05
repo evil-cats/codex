@@ -15,11 +15,13 @@ use codex_otel::RuntimeMetricTotals;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::error::UnexpectedResponseError;
 use codex_protocol::parse_command::ParsedCommand;
 use dirs::home_dir;
 use pretty_assertions::assert_eq;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -596,8 +598,13 @@ fn final_message_separator_includes_worked_label_after_one_minute() {
 fn ps_output_empty_snapshot() {
     let cell = new_unified_exec_processes_output(Vec::new());
     let rendered = render_lines(&cell.display_lines(/*width*/ 60)).join("\n");
-    insta::assert_snapshot!(rendered, @"• Exploring
-  └ File docs/fork/core-read-file-tool.md:10-80");
+    insta::assert_snapshot!(rendered, @"
+    /ps
+
+    Background terminals
+
+      • No background terminals running.
+    ");
 }
 
 #[tokio::test]
@@ -636,8 +643,16 @@ async fn session_info_availability_nux_tooltip_snapshot() {
     );
 
     let rendered = render_transcript(&cell).join("\n");
-    insta::assert_snapshot!(rendered, @"• Exploring
-  └ File docs/fork/core-read-file-tool.md:10-80");
+    insta::assert_snapshot!(rendered, @"
+    ╭─────────────────────────────────────╮
+    │ >_ OpenAI Codex (v0.0.0)            │
+    │                                     │
+    │ model:     gpt-5   /model to change │
+    │ directory: /tmp/project             │
+    ╰─────────────────────────────────────╯
+
+      Tip: Model just became available
+    ");
 }
 
 #[tokio::test]
@@ -751,6 +766,31 @@ fn error_event_oversized_input_snapshot() {
         "Message exceeds the maximum length of 1048576 characters (1048577 provided).".to_string(),
     );
     let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn error_event_bedrock_expired_signature_snapshot() {
+    let error = UnexpectedResponseError {
+        status: StatusCode::UNAUTHORIZED,
+        body: "Signature expired: 20260609T133205Z is now earlier than 20260614T062525Z \
+(20260614T063025Z - 5 min.)"
+            .to_string(),
+        user_message: Some(
+            "Amazon Bedrock rejected the request because its AWS signature has expired. \
+Refresh your AWS credentials and retry. If `AWS_BEARER_TOKEN_BEDROCK` is set, update or \
+unset it, then restart Codex"
+                .to_string(),
+        ),
+        url: Some("https://bedrock-mantle.us-east-2.api.aws/openai/v1/responses".to_string()),
+        cf_ray: None,
+        request_id: None,
+        identity_authorization_error: None,
+        identity_error_code: None,
+    };
+    let cell = new_error_event(error.to_string());
+    let rendered = render_lines(&cell.display_lines(/*width*/ 100)).join("\n");
+
     insta::assert_snapshot!(rendered);
 }
 

@@ -100,11 +100,16 @@ impl ReadFileHandler {
             ));
         };
 
-        let cwd = turn_environment.cwd().clone();
+        let cwd = turn_environment.cwd().to_abs_path().map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "environment cwd `{}` is not native to the Codex host: {err}",
+                turn_environment.cwd()
+            ))
+        })?;
         let abs_path = cwd.join(&args.path);
         let sandbox = turn.file_system_sandbox_context(
             /*additional_permissions*/ None,
-            turn_environment.cwd_uri(),
+            turn_environment.cwd(),
         );
         let fs = turn_environment.environment.get_filesystem();
         let path_uri = PathUri::from_abs_path(&abs_path);

@@ -122,9 +122,9 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/protocol/src/shell_environment.rs` | Добавляет константы `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`, `CODEX_ROLLOUT_ENV_VAR`; вводит `RuntimeEnv`; вставляет служебные runtime-переменные после shell env policy |
 | `codex-rs/core/src/exec_env.rs` | Экспортирует runtime env constants; вводит core-level `RuntimeEnv` с `ThreadId`; конвертирует значения в protocol `RuntimeEnv` |
 | `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что runtime-переменные вставляются после фильтров policy и перезаписывают родительское окружение |
-| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command` |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command`, используя текущую `turn_context.config.permissions.shell_environment_policy` |
 | `codex-rs/core/src/tools/handlers/shell_tests.rs` | Проверяет expected env через `create_env_with_runtime(...)` |
-| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task |
+| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task, сохраняя upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает runtime-переменные после обертки shell snapshot |
 | `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после snapshot |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session, но не в `local_policy_env` |
@@ -411,9 +411,12 @@ rollout не удалось получить.
      `agent_nickname`.
 8. Переключить `get_thread_info` на общий helper.
 9. Передать `current_agent_name(...)`, `call_id` и best-effort `rollout_path` в
-   shell command env и `/shell` user task.
+   shell command env и `/shell` user task. На `rust-v0.142.5` не восстанавливать
+   старый доступ через `turn_context.shell_environment_policy`; использовать
+   `turn_context.config.permissions.shell_environment_policy`.
 10. Для `/shell` генерировать UUID `call_id` до сборки env, а потом использовать
-    тот же id в `ExecCommandBegin`/`ExecCommandEnd`.
+     тот же id в `ExecCommandBegin`/`ExecCommandEnd`, сохраняя upstream-проверку
+     `turn_environment.cwd().to_abs_path()` перед подготовкой snapshot и env.
 11. Для unified exec не класть runtime-переменные в `local_policy_env`;
     добавлять их только в runtime env.
 12. Использовать `Session::hook_transcript_path()` для `CODEX_ROLLOUT`, чтобы
@@ -581,6 +584,18 @@ rollout не удалось получить.
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Обертка snapshot восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` из live-окружения после `source` snapshot |
 
 Кодовых изменений по этой карточке после проверки 2026-06-19 не потребовалось.
+
+Фактическая проверка 2026-07-05 после merge `rust-v0.142.5`:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Конфликт разрешен в пользу `create_env_with_runtime(...)` с `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID`, но с актуальным upstream-источником policy: `turn_context.config.permissions.shell_environment_policy` |
+| `codex-rs/core/src/tools/handlers/shell_tests.rs` | Ожидаемое окружение теста синхронизировано с `create_env_with_runtime(...)`, `ToolInvocation.call_id` и best-effort `rollout_path` |
+| `codex-rs/core/src/tasks/user_shell.rs` | Конфликт разрешен с сохранением upstream-проверки `to_abs_path()` для `cwd`, совместимого с host Codex, и fork-контракта runtime env через UUID `CODEX_CALL_ID`, `current_agent_name(...)` и `Session::hook_transcript_path()` |
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-05 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски
 

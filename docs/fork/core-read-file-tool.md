@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-07-04
+updated: 2026-07-05
 source_scope: discussion-2026-07-03
 ---
 
@@ -429,6 +429,7 @@ Error: line 10 exceeds ReadFile content token limit
 
 | Проверка | Результат | Примечание |
 | --- | --- | --- |
+| `rust-v0.142.5` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/config/mod.rs` вокруг `resolve_read_file_content_max_tokens` и upstream `resolve_orchestrator_feature_enabled`; снят конфликтный import в `codex-rs/core/src/config/config_tests.rs`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |

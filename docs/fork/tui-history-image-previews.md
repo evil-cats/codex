@@ -311,6 +311,15 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `[tui.history_image_preview]` config;
 - `HistoryImagePreviewConfig::rows_for`.
 
+Заметка для переноса на `rust-v0.142.5`: если конфликт в `view_image.rs`
+появляется только на границе импортов, сохраняй `ImagePreviewSize`, но не
+возвращай устаревший `codex_features::Feature`. Актуальная upstream-сторона уже
+перенесла обработчик на `turn_environment.cwd().to_abs_path()`/`PathUri`,
+оставила `data_url_from_bytes` без старой ветки `Feature::ResizeAllImages` и
+сохранила `detail = original`; fork-добавка в этом месте ограничена разбором
+`preview_size`, ошибкой для неизвестного значения и заполнением
+`ImageViewItem.preview_size`.
+
 ## Проверки
 
 ### Смысловое покрытие

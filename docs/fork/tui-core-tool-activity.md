@@ -516,6 +516,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork build-fast` после порядка `File start -> Search start` | `ok` | Release-fast binary собран и проверен; wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T063100Z.log` |
 | `.codex/skills/fork/scripts/fork install` после порядка `File start -> Search start` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T063503Z.log` |
 | Live TUI smoke после перезапуска 2026-07-05 | `ok` | Подтверждены отдельный одиночный `File`, последующая grouped-строка, short names, отсутствие line ranges и dedupe повторного файла |
+| Миграционный проход `rust-v0.142.5`: сгенерированные артефакты схем v2 | `resolved-current-pass` | Убраны маркеры конфликтов в `ThreadItem.ts` и файлах JSON Schema; сохранены обе сгенерированные записи `definitions`: `ImagePreviewSize`, `LegacyAppPathString` и `McpToolCallAppContext` |
 | `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен; последний wrapper-log: `target/fork-migration/build-logs/0.141.0-build-fast-20260705T053437Z.log` |
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione`; wrapper-log: `target/fork-migration/install-logs/install-20260705T053954Z.log` |
@@ -534,6 +535,9 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   Эта карточка является owner artifact нового TUI-решения; старые карточки
   нужно синхронизировать отдельным рефакторингом, не смешивая его с этой
   реализацией.
+- В проходе подагента для `rust-v0.142.5` генераторы, форматирование и тесты не
+  запускались по ограничению запуска; родительскому проходу нужно повторить
+  генерацию схем и проверки карточки через skill-owned workflow.
 
 ## Runtime, сборка и установка
 

@@ -178,6 +178,8 @@ TerminalTitleItem::SessionLabel => {
 - Effective `Config` сохраняет значение как `tui_terminal_title_label`; это
   отдельный обязательный слой, потому что при merge `0.137.0` поле однажды
   потерялось именно там.
+- Тест `load_config_resolves_tui_terminal_title_label` проверяет, что значение
+  `[tui].terminal_title_label` доходит до effective `Config`.
 - Элемент `session-label` для terminal title доступен в selector, preview model и
   runtime-рендеринге.
 - Если значение config отсутствует, сегмент не выводится; если значение есть, строка
@@ -214,6 +216,16 @@ TerminalTitleItem::SessionLabel => {
 {
   "schema": "fork-tests.v1",
   "tests": [
+    {
+      "purpose": "config terminal title label",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "load_config_resolves_tui_terminal_title_label"
+      ]
+    },
     {
       "purpose": "terminal title",
       "argv": ["just", "test", "-p", "codex-tui", "terminal_title"]

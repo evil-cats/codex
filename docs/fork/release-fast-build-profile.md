@@ -90,7 +90,7 @@ lto = "thin"
 codegen-units = 32
 # This profile is used for Hermione's local install artifact. Upstream release
 # keeps line tables for symbolication before packaging; release-fast should be
-# ready to install directly after the f-ms-dev build.
+# ready to install directly after the release-fast build.
 debug = "none"
 strip = "symbols"
 ```
@@ -256,6 +256,19 @@ strip = "symbols"
 `strip = "symbols"` и owned target `build-fast-release`; проверка сборки
 принадлежит skill-owned `fork build-fast`.
 
+## Migration check: `0.142.5`
+
+Во время one-card переноса на `rust-v0.142.5` в текущем checkout подтверждены
+кодовые якоря `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`,
+`strip = "symbols"`, owned target `build-fast-release`, effective
+`Config.tui_terminal_title_label` и конвертации TUI history.
+
+Единственная правка по карточке: комментарий в `codex-rs/Cargo.toml` больше не
+использует устаревшую формулировку `remote build` и говорит о
+`release-fast build`. Сборка, тесты, генераторы, форматирование и markdownlint в
+этом one-card проходе не запускались; проверку артефакта должен выполнить общий
+родительский проход через `fork build-fast`.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -296,6 +309,7 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Историческая проверочная команда commit `697bad938` | `just build-fast-release` | была зафиксирована как выполненная verification-команда; текущий turn её не запускал |
 | Историческая форма проверки артефакта | `file codex-rs/target/release-fast/codex`; `codex-rs/target/release-fast/codex --version` | `file` должен показывать stripped binary, а `--version` должен возвращать ожидаемую Hermione version metadata |
 | Migration `0.140.0` | локально подтверждены anchors `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`, `strip = "symbols"` и target `build-fast-release`; сборка была зафиксирована на `f-ms-dev` | эта карточка не утверждает, что build запускался в текущем turn |
+| Migration `0.142.5` | локально подтверждены якоря профиля, target `build-fast-release`, восстановление effective config и конвертации TUI history; комментарий `remote build` заменён на формулировку про `release-fast build` | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем one-card проходе |
 
 ### Известные падения и пропуски
 
@@ -344,3 +358,4 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Сохранить `f-ms-dev` как source-of-truth для Rust/Cargo/`just` workflow | перенесено | "Итоговый контракт", "Проверки", "Ограничения" |
 | Зафиксировать `0.137.0` migration repair | перенесено | "Migration repair: `0.137.0`" |
 | Проверить перенос profile на `0.140.0` | перенесено; сборка на `f-ms-dev` должна подтвердить stripped-артефакт | "Migration check: `0.140.0`", "Проверки" |
+| Проверить перенос profile на `0.142.5` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.142.5`", "Проверки" |

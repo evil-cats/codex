@@ -85,7 +85,7 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
     let call_id = "test-call";
     let rollout_path = std::path::Path::new("/tmp/rollout.jsonl");
     let expected_env = crate::exec_env::create_env_with_runtime(
-        &turn_context.shell_environment_policy,
+        &turn_context.config.permissions.shell_environment_policy,
         crate::exec_env::RuntimeEnv {
             thread_id: Some(session.thread_id),
             agent_name: current_agent_name(&turn_context).as_deref(),

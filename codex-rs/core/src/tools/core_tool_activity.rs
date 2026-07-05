@@ -67,11 +67,11 @@ fn core_tool_activity_item(
                 .turn
                 .environments
                 .primary()
-                .map(|environment| environment.cwd().as_path())
-                .unwrap_or_else(|| invocation.turn.config.cwd.as_path());
+                .and_then(|environment| environment.cwd().to_abs_path().ok())
+                .unwrap_or_else(|| invocation.turn.config.cwd.clone());
             (
                 CoreToolActivityKind::File,
-                read_file_detail(&arguments_json, cwd),
+                read_file_detail(&arguments_json, cwd.as_path()),
             )
         }
         GET_THREAD_INFO_TOOL_NAME => (

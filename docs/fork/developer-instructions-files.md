@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-06-19
+updated: 2026-07-05
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -19,7 +19,7 @@ developer instructions в отдельных Markdown-файлах и подкл
 | --- | --- |
 | Статус | `active` |
 | Основной commit | `d976b54ed Support developer instructions files` |
-| Текущая база проверки | `rust-v0.137.0..HEAD`, ветка `hermione-0.137.0` |
+| Текущая база проверки | `rust-v0.142.5`, ветка `hermione-0.142.5` |
 | Config key | `developer_instructions_files` |
 | Тип | `Vec<AbsolutePathBuf>` |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
@@ -182,18 +182,19 @@ paths и default `[]`.
 - Парсинг TOML:
   - `developer_instructions_files = ["<abs-a>", "<abs-b>"]` десериализуется в
     `ConfigToml.developer_instructions_files`.
-- Нормализация relative paths:
-  - relative entries в array становятся absolute относительно base dir
-    config-файла.
+- Нормализация относительных путей:
+  - относительные элементы массива становятся абсолютными относительно базового
+    каталога config-файла.
 - Сборка runtime-значения:
-  - `developer_instructions_files_are_appended_in_order` проверяет inline
-     section, первый файл и второй файл, соединённые через `\n\n`.
+  - `developer_instructions_files_are_appended_in_order` проверяет inline-секцию,
+    первый файл и второй файл, соединённые через `\n\n`.
   - `developer_instructions_files_skip_empty_files_with_warning` проверяет, что
-    empty file пропущен, непустой файл добавлен, warning есть.
+    пустой файл пропущен, непустой файл добавлен, а предупреждение запуска
+    содержит путь пустого файла.
   - `developer_instructions_files_reject_missing_file` проверяет `NotFound` и
-    текст ошибки.
-  - `developer_instructions_override_skips_files` проверяет, что runtime
-    override `developer_instructions` не читает файлы из config и возвращает
+    префикс текста ошибки с путем отсутствующего файла.
+  - `developer_instructions_override_skips_files` проверяет, что runtime override
+    `developer_instructions` не читает файлы из config и возвращает
     переданное override-значение как итоговые developer instructions.
 
 ## Проверки
@@ -205,14 +206,14 @@ paths и default `[]`.
 
 - парсинг TOML: `developer_instructions_files = ["<abs-a>", "<abs-b>"]`
   десериализуется в `ConfigToml.developer_instructions_files`;
-- нормализация relative paths: relative entries в array становятся absolute
-  относительно base dir config-файла;
-- сборка runtime-значения: inline section, первый файл и второй файл
-  добавляются в порядке config list и соединяются через `\n\n`;
-- пустой файл пропускается, непустой файл добавляется, startup warning содержит
-  путь пустого файла;
-- missing file возвращает `NotFound`, а текст ошибки содержит путь и исходную
-  ошибку;
+- нормализация относительных путей: относительные элементы массива становятся
+  абсолютными относительно базового каталога config-файла;
+- сборка runtime-значения: inline-секция, первый файл и второй файл добавляются
+  в порядке списка config и соединяются через `\n\n`;
+- пустой файл пропускается, непустой файл добавляется, а предупреждение запуска
+  содержит путь пустого файла;
+- отсутствующий файл возвращает `NotFound`, а текст ошибки содержит путь и
+  исходную ошибку;
 - runtime override `developer_instructions` не читает файлы из config и
   возвращает переданное override-значение;
 - schema artifact показывает `developer_instructions_files` как array со
@@ -259,6 +260,14 @@ paths и default `[]`.
 основного агента. Для закрытия пробела покрытия добавлен тест
 `developer_instructions_override_skips_files`, но он не запускался в этом
 подагентском проходе.
+
+В миграционном проходе 2026-07-05 для `rust-v0.142.5` карточка сверена с текущей
+рабочей копией без запуска сборки, тестов, генераторов, форматирования или
+`fix` по ограничению подагентского запуска. Усилены проверки в
+`developer_instructions_files_skip_empty_files_with_warning` и
+`developer_instructions_files_reject_missing_file`: предупреждение сверяется с
+полным текстом и путем пустого файла, а ошибка отсутствующего файла - с
+префиксом сообщения, включающим путь.
 
 Старый текст карточки называл прямые команды `just write-config-schema` и
 `just build-fast-release` как маршрут повторения на `f-ms-dev` при разрешении
