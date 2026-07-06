@@ -1161,6 +1161,80 @@ async fn core_tool_activity_file_started_before_exec_exploration_is_adopted() {
 }
 
 #[tokio::test]
+async fn completed_only_core_tool_activity_file_replay_coalesces_file_items() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    complete_core_file_activity(&mut chat, "call-handoff-head", ".tasks/HANDOFF.md:1-110");
+    complete_core_file_activity(&mut chat, "call-handoff-tail", ".tasks/HANDOFF.md:220-330");
+
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "completed-only file activity replay should remain coalesced in the active cell"
+    );
+    assert_eq!(active_blob(&chat), "• Explored\n  └ File HANDOFF.md\n");
+}
+
+#[tokio::test]
+async fn core_tool_activity_file_group_survives_exec_completion_between_parallel_reads() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    start_core_file_activity(&mut chat, "call-handoff-head", ".tasks/HANDOFF.md:1-110");
+
+    let command = vec![
+        "bash".to_string(),
+        "-lc".to_string(),
+        "wc -l tasks tests/test_tasks_cli.py".to_string(),
+    ];
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    let cwd = chat.config.cwd.clone();
+    handle_exec_end(
+        &mut chat,
+        AppServerThreadItem::CommandExecution {
+            id: "call-wc".to_string(),
+            command: codex_shell_command::parse_command::shlex_join(&command),
+            cwd: cwd.into(),
+            process_id: None,
+            source: ExecCommandSource::Agent,
+            status: AppServerCommandExecutionStatus::Completed,
+            command_actions,
+            aggregated_output: Some(
+                "1546 tasks\n 167 tests/test_tasks_cli.py\n1713 total\n".to_string(),
+            ),
+            exit_code: Some(0),
+            duration_ms: Some(5),
+        },
+    );
+
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(
+        cells.len(),
+        1,
+        "only the exec completion should be inserted"
+    );
+    let command_blob = lines_to_single_string(&cells[0]);
+    assert!(
+        command_blob.contains("• Ran wc -l tasks tests/test_tasks_cli.py"),
+        "expected standalone exec completion: {command_blob:?}"
+    );
+    assert_eq!(active_blob(&chat), "• Exploring\n  └ File HANDOFF.md\n");
+
+    start_core_file_activity(&mut chat, "call-handoff-tail", ".tasks/HANDOFF.md:220-330");
+    complete_core_file_activity(&mut chat, "call-handoff-head", ".tasks/HANDOFF.md:1-110");
+    complete_core_file_activity(&mut chat, "call-handoff-tail", ".tasks/HANDOFF.md:220-330");
+
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "file group should stay active until another visible history item interrupts it"
+    );
+    assert_eq!(active_blob(&chat), "• Explored\n  └ File HANDOFF.md\n");
+}
+
+#[tokio::test]
 async fn user_shell_command_renders_output_not_exploring() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

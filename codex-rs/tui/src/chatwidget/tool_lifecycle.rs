@@ -354,21 +354,26 @@ impl ChatWidget {
         if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|cell| {
             cell.as_any_mut()
                 .downcast_mut::<history_cell::CoreToolActivityCell>()
-        }) && cell.contains_call_id(id)
-        {
-            let completed = cell.complete(id, *status, error.clone());
-            debug_assert!(
-                completed,
-                "active core tool activity cell should contain {id}"
-            );
-            let should_flush = cell.should_flush_on_complete();
-            self.bump_active_cell_revision();
-            if should_flush {
-                self.flush_active_cell();
-            } else {
+        }) {
+            if cell.contains_call_id(id) {
+                let completed = cell.complete(id, *status, error.clone());
+                debug_assert!(
+                    completed,
+                    "active core tool activity cell should contain {id}"
+                );
+                let should_flush = cell.should_flush_on_complete();
+                self.bump_active_cell_revision();
+                if should_flush {
+                    self.flush_active_cell();
+                } else {
+                    self.request_redraw();
+                }
+                handled = true;
+            } else if cell.try_add_file_activity(item.clone()) {
+                self.bump_active_cell_revision();
                 self.request_redraw();
+                handled = true;
             }
-            handled = true;
         }
         if !handled
             && let Some(cell) = self

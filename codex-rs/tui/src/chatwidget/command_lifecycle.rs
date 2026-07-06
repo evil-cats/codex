@@ -341,9 +341,9 @@ impl ChatWidget {
         enum ExecEndTarget {
             // Normal case: the active exec cell already tracks this call id.
             ActiveTracked,
-            // We have an active exec group, but it does not contain this call id. Render the end
-            // as a standalone finalized history cell so the active group remains intact.
-            OrphanHistoryWhileActiveExec,
+            // We have an active unrelated tool group. Render the end as a standalone finalized
+            // history cell so the active group remains intact.
+            OrphanHistoryWhileActiveCell,
             // No active exec cell can safely own this end; build a new cell from the end payload.
             NewCell,
         }
@@ -384,15 +384,25 @@ impl ChatWidget {
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
         let end_target = match self.transcript.active_cell.as_ref() {
-            Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
-                Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
-                    ExecEndTarget::ActiveTracked
+            Some(cell) => {
+                if let Some(exec_cell) = cell.as_any().downcast_ref::<ExecCell>() {
+                    if exec_cell.iter_calls().any(|call| call.call_id == id) {
+                        ExecEndTarget::ActiveTracked
+                    } else if exec_cell.is_active() {
+                        ExecEndTarget::OrphanHistoryWhileActiveCell
+                    } else {
+                        ExecEndTarget::NewCell
+                    }
+                } else if cell
+                    .as_any()
+                    .downcast_ref::<history_cell::CoreToolActivityCell>()
+                    .is_some_and(history_cell::CoreToolActivityCell::is_active_file_activity)
+                {
+                    ExecEndTarget::OrphanHistoryWhileActiveCell
+                } else {
+                    ExecEndTarget::NewCell
                 }
-                Some(exec_cell) if exec_cell.is_active() => {
-                    ExecEndTarget::OrphanHistoryWhileActiveExec
-                }
-                Some(_) | None => ExecEndTarget::NewCell,
-            },
+            }
             None => ExecEndTarget::NewCell,
         };
 
@@ -430,7 +440,7 @@ impl ChatWidget {
                     }
                 }
             }
-            ExecEndTarget::OrphanHistoryWhileActiveExec => {
+            ExecEndTarget::OrphanHistoryWhileActiveCell => {
                 let mut orphan = new_active_exec_command(
                     id.clone(),
                     command,

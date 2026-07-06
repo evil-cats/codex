@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-05
+updated: 2026-07-06
 source_scope: working-tree
 ---
 
@@ -83,6 +83,28 @@ history cell является `Exploring` или `Explored` с `Search`, `List` 
   └ File model.rs
 ```
 
+Если сохраненная thread history восстанавливает уже завершенные
+`CoreToolActivity` items без отдельной live-фазы `InProgress`, соседние
+completed-only `File` items тоже должны коалеситься. Два чтения разных диапазонов
+одного файла не должны превращаться в две одинаковые строки:
+
+```text
+• Explored
+  └ File HANDOFF.md
+```
+
+Если завершение несвязанной `exec`-команды приходит между параллельными
+`read_file` calls, команда отображается отдельной history-строкой, но активный
+`Exploring -> File` не сбрасывается и после завершения чтений остается одним
+сгруппированным блоком:
+
+```text
+• Ran wc -l tasks tests/test_tasks_cli.py
+
+• Explored
+  └ File HANDOFF.md
+```
+
 ```text
 • Inspecting
   └ Thread info current
@@ -145,8 +167,8 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
-| `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, чтобы порядок `File start -> Search start` не оставлял отдельный stale `Exploring -> File` |
-| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity и смешанные `Search`/`File` exploration-блоки в одну ячейку |
+| `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, а при несвязанном завершении `exec` не сбрасывает активный in-progress `File` |
+| `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity, completed-only replay и смешанные `Search`/`File` exploration-блоки в одну ячейку |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
 | `.codex/skills/fork/scripts/fork_cli.py` | Читает блоки `fork-tests.v1` из карточек и исполняет проверки через `fork tests` |
@@ -246,6 +268,12 @@ shell-read renderer может продолжать писать `Read`, пот�
 - если `read_file` стартует раньше shell exploration-команды, новый
   `Search`/`List`/`Read` забирает pending `File` в свой `ExecCell` вместо того,
   чтобы flush-ить stale `Exploring -> File` отдельной history-карточкой;
+- при replay сохраненной thread history completed-only `File` items с разными
+  `call_id` должны продолжать коалеситься в активной file-ячейке, потому что
+  persisted history хранит итоговый completed item, а не пару start/completion;
+- несвязанное завершение `exec`-команды, пришедшее пока core `File` еще
+  `InProgress`, отображается отдельной finalized command history cell и не
+  flush-ит активный `Exploring -> File`;
 - повторные чтения одного и того же короткого имени в таком блоке
   дедуплицируются;
 - `line_numbers=false` не меняет человекочитаемую подпись действия;
@@ -344,6 +372,8 @@ function tools, а не притворяться shell execution.
   пользовательской activity;
 - для `read_file` повторить компактность старого shell `Read`: короткие имена
   файлов, группировка соседних чтений и дедупликация повторов;
+- сохранять grouping при replay completed-only `CoreToolActivity` и при
+  interleaving с завершением несвязанной `exec`-команды;
 - оставить старую shell-модель `Exploring/Explored -> Read/List/Search` как
   самостоятельный renderer для exploration через exec.
 
@@ -397,14 +427,20 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    диапазонов строк; коалесить соседние `File` activity в один блок без
    повторов и приклеивать `File` к текущему exploration-блоку shell
    `Search`/`List`/`Read`, если он еще активен в transcript tail.
-8. Добавить snapshot-покрытие для active и completed состояний:
-   `Exploring/Explored -> File`, `Inspecting/Inspected -> Thread info`,
-   `Inspecting/Inspected -> System time`, а также для сгруппированной
-   `File` activity и смешанного `Search`/`File` exploration-блока.
-9. Поддержать app-server v2 conversion и thread history replay, если переносимый
-   upstream еще не знает `CoreToolActivity`.
-10. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
-   карточки через skill-owned workflow.
+8. Поддержать completed-only replay: если сохраненная thread history уже
+   схлопнула `ItemStarted`/`ItemCompleted` в completed item, соседние `File`
+   entries должны группироваться так же, как live start/completion flow.
+9. Защитить live interleaving: завершение несвязанной `exec`-команды не должно
+   сбрасывать активный in-progress `File` и разделять группу параллельных
+   чтений.
+10. Добавить snapshot-покрытие для active и completed состояний:
+    `Exploring/Explored -> File`, `Inspecting/Inspected -> Thread info`,
+    `Inspecting/Inspected -> System time`, а также для сгруппированной
+    `File` activity и смешанного `Search`/`File` exploration-блока.
+11. Поддержать app-server v2 conversion и thread history replay, если переносимый
+    upstream еще не знает `CoreToolActivity`.
+12. Синхронизировать блок `fork-tests.v1`, schema artifacts и исторические результаты
+    карточки через skill-owned workflow.
 
 ## Проверки
 
@@ -421,6 +457,8 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Последовательные `read_file` calls коалессятся в один блок `File` | `required` | TUI lifecycle test `sequential_core_tool_activity_files_coalesce_in_active_cell` |
 | `read_file` коалесится с текущим shell exploration-блоком `Search`/`List`/`Read` и для `Exploring`, и для `Explored` | `required` | TUI lifecycle test `core_tool_activity_file_coalesces_with_exec_exploration_cell` |
 | Pending `read_file`, стартовавший до shell `Search`/`List`/`Read`, переносится в новый exploration-блок без отдельного stale `Exploring -> File` | `required` | TUI lifecycle test `core_tool_activity_file_started_before_exec_exploration_is_adopted` |
+| Completed-only replay соседних `read_file` items коалесится в один `File` блок | `required` | TUI lifecycle test `completed_only_core_tool_activity_file_replay_coalesces_file_items` |
+| Завершение несвязанной `exec`-команды между параллельными `read_file` calls не разделяет `File` группу | `required` | TUI lifecycle test `core_tool_activity_file_group_survives_exec_completion_between_parallel_reads` |
 | Повторные чтения одного файла не повторяют имя в сгруппированном блоке `File` | `required` | TUI snapshot для сгруппированной `File` activity |
 | `get_thread_info` отображается как `Inspecting/Inspected -> Thread info` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
 | `get_system_time` отображается как `Inspecting/Inspected -> System time` | `required` | TUI snapshot `completed_core_tool_activity_inspect_tools_snapshot` |
@@ -442,7 +480,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "tui snapshots",
+      "purpose": "tui snapshots and lifecycle",
       "argv": ["just", "test", "-p", "codex-tui", "core_tool_activity"]
     },
     {
@@ -516,16 +554,22 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork build-fast` после порядка `File start -> Search start` | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` после порядка `File start -> Search start` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 | Live TUI smoke после перезапуска 2026-07-05 | `ok` | Подтверждены отдельный одиночный `File`, последующая grouped-строка, short names, отсутствие line ranges и dedupe повторного файла |
+| Дополнение 2026-07-06: completed-only replay и interleaving с `exec` completion | `implemented` | Два completed-only `File` items с разными диапазонами одного файла коалессятся; несвязанное завершение `exec` между параллельными `read_file` calls не flush-ит in-progress `File` |
+| `.codex/skills/fork/scripts/fork format --fix` после исправления completed-only replay | `ok` | Форматирование применено |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` после исправления completed-only replay | `ok` | `fork-tests.v1` печатает TUI snapshots and lifecycle, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity` после исправления completed-only replay | `ok` | Все пять card-level checks прошли |
+| `.codex/skills/fork/scripts/fork format --check` после исправления completed-only replay | `ok` | Проверка форматирования прошла |
+| `.codex/skills/fork/scripts/fork build-fast` после исправления completed-only replay | `ok` | Release-fast binary собран и проверен |
+| `.codex/skills/fork/scripts/fork install` после исправления completed-only replay | `ok` | Установлен `${HOME}/.local/bin/codex-hermione` |
 | Миграционный проход `rust-v0.142.5`: сгенерированные артефакты схем v2 | `resolved-current-pass` | Убраны маркеры конфликтов в `ThreadItem.ts` и файлах JSON Schema; сохранены обе сгенерированные записи `definitions`: `ImagePreviewSize`, `LegacyAppPathString` и `McpToolCallAppContext` |
-| `.codex/skills/fork/scripts/fork cards validate` | `blocked-old-cards` | Глобальная проверка нашла 140 ошибок в старых активных карточках; `docs/fork/tui-core-tool-activity.md` среди ошибок нет |
+| `.codex/skills/fork/scripts/fork cards validate` после исправления completed-only replay | `ok` | Проверка карточек прошла: `cards_checked: 19`, `card_errors: 0` |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 
 ### Известные падения и пропуски
 
-- Актуальных падений card-level checks нет.
-- `fork cards validate` остается глобально blocked из-за старых карточек,
-  которые еще не прошли рефакторинг под новый строгий контракт skill.
+- Актуальных падений card-level checks, проверки карточек, форматирования и
+  быстрой сборки нет.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
   `CoreToolActivity` в app-server thread history, exhaustive match в
   `codex-analytics`, неверный TUI test filter и внешний `.snap.new` вместо
@@ -535,9 +579,6 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   Эта карточка является owner artifact нового TUI-решения; старые карточки
   нужно синхронизировать отдельным рефакторингом, не смешивая его с этой
   реализацией.
-- В проходе подагента для `rust-v0.142.5` генераторы, форматирование и тесты не
-  запускались по ограничению запуска; родительскому проходу нужно повторить
-  генерацию схем и проверки карточки через skill-owned workflow.
 
 ## Runtime, сборка и установка
 
@@ -558,6 +599,11 @@ wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
 - Компактная история намеренно не показывает точный диапазон строк; точный
   `path` и диапазоны строк нужно искать в structured payload или diagnostics, а
   не в обычной строке истории.
+- Replay сохраненной thread history может видеть только completed item без
+  отдельного start item; TUI grouping обязан учитывать этот persisted shape, а
+  не только live lifecycle.
+- Завершения `exec` могут приходить рядом с active core `File`; TUI не должен
+  выводить из такого завершения, что текущий `File` поток уже можно flush-ить.
 - Выбран item уровня protocol, поэтому нужно поддерживать app-server v2 schema,
   replay/history и обратную совместимость.
 - Динамическое значение времени может сделать snapshots нестабильными. Базовый snapshot
@@ -580,6 +626,8 @@ wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
 | Последовательные `read_file` calls должны коалеситься в один блок `File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
 | `read_file` должен коалеситься с текущим shell exploration-блоком `Search`/`List`/`Read` для `Exploring` и `Explored` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
 | Pending `read_file`, стартовавший до shell exploration-команды, не должен оставлять отдельный stale `Exploring -> File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
+| Completed-only replay соседних `read_file` items должен коалеситься в один `File` блок | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
+| Несвязанное завершение `exec` между параллельными `read_file` calls не должно разделять `File` группу | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки`, `Риски и ограничения` |
 | Повторные чтения одного файла не должны повторять имя в сгруппированном блоке `File` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
 | `get_thread_info` должен отображаться как `Inspecting/Inspected -> Thread info` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | `get_system_time` должен отображаться как `Inspecting/Inspected -> System time` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
@@ -601,3 +649,6 @@ wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
 - Вопрос о порядке `File start -> Search start` закрыт 2026-07-05: pending
   `File` переносится в новый shell exploration cell и не остается отдельной
   stale history-карточкой.
+- Вопрос о completed-only replay и interleaving с завершением несвязанной
+  `exec`-команды закрыт 2026-07-06: оба сценария сохраняют единый
+  `Explored -> File` блок.

@@ -147,6 +147,10 @@ impl CoreToolActivityCell {
         self.kind != CoreToolActivityKind::File
     }
 
+    pub(crate) fn is_active_file_activity(&self) -> bool {
+        self.is_file_activity() && self.is_active()
+    }
+
     fn is_file_activity(&self) -> bool {
         self.kind == CoreToolActivityKind::File
     }
