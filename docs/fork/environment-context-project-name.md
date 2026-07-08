@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 ---
 
@@ -49,7 +49,7 @@ TUI уже умеет показывать `project-name` в поверхнос�
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/core/src/context/world_state/environment.rs` | Добавляет поле `project_name`, вычисление из workspace roots, рендеринг и поведение при `diff`/replay в текущей upstream-модели `EnvironmentsState` |
+| `codex-rs/core/src/context/world_state/environment.rs` | Добавляет поле `project_name`, вычисление из workspace roots, рендеринг, snapshot и поведение при `diff`/replay в текущей upstream-модели `EnvironmentsState` |
 | `codex-rs/core/src/context/environment_context.rs` | Сохраняет общие helper-типы `FileSystemContext`, `NetworkContext` и XML escaping, которые использует `world_state::environment` |
 | `codex-rs/core/src/context/world_state/environment_render_tests.rs` | Проверяет XML escaping, выбор workspace root и diff при смене проекта |
 | `docs/fork/environment-context-project-name.md` | Описывает fork-доработку, контракт и порядок повторения |
@@ -73,47 +73,52 @@ TUI уже умеет показывать `project-name` в поверхнос�
 
 2. `RenderedEnvironments` переносит это поле в рендеримый фрагмент, чтобы полный
    render и diff-render использовали один порядок вывода.
-3. В отрендеренном `<environment_context>` при наличии значения появляется строка:
+3. `EnvironmentsSnapshot` переносит это поле в сохраненный базовый снимок
+   world-state, чтобы `rust-v0.143.0` сравнивал значение через новую
+   snapshot-модель.
+4. В отрендеренном `<environment_context>` при наличии значения появляется строка:
 
    ```xml
    <project_name>codex</project_name>
    ```
 
-4. Тег называется `project_name`, а не `project-name`, потому что соседние
+5. Тег называется `project_name`, а не `project-name`, потому что соседние
    структурированные поля в `environment_context` уже используют snake_case:
    `current_date`, `workspace_roots`.
-5. Для живого `TurnContext` значение берется из первого элемента
+6. Для живого `TurnContext` значение берется из первого элемента
    `Config::effective_workspace_roots()`. Для обычного запуска в этом checkout
    это дает `codex`; для тестового root `/repo` дает `repo`.
-6. `EnvironmentsState::from_turn_context_with_environments(...)` вычисляет
+7. `EnvironmentsState::from_turn_context_with_environments(...)` вычисляет
    `workspace_roots` один раз и использует один и тот же снимок roots для
    `project_name` и `FileSystemContext`.
-7. Для возобновления из `TurnContextItem` отдельное поле не добавляется. Значение
-   реконструируется из `workspace_roots`; если старый rollout не содержит
-   `workspace_roots`, `workspace_roots_from_turn_context_item(...)` использует
-   `cwd` как резервный источник.
-8. Если `workspace_roots` пустой, `project_name` отсутствует.
-9. Если у пути нет имени последнего компонента, резервное значение - полный путь
+8. Для текущего diff по world-state значение сохраняется в `EnvironmentsSnapshot`.
+   Для совместимого восстановления из `TurnContextItem` отдельное protocol-поле
+   не добавляется: значение реконструируется из `workspace_roots`; если старый
+   rollout не содержит `workspace_roots`, `workspace_roots_from_turn_context_item(...)`
+   использует `cwd` как резервный источник.
+9. Если `workspace_roots` пустой, `project_name` отсутствует.
+10. Если у пути нет имени последнего компонента, резервное значение - полный путь
    через `to_string_lossy()`.
-10. Если имя содержит символы, требующие XML-escaping, рендеринг использует
-    `push_optional_element(...)` и `push_xml_escaped_text(...)`, поэтому
-    `repo & docs` превращается в
-    `<project_name>repo &amp; docs</project_name>`.
-11. В выводе порядок такой:
-    - `cwd`/`shell` или выбранные environments;
-    - `project_name`;
-    - `current_date`;
-    - `timezone`;
-    - `network`;
-    - `filesystem`;
-    - `subagents`.
-12. `WorldStateSection::render_diff(...)` считает смену `project_name` значимым
-    изменением значений turn context.
-13. Если project name изменился, diff содержит новое значение.
-14. Если project name не изменился, но другое значение turn context изменилось,
-    тело diff остается самодостаточным и содержит текущее вычисленное значение
-    `project_name`, как для `network` и `filesystem`.
-15. Доработка не должна вызывать код status line TUI из `codex-core`.
+11. Если имя содержит символы, требующие XML-escaping, рендеринг использует
+     `push_optional_element(...)` и `push_xml_escaped_text(...)`, поэтому
+     `repo & docs` превращается в
+     `<project_name>repo &amp; docs</project_name>`.
+12. В выводе порядок такой:
+     - `cwd`/`shell` или выбранные environments;
+     - `project_name`;
+     - `current_date`;
+     - `timezone`;
+     - `network`;
+     - `filesystem`;
+     - `subagents`.
+13. `WorldStateSection::snapshot(...)` и `WorldStateSection::render_diff(...)`
+    считают смену `project_name` значимым изменением значений контекста
+    world-state.
+14. Если project name изменился, diff содержит новое значение.
+15. Если project name не изменился, но другое значение turn context изменилось,
+     тело diff остается самодостаточным и содержит текущее вычисленное значение
+     `project_name`, как для `network` и `filesystem`.
+16. Доработка не должна вызывать код status line TUI из `codex-core`.
 
 ## Архитектурное решение
 
@@ -159,8 +164,9 @@ TUI уже умеет показывать `project-name` в поверхнос�
 project_name: Option<String>,
 ```
 
-То же поле добавить в `RenderedEnvironments`, чтобы полный render и diff-render
-использовали один набор рендеримых значений.
+То же поле добавить в `RenderedEnvironments` и `EnvironmentsSnapshot`, чтобы
+полный render, diff-render и сохраненный базовый снимок world-state использовали
+один набор значений.
 
 ### 2. Вычислить имя проекта из workspace roots
 
@@ -228,17 +234,25 @@ filesystem: Some(FileSystemContext::from_permission_profile(
 Так `project_name` и `filesystem` остаются согласованными при replay старых и
 новых rollouts.
 
-### 5. Обновить diff
+### 5. Обновить snapshot и diff
 
-В `WorldStateSection::render_diff(...)` добавить `project_name` в сравнение
-значений turn context:
+В `WorldStateSection::snapshot(...)` добавить `project_name` в
+`EnvironmentsSnapshot`:
 
 ```rust
-let turn_context_values_changed = self.project_name != previous.project_name
-    || self.current_date != previous.current_date
-    || self.timezone != previous.timezone
-    || self.network != previous.network
-    || self.filesystem != previous.filesystem;
+project_name: self.project_name.clone(),
+```
+
+В `WorldStateSection::render_diff(...)` добавить `project_name` в сравнение
+значений контекста world-state через текущую upstream-модель
+`PreviousSectionState`:
+
+```rust
+let turn_context_values_changed = current.project_name != previous.project_name
+    || current.current_date != previous.current_date
+    || current.timezone != previous.timezone
+    || current.network != previous.network
+    || current.filesystem != previous.filesystem;
 ```
 
 Передать `self.project_name.clone()` в `RenderedEnvironments`.
@@ -247,7 +261,7 @@ let turn_context_values_changed = self.project_name != previous.project_name
 
 - если имя проекта изменилось, модель получает новое значение;
 - если имя проекта не изменилось, но изменилось другое значение turn context,
-  тело обновления context остается самодостаточным и содержит текущее
+  тело обновления контекста остается самодостаточным и содержит текущее
   вычисленное значение.
 
 ### 6. Обновить рендеринг
@@ -265,11 +279,15 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
 
 ### 7. Разрешить перенос после upstream-реорганизации
 
-В `rust-v0.142.5` рендеринг `<environment_context>`, видимого модели, находится в
+В `rust-v0.143.0` рендеринг `<environment_context>`, видимого модели, находится в
 `world_state/environment.rs`, а `environment_context.rs` остается владельцем
-общих `FileSystemContext`, `NetworkContext` и XML helper-функций. При разрешении
-конфликта нельзя возвращать старую структуру `EnvironmentContext` как основной
-путь рендера.
+общих `FileSystemContext`, `NetworkContext` и XML helper-функций.
+
+При разрешении конфликта нельзя возвращать старую структуру `EnvironmentContext`
+как основной путь рендера и нельзя возвращать старую сигнатуру
+`render_diff(&self, Option<&Self>)`: текущий upstream-контракт использует
+`WorldStateSection::snapshot(...)`, `EnvironmentsSnapshot` и
+`PreviousSectionState`.
 
 ## Проверки
 
@@ -295,7 +313,9 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
     root `/old-repo`;
   - создает `after` из `before.clone()` и меняет `project_name` на
     `Some("new-repo")`;
-  - вызывает `WorldStateSection::render_diff(...)`;
+  - создает предыдущий snapshot через `WorldStateSection::snapshot(&before)`;
+  - вызывает `WorldStateSection::render_diff(...)` с
+    `PreviousSectionState::Known(&previous)`;
   - проверяет наличие `<project_name>new-repo</project_name>`;
   - проверяет отсутствие `<project_name>old-repo</project_name>`.
 
@@ -471,5 +491,5 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 | Не расширять protocol без нужды | перенесено | восстановление из `TurnContextItem.workspace_roots` |
 | Сохранять XML escaping | перенесено | `push_optional_element`, `push_xml_escaped_text` и test с `repo & docs` |
 | Проверить workspace root вместо `cwd` | перенесено | `turn_context_item_project_name_uses_workspace_root_name` |
-| Проверить diff при смене проекта | перенесено | `diff_environment_context_includes_changed_project_name` |
+| Проверить diff при смене проекта | перенесено | `EnvironmentsSnapshot` и `diff_environment_context_includes_changed_project_name` |
 | Собирать и тестировать не локально, а на `f-ms-dev` | перенесено | `## Проверки`, исторические результаты и известные пропуски |

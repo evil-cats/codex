@@ -1,16 +1,18 @@
-use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_tools::ShellCommandBackendConfig;
 use codex_tools::ToolName;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::agent::agent_name::current_agent_name;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecParams;
 use crate::exec_env::RuntimeEnv;
 use crate::exec_env::create_env_with_runtime;
+use crate::exec_env::inject_permission_profile_env;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use crate::shell::Shell;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -88,37 +90,41 @@ impl ShellCommandHandler {
         params: &ShellCommandToolCallParams,
         session: &crate::session::session::Session,
         turn_context: &TurnContext,
-        thread_id: ThreadId,
+        turn_environment: &TurnEnvironment,
+        cwd: AbsolutePathBuf,
         call_id: &str,
         rollout_path: Option<&std::path::Path>,
         allow_login_shell: bool,
     ) -> Result<ExecParams, FunctionCallError> {
-        let shell = session.user_shell();
+        let session_shell = session.user_shell();
+        let shell = turn_environment
+            .shell
+            .as_ref()
+            .unwrap_or(session_shell.as_ref());
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
-        let command = Self::base_command(shell.as_ref(), &params.command, use_login_shell);
-        #[allow(deprecated)]
-        let cwd = turn_context.resolve_path(params.workdir.clone());
+        let command = Self::base_command(shell, &params.command, use_login_shell);
         let agent_name = current_agent_name(turn_context);
+
+        let mut env = create_env_with_runtime(
+            &turn_context.config.permissions.shell_environment_policy,
+            RuntimeEnv {
+                thread_id: Some(session.thread_id),
+                agent_name: agent_name.as_deref(),
+                call_id: Some(call_id),
+                rollout_path,
+            },
+        );
+        let active_permission_profile = turn_context.config.permissions.active_permission_profile();
+        inject_permission_profile_env(&mut env, active_permission_profile.as_ref());
 
         Ok(ExecParams {
             command,
             cwd,
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env_with_runtime(
-                &turn_context.config.permissions.shell_environment_policy,
-                RuntimeEnv {
-                    thread_id: Some(thread_id),
-                    agent_name: agent_name.as_deref(),
-                    call_id: Some(call_id),
-                    rollout_path,
-                },
-            ),
+            env,
             network: turn_context.network.clone(),
-            network_environment_id: turn_context
-                .environments
-                .primary()
-                .map(|environment| environment.environment_id.clone()),
+            network_environment_id: Some(turn_environment.environment_id.clone()),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
             windows_sandbox_private_desktop: turn_context
@@ -170,6 +176,7 @@ impl ShellCommandHandler {
         let ToolInvocation {
             session,
             turn,
+            step_context,
             cancellation_token,
             tracker,
             call_id,
@@ -184,16 +191,25 @@ impl ShellCommandHandler {
             )));
         };
 
-        #[allow(deprecated)]
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+        let Some(turn_environment) = step_context.environments.primary().cloned() else {
+            return Err(FunctionCallError::RespondToModel(
+                "shell is unavailable in this session".to_string(),
+            ));
+        };
+
+        let environment_cwd = turn_environment.cwd().to_abs_path().map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "shell_command cwd `{}` is not native to the Codex host: {err}",
+                turn_environment.cwd()
+            ))
+        })?;
+        let cwd = resolve_workdir_base_path(&arguments, &environment_cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        #[allow(deprecated)]
-        let workdir = turn.resolve_path(params.workdir.clone());
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
             &params.command,
-            &workdir,
+            &cwd,
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
@@ -202,12 +218,18 @@ impl ShellCommandHandler {
             &params,
             session.as_ref(),
             turn.as_ref(),
-            session.thread_id,
+            &turn_environment,
+            cwd,
             &call_id,
             rollout_path.as_deref(),
             turn.config.permissions.allow_login_shell,
         )?;
-        let shell_type = Some(session.user_shell().shell_type);
+        let shell_type = Some(
+            turn_environment
+                .shell
+                .as_ref()
+                .map_or_else(|| session.user_shell().shell_type, |shell| shell.shell_type),
+        );
         run_exec_like(RunExecLikeArgs {
             tool_name,
             exec_params,
@@ -218,6 +240,7 @@ impl ShellCommandHandler {
             prefix_rule,
             session,
             turn,
+            turn_environment,
             tracker,
             call_id,
             shell_runtime_backend: self.shell_runtime_backend(),

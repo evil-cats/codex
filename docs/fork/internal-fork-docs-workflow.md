@@ -2,7 +2,7 @@
 id: fork-internal-docs-workflow
 status: active
 created: 2026-06-08
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: rust-v0.141.0..hermione-0.141.0
 ---
 
@@ -14,7 +14,7 @@ source_scope: rust-v0.141.0..hermione-0.141.0
 документацию Hermione fork внутри `docs/`, не превращая ее в пользовательскую
 документацию upstream Codex.
 
-В текущем checkout после слияния `rust-v0.142.5` обязательные каталоги
+В текущем checkout после слияния `rust-v0.143.0` обязательные каталоги
 `docs/architecture`, `docs/plans`, `docs/follow-ups` и `docs/backlog` не
 восстанавливаются. Они остаются историческим контекстом раннего workflow, но не
 являются требованием к текущему checkout. Текущие handoff-документы fork
@@ -191,7 +191,7 @@ config:
 
 Инвентаризация в режиме чтения для исторических docs-каталогов нашла
 существующие lint issues в committed fork docs. В текущей миграции на
-`rust-v0.142.5` эти пути могут отсутствовать; не восстанавливай их только ради
+`rust-v0.143.0` эти пути могут отсутствовать; не восстанавливай их только ради
 этой карточки. Заметки ниже - контекст для будущей очистки, если эти каталоги
 снова появятся или будут проверяться по старой истории:
 
@@ -355,7 +355,7 @@ git diff --check
 - Исторические lint issues перечислены в разделе `Исторические lint-заметки`:
   `MD038/no-space-in-code`, `MD056/table-column-count` и unused reference
   definitions в legacy docs-каталогах.
-- В текущей миграции на `rust-v0.142.5` legacy paths могут отсутствовать; не
+- В текущей миграции на `rust-v0.143.0` legacy paths могут отсутствовать; не
   восстанавливай `docs/architecture`, `docs/plans`, `docs/follow-ups` или
   `docs/backlog` только ради этой карточки.
 - Простой markdownlint-вызов с config может проверить ноль файлов; для реальной

@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: working-tree
 ---
 
@@ -506,7 +506,7 @@ rollout не удалось получить.
         "test",
         "-p",
         "codex-core",
-        "shell_command_handler_to_exec_params_uses_session_shell_and_turn_context"
+        "shell_command_handler_to_exec_params_uses_selected_environment"
       ]
     },
     {
@@ -547,7 +547,7 @@ rollout не удалось получить.
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 теста запущены, 2 прошли |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_selected_environment` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" cargo check -p codex-cli -p codex-app-server -p codex-rmcp-client -p codex-exec-server -p codex-linux-sandbox` | прошла за 2m00s; проверены crates с обновленными точками вызова `create_env(..., agent_name)` |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m05s |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-protocol` | прошла за 37.68s |
@@ -561,7 +561,7 @@ rollout не удалось получить.
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fmt` | прошла на `f-ms-dev`; remote diff совпал с локальным diff |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core exec_env` | прошла: 12 тестов запущены, 12 прошли |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-protocol shell_environment` | прошла: 2 теста запущены, 2 прошли |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 тест запущен, 1 прошел |
+| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_selected_environment` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core maybe_wrap_shell_lc_with_snapshot_restores_codex_identity_from_env` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core env_overlay_for_exec_server_keeps_runtime_changes_only` | прошла: 1 тест запущен, 1 прошел |
 | `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_defaults_to_non_login_when_disallowed` | прошла: 1 тест запущен, 1 прошел |
@@ -595,6 +595,20 @@ rollout не удалось получить.
 
 Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
 запуске 2026-07-05 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
+
+Фактическая проверка 2026-07-08 после merge `rust-v0.143.0`:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/core/src/exec_env.rs` | Конфликт разрешен совмещением fork `RuntimeEnv` с upstream `CODEX_PERMISSION_PROFILE_ENV_VAR` и helper-ом `inject_permission_profile_env(...)` |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | `shell_command` сохраняет upstream `TurnEnvironment`/`cwd`, передает `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` через `create_env_with_runtime(...)`, затем добавляет runtime permission profile |
+| `codex-rs/core/src/tools/handlers/shell_tests.rs` | Ожидаемое окружение синхронизировано с выбранным `TurnEnvironment`, runtime identity env и `CODEX_PERMISSION_PROFILE` |
+| `codex-rs/core/src/tools/runtimes/mod.rs` | Snapshot wrapper восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT`, `CODEX_THREAD_ID` и upstream `CODEX_PERMISSION_PROFILE` из live env; отсутствующий permission profile остается unset |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | Unified exec добавляет runtime identity env и active permission profile поверх `local_policy_env`, не записывая runtime-only значения в базовый policy env |
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-08 не выполнялись по skill-owned one-card правилу; общий
 агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски

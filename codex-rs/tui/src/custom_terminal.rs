@@ -233,7 +233,7 @@ where
         ))
     }
 
-    pub(crate) fn with_screen_size_and_cursor_position(
+    fn with_screen_size_and_cursor_position(
         backend: B,
         screen_size: Size,
         cursor_pos: Position,
@@ -255,6 +255,15 @@ where
             history_rows_inserted_total: 0,
             kitty_history_images: Vec::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_screen_size_and_cursor_position_for_test(
+        backend: B,
+        screen_size: Size,
+        cursor_pos: Position,
+    ) -> Self {
+        Self::with_screen_size_and_cursor_position(backend, screen_size, cursor_pos)
     }
 
     /// Get a Frame object which provides a consistent view into the terminal state for rendering.

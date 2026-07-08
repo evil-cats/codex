@@ -1,3 +1,4 @@
+use super::PreviousSectionState;
 use super::WorldStateSection;
 use crate::context::ContextualUserFragment;
 use crate::context::environment_context::FileSystemContext;
@@ -10,6 +11,8 @@ use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// Environment values visible to the model.
@@ -25,10 +28,6 @@ pub(crate) struct EnvironmentsState {
 }
 
 impl EnvironmentsState {
-    pub(crate) fn from_turn_context(turn_context: &TurnContext) -> Self {
-        Self::from_turn_context_with_environments(turn_context, &turn_context.environments)
-    }
-
     pub(crate) fn from_turn_context_with_environments(
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
@@ -101,18 +100,54 @@ impl EnvironmentsState {
 }
 
 impl WorldStateSection for EnvironmentsState {
-    fn render_diff(&self, previous: Option<&Self>) -> Option<Box<dyn ContextualUserFragment>> {
-        let empty = Self::default();
-        let previous = previous.unwrap_or(&empty);
-        let turn_context_values_changed = self.project_name != previous.project_name
-            || self.current_date != previous.current_date
-            || self.timezone != previous.timezone
-            || self.network != previous.network
-            || self.filesystem != previous.filesystem;
+    const ID: &'static str = "environments";
+    type Snapshot = EnvironmentsSnapshot;
+
+    fn snapshot(&self) -> Self::Snapshot {
+        EnvironmentsSnapshot {
+            environments: self
+                .environments
+                .iter()
+                .map(|(id, environment)| {
+                    (
+                        id.clone(),
+                        EnvironmentSnapshot {
+                            cwd: environment.cwd.inferred_native_path_string(),
+                            status: environment.status,
+                            shell: environment.shell.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            project_name: self.project_name.clone(),
+            current_date: self.current_date.clone(),
+            timezone: self.timezone.clone(),
+            network: self.network.as_ref().map(NetworkContext::render),
+            filesystem: self.filesystem.as_ref().map(FileSystemContext::render),
+            subagents: self.subagents.clone(),
+        }
+    }
+
+    fn render_diff(
+        &self,
+        previous: PreviousSectionState<'_, Self::Snapshot>,
+    ) -> Option<Box<dyn ContextualUserFragment>> {
+        let current = self.snapshot();
+        let empty = EnvironmentsSnapshot::default();
+        let previous = match previous {
+            PreviousSectionState::Known(previous) => previous,
+            PreviousSectionState::Absent | PreviousSectionState::Unknown => &empty,
+        };
+        let turn_context_values_changed = current.project_name != previous.project_name
+            || current.current_date != previous.current_date
+            || current.timezone != previous.timezone
+            || current.network != previous.network
+            || current.filesystem != previous.filesystem;
         let mut updates = self
             .environments
             .iter()
-            .filter(|(id, environment)| {
+            .filter(|(id, _)| {
+                let environment = &current.environments[*id];
                 previous
                     .environments
                     .get(*id)
@@ -283,7 +318,25 @@ struct EnvironmentState {
     shell: Option<String>,
 }
 
-impl EnvironmentState {
+#[derive(Default, Deserialize, Serialize)]
+pub(crate) struct EnvironmentsSnapshot {
+    environments: BTreeMap<String, EnvironmentSnapshot>,
+    project_name: Option<String>,
+    current_date: Option<String>,
+    timezone: Option<String>,
+    network: Option<String>,
+    filesystem: Option<String>,
+    subagents: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct EnvironmentSnapshot {
+    cwd: String,
+    status: EnvironmentStatus,
+    shell: Option<String>,
+}
+
+impl EnvironmentSnapshot {
     fn has_same_diff_value(&self, other: &Self) -> bool {
         self.cwd == other.cwd
             && self.status == other.status
@@ -295,7 +348,8 @@ impl EnvironmentState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum EnvironmentStatus {
     Starting,
     Available,

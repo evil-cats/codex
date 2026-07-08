@@ -5,6 +5,7 @@
 
 use super::*;
 use codex_protocol::items::ImagePreviewSize;
+use codex_utils_path_uri::LegacyAppPathString;
 
 impl ChatWidget {
     pub(super) fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
@@ -14,19 +15,20 @@ impl ChatWidget {
 
     pub(super) fn on_view_image_tool_call(
         &mut self,
-        path: AbsolutePathBuf,
+        path: LegacyAppPathString,
         preview_size: ImagePreviewSize,
     ) {
         self.record_visible_turn_activity();
         self.flush_answer_stream_with_separator();
-        self.insert_local_image_history(
-            path.as_path().to_path_buf(),
-            Some(crate::diff_render::display_path_for(
-                path.as_path(),
+        if let Some(path) = path.to_inferred_abs_path() {
+            let caption = crate::diff_render::display_path_for(path.as_path(), &self.config.cwd);
+            self.insert_local_image_history(path.into_path_buf(), Some(caption), preview_size);
+        } else {
+            self.add_to_history(history_cell::new_view_image_tool_call(
+                path,
                 &self.config.cwd,
-            )),
-            preview_size,
-        );
+            ));
+        }
         self.request_redraw();
     }
 

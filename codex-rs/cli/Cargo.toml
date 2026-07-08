@@ -1,6 +1,6 @@
 [package]
 name = "codex-cli"
-version = "0.142.5+hermione"
+version = "0.143.0+hermione"
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
@@ -95,6 +95,7 @@ windows-sys = { version = "0.52", features = [
 ] }
 
 [dev-dependencies]
+app_test_support = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }

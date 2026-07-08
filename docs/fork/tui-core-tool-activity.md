@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-06
+updated: 2026-07-08
 source_scope: working-tree
 ---
 
@@ -154,6 +154,7 @@ thread и чтение текущего времени host. Но если эт�
 | Файл или зона | Ответственность |
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
+| `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools с activity item, компактный `detail`, raw `arguments`, lifecycle started/completed и status |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает выполнение подходящих core function tools событиями `emit_turn_item_started` и `emit_turn_item_completed` без изменения model-visible `FunctionCallOutput` |
 | `codex-rs/core/src/tools/mod.rs` | Подключает модуль `core_tool_activity` |
@@ -562,6 +563,8 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork build-fast` после исправления completed-only replay | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` после исправления completed-only replay | `ok` | Установлен `${HOME}/.local/bin/codex-hermione` |
 | Миграционный проход `rust-v0.142.5`: сгенерированные артефакты схем v2 | `resolved-current-pass` | Убраны маркеры конфликтов в `ThreadItem.ts` и файлах JSON Schema; сохранены обе сгенерированные записи `definitions`: `ImagePreviewSize`, `LegacyAppPathString` и `McpToolCallAppContext` |
+| Миграционный проход `rust-v0.143.0`: lifecycle и слой legacy-событий для `CoreToolActivity` | `resolved-current-pass` | `thread_history` объединяет upstream materialized lifecycle с `CoreToolActivity`; `legacy_events.rs` явно игнорирует `CoreToolActivity`, чтобы не добавлять legacy-событие или менять model-visible поток |
+| Миграционный проход `rust-v0.143.0`: проверки подагента | `not-run-current-pass` | По явному ограничению текущего subagent-запуска проверки, генераторы, форматирование, сборка, `fork tests --mode list` и `fork cards validate` не запускались |
 | `.codex/skills/fork/scripts/fork cards validate` после исправления completed-only replay | `ok` | Проверка карточек прошла: `cards_checked: 19`, `card_errors: 0` |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |

@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -108,14 +108,15 @@ Fallback остается рядом:
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/protocol/src/items.rs` | `ImagePreviewSize`, `ImageViewItem.preview_size`, `ImageGenerationItem.saved_path` |
+| `codex-rs/protocol/src/items.rs` | `ImagePreviewSize`, `ImageViewItem.path` как `PathUri`, `ImageViewItem.preview_size`, `ImageGenerationItem.saved_path` |
 | `codex-rs/protocol/src/protocol.rs` | Legacy `ViewImageToolCallEvent.preview_size` |
 | `codex-rs/core/src/tools/handlers/view_image.rs` | Parses `preview_size`, rejects invalid values |
 | `codex-rs/core/src/tools/handlers/view_image_spec.rs` | Exposes `preview_size`, not `preview_rows` |
 | `codex-rs/config/src/types.rs` | `[tui.history_image_preview]` defaults |
 | `codex-rs/core/src/config/mod.rs` | Runtime `HistoryImagePreviewConfig::rows_for` |
 | `codex-rs/core/config.schema.json` | Config schema |
-| `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | App-server v2 `ThreadItem::ImageView.previewSize` |
+| `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | App-server v2 `ThreadItem::ImageView.path` как `LegacyAppPathString`, `previewSize` |
+| `codex-rs/app-server-protocol/schema/typescript/v2/ThreadItem.ts` | Generated TS union для `ThreadItem::ImageView.path` и `previewSize` |
 | `codex-rs/app-server-protocol/schema/typescript/ImagePreviewSize.ts` | Generated TS enum |
 
 ## Итоговый контракт
@@ -319,6 +320,14 @@ rows. Cursor movement внутри одной строки недостаточ�
 сохранила `detail = original`; fork-добавка в этом месте ограничена разбором
 `preview_size`, ошибкой для неизвестного значения и заполнением
 `ImageViewItem.preview_size`.
+
+Заметка для переноса на `rust-v0.143.0`: если upstream меняет поверхность пути
+`ImageView` с `AbsolutePathBuf` на `PathUri`/`LegacyAppPathString`, сохраняй
+новую upstream-модель путей и добавляй поверх нее fork-поле `preview_size`.
+`TurnItem::ImageView`, legacy `ViewImageToolCallEvent`, app-server v2
+`ThreadItem::ImageView`, TUI replay и `ChatWidget::on_view_image_tool_call`
+должны переносить один и тот же `ImagePreviewSize` без возврата к числовому
+`preview_rows`.
 
 ## Проверки
 

@@ -2,8 +2,8 @@
 id: fork-hermione-version-metadata
 status: active
 created: 2026-06-08
-updated: 2026-07-05
-source_scope: rust-v0.142.5..hermione-0.142.5
+updated: 2026-07-08
+source_scope: rust-v0.143.0..hermione-0.143.0
 ---
 
 # Hermione version metadata
@@ -11,17 +11,17 @@ source_scope: rust-v0.142.5..hermione-0.142.5
 ## Обзор
 
 Эта карточка фиксирует fork-доработку, которая маркирует CLI и TUI builds как
-Hermione через Cargo build metadata: `0.142.5+hermione`.
+Hermione через Cargo build metadata: `0.143.0+hermione`.
 
 Карточка также фиксирует update-check изменения: сравнение upstream versions
-должно игнорировать build metadata после `+`, чтобы `0.142.5+hermione`
-сравнивался как `0.142.5`.
+должно игнорировать build metadata после `+`, чтобы `0.143.0+hermione`
+сравнивался как `0.143.0`.
 
 | Поле | Значение |
 | --- | --- |
 | Статус | `active` |
-| Основные commits | `33e804a51`, `67067a90f`, перенос через merge до `671afe3ee`, перенос на `0.140.0`, перенос на `0.141.0`, перенос на `0.142.5` |
-| Текущая версия ветки | `0.142.5+hermione` |
+| Основные commits | `33e804a51`, `67067a90f`, перенос через merge до `671afe3ee`, перенос на `0.140.0`, перенос на `0.141.0`, перенос на `0.142.5`, перенос на `0.143.0` |
+| Текущая версия ветки | `0.143.0+hermione` |
 | Затронутые crates | `codex-cli`, `codex-tui` |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
@@ -30,17 +30,17 @@ Hermione через Cargo build metadata: `0.142.5+hermione`.
 Hermione fork должен быть отличим от upstream binary при диагностике,
 `--version`, install workflow и локальном сравнении сборок. При этом update
 logic должен продолжать понимать, что base semver остается upstream-compatible:
-`0.142.5+hermione` не должен ломать сравнение с `rust-v0.143.0` или
-`rust-v0.142.5`.
+`0.143.0+hermione` не должен ломать сравнение с `rust-v0.144.0` или
+`rust-v0.143.0`.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/Cargo.toml` | Держит `workspace.package.version = "0.142.5"` без Hermione metadata |
-| `codex-rs/cli/Cargo.toml` | Задаёт explicit `version = "0.142.5+hermione"` для `codex-cli` |
-| `codex-rs/tui/Cargo.toml` | Задаёт explicit `version = "0.142.5+hermione"` для `codex-tui` |
-| `codex-rs/Cargo.lock` | Фиксирует `codex-cli` и `codex-tui` как `0.142.5+hermione` |
+| `codex-rs/Cargo.toml` | Держит `workspace.package.version = "0.143.0"` без Hermione metadata |
+| `codex-rs/cli/Cargo.toml` | Задаёт explicit `version = "0.143.0+hermione"` для `codex-cli` |
+| `codex-rs/tui/Cargo.toml` | Задаёт explicit `version = "0.143.0+hermione"` для `codex-tui` |
+| `codex-rs/Cargo.lock` | Фиксирует `codex-cli` и `codex-tui` как `0.143.0+hermione` |
 | `codex-rs/cli/src/doctor/updates.rs` | Игнорирует build metadata при CLI doctor update comparison |
 | `codex-rs/tui/src/update_versions.rs` | Игнорирует build metadata при TUI update comparison |
 | `codex-rs/tui/src/version.rs` | Использует `env!("CARGO_PKG_VERSION")` вне tests и stable test value |
@@ -53,13 +53,13 @@ logic должен продолжать понимать, что base semver о�
    Hermione metadata:
 
    ```toml
-   version = "0.142.5+hermione"
+   version = "0.143.0+hermione"
    ```
 
 4. При следующем upstream release нужно менять base part:
-   - `0.142.5+hermione` -> `X.Y.Z+hermione`, если base tag `rust-vX.Y.Z`.
+   - `0.143.0+hermione` -> `X.Y.Z+hermione`, если base tag `rust-vX.Y.Z`.
 5. `workspace.package.version` должен оставаться обычной upstream base version
-   без суффикса `+hermione`, сейчас `0.142.5`.
+   без суффикса `+hermione`, сейчас `0.143.0`.
 6. `Cargo.lock` должен отражать explicit versions для `codex-cli` и
    `codex-tui`.
 7. Version comparison для update checks должен отрезать suffix после `+` перед
@@ -81,7 +81,7 @@ logic должен продолжать понимать, что base semver о�
 ```toml
 [package]
 name = "codex-cli"
-version = "0.142.5+hermione"
+version = "0.143.0+hermione"
 ```
 
 В `codex-rs/tui/Cargo.toml`:
@@ -89,36 +89,37 @@ version = "0.142.5+hermione"
 ```toml
 [package]
 name = "codex-tui"
-version = "0.142.5+hermione"
+version = "0.143.0+hermione"
 ```
 
 Не оставлять `version.workspace = true` для этих двух crates.
 
 ### 2. Обновить lockfile
 
-После изменения manifests обновить `codex-rs/Cargo.lock` на `f-ms-dev`, если
-пользователь разрешил Rust/Cargo command. В lockfile должны быть:
+После изменения manifests обновить `codex-rs/Cargo.lock` через общий fork
+workflow, если пользователь разрешил Rust/Cargo command. В lockfile должны быть:
 
 ```toml
 name = "codex-cli"
-version = "0.142.5+hermione"
+version = "0.143.0+hermione"
 ```
 
 и:
 
 ```toml
 name = "codex-tui"
-version = "0.142.5+hermione"
+version = "0.143.0+hermione"
 ```
 
 Во время `0.137.0` migration commit `671afe3ee` также нормализовал многие
 workspace packages в lockfile с `0.0.0` на `0.137.0`; это lockfile formatting
 noise, который не следует путать с Hermione metadata.
 
-Во время переноса на `0.142.5` workspace packages в `Cargo.lock` должны быть
-синхронизированы с upstream workspace version `0.142.5`, а `codex-cli` и
-`codex-tui` должны остаться единственными shipped crates с suffix
-`+hermione`.
+Во время переноса на `0.143.0` смысловое требование этой карточки к
+`Cargo.lock` ограничено поставляемыми crates: `codex-cli` и `codex-tui` должны
+остаться единственными поставляемыми crates с suffix `+hermione`. Широкая
+нормализация lockfile для остальных workspace packages относится к общей
+миграции и не является отдельным критерием готовности этой карточки.
 
 ### 3. Исправить CLI update parsing
 
@@ -174,13 +175,13 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 - Existing tests для plain semver, prerelease и whitespace должны остаться.
 - Version metadata evidence должно подтверждать, что:
   - `codex-cli` и `codex-tui` имеют explicit
-    `version = "0.142.5+hermione"`;
+    `version = "0.143.0+hermione"`;
   - `Cargo.lock` фиксирует `codex-cli` и `codex-tui` как
-    `0.142.5+hermione`;
-  - остальные workspace packages синхронизированы с upstream workspace version
-    `0.142.5`;
+    `0.143.0+hermione`;
   - `workspace.package.version` остается обычной upstream base version
-    `0.142.5`, без суффикса `+hermione`;
+    `0.143.0`, без суффикса `+hermione`;
+  - широкая нормализация lockfile для остальных workspace packages не считается
+    критерием готовности этой карточки;
   - TUI version constant берет package version at compile time, но в tests
     остается стабильным `CODEX_CLI_VERSION = "0.0.0"`.
 
@@ -240,13 +241,13 @@ Card-level проверки этой карточки запускает skill-o
    - проверить `codex --version` установленного binary, если задача включает
      install.
 2. Локально без Rust/Cargo:
-   - `rg -n "0\\.142\\.5\\+hermione|split_once\\('\\+'\\)|CARGO_PKG_VERSION" codex-rs`;
+   - `rg -n "0\\.143\\.0\\+hermione|split_once\\('\\+'\\)|CARGO_PKG_VERSION" codex-rs`;
    - `git diff --check`.
 
 В этой карточке не было зафиксировано свежих stdout/stderr, log path, timestamp
 или pass/fail результата для этих исторических команд. Build/version evidence
 зафиксировано как contract: shipped CLI/TUI crates должны показывать
-`0.142.5+hermione`, а update comparison должен сравнивать base version без
+`0.143.0+hermione`, а update comparison должен сравнивать base version без
 build metadata.
 
 ### Известные падения и пропуски
@@ -263,7 +264,7 @@ build metadata.
 ## Ограничения
 
 - Build metadata `+hermione` не должен попадать в upstream tag parsing.
-  Upstream latest tags имеют вид `rust-v0.142.5`; `extract_version_from_latest_tag`
+  Upstream latest tags имеют вид `rust-v0.143.0`; `extract_version_from_latest_tag`
   по-прежнему отрезает `rust-v`.
 - Не менять workspace package version глобально ради Hermione. Marking нужен
   именно для shipped CLI/TUI crates.
@@ -283,9 +284,9 @@ build metadata.
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
-| Upstream `0.142.5` для workspace version | перенесено | "Итоговый контракт", "Карта файлов" |
-| Explicit `0.142.5+hermione` для CLI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Explicit `0.142.5+hermione` для TUI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Upstream `0.143.0` для workspace version | перенесено | "Итоговый контракт", "Карта файлов" |
+| Explicit `0.143.0+hermione` для CLI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
+| Explicit `0.143.0+hermione` для TUI | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
 | Ignore build metadata in update comparison | перенесено | "Итоговый контракт", "Проверки" |
 | Stable TUI test version | перенесено | "Пошаговое воспроизведение" |
 | Lockfile migration nuance | перенесено | "Пошаговое воспроизведение", "Риски" |

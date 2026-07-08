@@ -93,7 +93,7 @@ impl ReadFileHandler {
             ));
         }
         let Some(turn_environment) =
-            resolve_tool_environment(turn.as_ref(), args.environment_id.as_deref())?
+            resolve_tool_environment(&turn.environments, args.environment_id.as_deref())?
         else {
             return Err(FunctionCallError::RespondToModel(
                 "read_file is unavailable in this session".to_string(),

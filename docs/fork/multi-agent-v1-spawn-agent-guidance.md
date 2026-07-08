@@ -2,7 +2,7 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: discussion-2026-07-05
 ---
 
@@ -317,6 +317,12 @@ runbook прямого запуска.
 
 На момент создания карточки код, тесты и сборка не запускались. В текущем
 проходе после кодовой правки выполнено:
+
+При переносе на `rust-v0.143.0` подагент разрешил конфликт в V1
+`spawn_agent` description, сохранив согласованный короткий tool-specific
+guidance и не вернув upstream-блок с explicit-request guard и sidecar-work
+workflow. Проверки, форматирование, генераторы и сборка в этом card-pass не
+запускались; общий проверочный проход остаётся за parent-agent.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |
