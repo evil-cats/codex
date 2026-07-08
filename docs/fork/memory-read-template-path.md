@@ -2,210 +2,129 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-07-05
-source_scope: rust-v0.141.0..HEAD
+updated: 2026-07-08
+source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
-# Memory read template: `[memories].read_template_path`
+# Memory read template: встроенная политика обновления памяти
 
 ## Обзор
 
-Эта карточка фиксирует fork-доработку Hermione, которая позволяет профилю
-переопределять Markdown-шаблон read-path memory prompt через
-`[memories].read_template_path`.
+Эта карточка фиксирует fork-доработку Hermione для read-path memory prompt в
+developer-инструкциях. Активная модель после правки 2026-07-08: нужная политика
+обновления памяти живет прямо во встроенном runtime-шаблоне
+`codex-rs/ext/memories/templates/memories/read_path.md`.
 
-Карточка нужна как самостоятельный handoff: следующий агент должен понять, что
-именно было изменено, почему, как повторить перенос на новый upstream и какие
-проверки нужны, не читая transcript.
+Исторически карточка вводила `[memories].read_template_path`, чтобы профиль мог
+подставлять внешний Markdown-шаблон. Этот слой удален: он скрывал расхождение
+upstream-шаблона и больше не нужен, потому что fork теперь меняет встроенный
+шаблон напрямую.
 
 | Поле | Значение |
 | --- | --- |
 | Статус | `active` |
-| Основной commit | `9c9af8853 Make memory read template configurable` |
-| Текущая база проверки | `rust-v0.141.0..HEAD`, ветка `hermione-0.141.0` |
-| Главный config key | `[memories].read_template_path` |
-| Runtime-владелец после merge `rust-v0.141.0` | `codex-rs/ext/memories/src/prompts.rs` |
-| Исторический владелец до merge | `codex-rs/memories/read/src/prompts.rs` |
-| Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
+| Исторический commit | `9c9af8853 Make memory read template configurable` |
+| Текущая доправка | Удалить `[memories].read_template_path` и встроить политику обновления памяти Hermione в `read_path.md` |
+| Runtime-владелец | `codex-rs/ext/memories/src/prompts.rs` |
+| Канонический шаблон | `codex-rs/ext/memories/templates/memories/read_path.md` |
+| Удаленный config key | `[memories].read_template_path` |
+| Checkpoint перед исторической карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
 ## Зачем это нужно
 
-Upstream Codex держит memory read-path developer prompt как embedded template.
-Для Hermione-профиля нужно менять форму memory-инструкций без patching upstream
-шаблона и без вписывания большого текста прямо в `config.toml`.
+Hermione-профиль должен получать инструкции чтения памяти, которые разрешают
+агенту самостоятельно создавать и обслуживать ad-hoc карточки памяти, когда это
+разрешено активными `developer` instructions, profile policy или явной просьбой
+пользователя.
 
-Доработка вводит профильный путь к Markdown-файлу. Если путь задан, prompt
-строится из этого файла; если путь не задан, сохраняется штатный embedded
-template.
+Старый подход с внешним `read_template_path` решал задачу быстро, но создавал
+лишний override-слой. При следующем upstream update изменение штатного
+`read_path.md` могло пройти незамеченным, потому что активный профиль продолжал
+читать текст из `~/.codex/policies/memory-read-template.md`.
+
+Новая модель делает встроенный шаблон источником истины. Если upstream изменит
+этот prompt, rebase или diff покажет изменение в кодовом файле, а не спрячет за
+профильной настройкой.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/config/src/types.rs` | Добавляет `read_template_path` в `MemoriesToml` и `MemoriesConfig` |
-| `codex-rs/core/config.schema.json` | Экспортирует поле в JSON schema config |
-| `codex-rs/core/src/config/config_tests.rs` | Проверяет TOML parsing и effective `MemoriesConfig` |
-| `codex-rs/ext/memories/src/extension.rs` | Прокидывает путь из `Config.memories` в memory extension context |
-| `codex-rs/ext/memories/src/prompts.rs` | Загружает embedded или configured template и рендерит prompt |
-| `codex-rs/ext/memories/src/prompts_tests.rs` | Проверяет embedded template и configured template |
-| `codex-rs/ext/memories/src/tests.rs` | Обновляет extension test config новым полем |
-| `codex-rs/memories/README.md` | Документирует override, placeholders и фактический путь к runtime-шаблону |
+| `codex-rs/ext/memories/templates/memories/read_path.md` | Содержит канонический read-path prompt и расширенный раздел `Updating memories` |
+| `codex-rs/ext/memories/src/prompts.rs` | Рендерит только встроенный шаблон с `{{ base_path }}` и `{{ memory_summary }}` |
+| `codex-rs/ext/memories/src/prompts_tests.rs` | Проверяет встроенный шаблон, подстановку summary и отсутствие старого запрета на самостоятельные memory updates |
+| `codex-rs/ext/memories/src/extension.rs` | Хранит только `codex_home`; не прокидывает template path |
+| `codex-rs/ext/memories/src/tests.rs` | Создает `MemoriesExtensionConfig` без template path |
+| `codex-rs/config/src/types.rs` | Не содержит `read_template_path` в `MemoriesToml` и `MemoriesConfig` |
+| `codex-rs/core/config.schema.json` | Не экспортирует `read_template_path` в memories schema |
+| `codex-rs/core/src/config/config_tests.rs` | Проверяет memories TOML/effective config без `read_template_path` |
+| `codex-rs/memories/README.md` | Указывает, что undated runtime templates редактируются in-place |
+| `docs/fork/migration-0.142.5.md` | Синхронизирует текущую migration-карту с удалением override-слоя |
 
 ## Итоговый контракт
 
-1. `MemoriesToml` получает поле:
+1. Read-path memory prompt в developer-инструкциях всегда строится из
+   встроенного шаблона
+   `codex-rs/ext/memories/templates/memories/read_path.md`.
+2. `[memories].read_template_path` отсутствует в Rust config types, effective
+   `MemoriesConfig`, JSON schema и config tests.
+3. `MemoriesExtensionConfig` не хранит template path и передает в
+   `build_memory_tool_developer_instructions` только `codex_home`.
+4. `build_memory_tool_developer_instructions` читает
+   `${codex_home}/memories/memory_summary.md`, trim'ит summary, обрезает ее по
+   `MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT` и рендерит
+   встроенный шаблон.
+5. Если `memory_summary.md` отсутствует, пустой после trim или не читается,
+   prompt не добавляется.
+6. Встроенный шаблон поддерживает только placeholders `{{ base_path }}` и
+   `{{ memory_summary }}`. Unknown placeholders остаются ошибкой встроенного
+   шаблона, потому что такой template должен падать при lazy parse, а не
+   подменяться внешним файлом.
+7. Раздел `Updating memories` во встроенном шаблоне разрешает обновления памяти,
+   когда это позволяют активные `developer` instructions, profile policy или
+   явная просьба пользователя. Прямая команда `"remember this"` не обязательна,
+   если активная policy уже разрешает запись.
+8. Безопасный путь записи памяти по умолчанию:
+   - создавать маленькие Markdown-карточки в
+     `${codex_home}/memories/extensions/ad_hoc/notes/`;
+   - редактировать существующие ad-hoc карточки, когда нужно исправить durable
+     knowledge, `status`, `updated`, `confidence` или условия применимости;
+   - обновлять `${codex_home}/memories/extensions/ad_hoc/INDEX.md` в том же
+     изменении, когда добавляются карточки, меняется статус или переносится
+     ответственность.
+9. Шаблон прямо запрещает сохранять секреты, учетные данные, большие сырые логи,
+   сгенерированные артефакты и временный вывод команд как memory.
+10. Шаблон запрещает редактировать consolidated/generated memory artifacts
+    вроде `MEMORY.md`, `memory_summary.md`, rollout summaries и skill files без
+    более высокого разрешения.
+11. При конфликте memory candidate, возможной чувствительности данных или
+    неясном scope агент должен спросить пользователя перед записью.
 
-   ```rust
-   pub read_template_path: Option<AbsolutePathBuf>,
-   ```
+## Порядок повторения при переносе
 
-2. `MemoriesConfig` получает такое же поле. Значение по умолчанию: `None`.
-3. `From<MemoriesToml> for MemoriesConfig` переносит `read_template_path` без
-   дополнительной нормализации: `AbsolutePathBuf` уже пришёл из config loader.
-4. `MemoriesExtensionConfig::from_config` сохраняет
-   `config.memories.read_template_path.clone()`.
-5. `ContextContributor for MemoriesExtension` вызывает:
-
-   ```rust
-   build_memory_tool_developer_instructions(
-       &config.codex_home,
-       config.read_template_path.as_ref(),
-   )
-   ```
-
-6. Если `read_template_path` отсутствует, используется embedded template
-   `templates/memories/read_path.md`.
-7. Если `read_template_path` задан, файл читается асинхронно через `tokio::fs`.
-8. Если configured template нельзя прочитать или нельзя распарсить, memory
-   developer prompt становится недоступным (`None`), а не падает весь config
-   load.
-9. Разрешены только placeholders `{{ base_path }}` и `{{ memory_summary }}`.
-10. Любой неизвестный placeholder делает prompt unavailable (`None`).
-11. `memory_summary.md` по-прежнему читается из `${codex_home}/memories`,
-    trim'ится и обрезается по
-    `MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT`.
-12. Если summary пустая или отсутствует, prompt не добавляется.
-
-## Пошаговое воспроизведение
-
-### 1. Добавить config surface
-
-В `codex-rs/config/src/types.rs` найти `MemoriesToml` и добавить:
-
-```rust
-/// Optional Markdown template used to render memory usage instructions into developer prompts.
-pub read_template_path: Option<AbsolutePathBuf>,
-```
-
-В `MemoriesConfig` добавить:
-
-```rust
-pub read_template_path: Option<AbsolutePathBuf>,
-```
-
-В `Default for MemoriesConfig` поставить:
-
-```rust
-read_template_path: None,
-```
-
-В `From<MemoriesToml> for MemoriesConfig` перенести:
-
-```rust
-read_template_path: toml.read_template_path,
-```
-
-### 2. Обновить schema
-
-Если меняется `ConfigToml` или nested config type, schema-артефакт
-`codex-rs/core/config.schema.json` должен быть синхронизирован через
-skill-owned владельца `fork generators`. Для этой fork-доработки schema должна
-содержать поле `read_template_path` внутри definitions для memories config.
-
-Карточка не является runbook запуска генератора. Историческое упоминание
-внутреннего argv генерации сохранено ниже только как след старого формата
-карточки, а не как нормативный шаг воспроизведения.
-
-### 3. Прокинуть путь в extension config
-
-В `codex-rs/ext/memories/src/extension.rs` расширить
-`MemoriesExtensionConfig`:
-
-```rust
-pub(crate) read_template_path: Option<AbsolutePathBuf>,
-```
-
-В `from_config` добавить:
-
-```rust
-read_template_path: config.memories.read_template_path.clone(),
-```
-
-В `contribute` передать `config.read_template_path.as_ref()` в builder
-developer instructions.
-
-### 4. Обновить prompt builder
-
-В текущей проверке после merge `rust-v0.141.0` владелец находится в
-`codex-rs/ext/memories/src/prompts.rs`. В более старых ветках этот код мог жить
-в `codex-rs/memories/read/src/prompts.rs`; при переносе на новый upstream нужно
-сначала найти живой вызов `build_memory_tool_developer_instructions`.
-
-Сигнатура должна стать:
-
-```rust
-pub(crate) async fn build_memory_tool_developer_instructions(
-    codex_home: &AbsolutePathBuf,
-    read_template_path: Option<&AbsolutePathBuf>,
-) -> Option<String>
-```
-
-Добавить загрузку template:
-
-```rust
-async fn load_memory_tool_developer_instructions_template(
-    read_template_path: Option<&AbsolutePathBuf>,
-) -> Option<Template> {
-    let Some(read_template_path) = read_template_path else {
-        return Some(MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE.clone());
-    };
-
-    let template = fs::read_to_string(read_template_path).await.ok()?;
-    Template::parse(&template).ok()
-}
-```
-
-Добавить рендер с whitelist placeholders:
-
-```rust
-fn render_memory_tool_developer_instructions_template(
-    template: &Template,
-    base_path: &str,
-    memory_summary: &str,
-) -> Option<String> {
-    let mut variables = Vec::new();
-    for placeholder in template.placeholders() {
-        match placeholder {
-            "base_path" => variables.push(("base_path", base_path)),
-            "memory_summary" => variables.push(("memory_summary", memory_summary)),
-            _ => return None,
-        }
-    }
-    template.render(variables).ok()
-}
-```
-
-### 5. Обновить docs
-
-В `codex-rs/memories/README.md` добавить, что read-path template можно
-переопределить через `[memories].read_template_path`, а configured template
-рендерится с `{{ base_path }}` и `{{ memory_summary }}`. Отдельно указать, что
-unknown placeholders делают read-path prompt unavailable.
-
-После merge `rust-v0.141.0` README также должен указывать фактический
-канонический путь к runtime-шаблону:
-`codex-rs/ext/memories/templates/memories/read_path.md`, а не исторический путь
-в `codex-rs/memories/read`.
+1. Найти живой runtime-владелец по
+   `build_memory_tool_developer_instructions`. После merge `rust-v0.141.0` это
+   `codex-rs/ext/memories/src/prompts.rs`; в более старых ветках код мог жить в
+   `codex-rs/memories/read/src/prompts.rs`.
+2. В `codex-rs/ext/memories/templates/memories/read_path.md` сохранить расширенный
+   раздел `Updating memories` без старого запрета `only when explicitly asked by
+   the user`.
+3. Удалить `read_template_path` из `MemoriesToml`, `MemoriesConfig`,
+   `Default for MemoriesConfig` и `From<MemoriesToml> for MemoriesConfig`.
+4. Обновить `codex-rs/core/config.schema.json` через skill-owned владельца
+   `fork generators`, чтобы schema больше не экспортировала удаленный key.
+5. Удалить `read_template_path` из `MemoriesExtensionConfig` и из вызова prompt
+   builder.
+6. Упростить `build_memory_tool_developer_instructions`: убрать параметр
+   template path и чтение configured template, оставить render встроенного
+   шаблона.
+7. Удалить configured-template test. Embedded-template test должен проверять, что
+   prompt содержит новый безопасный путь обновления и не содержит старый запрет.
+8. Обновить `codex-rs/memories/README.md`: не документировать
+   `[memories].read_template_path`, оставить in-place editing undated runtime
+   templates.
+9. Синхронизировать текущую migration-карту, если она утверждает наличие
+   `[memories].read_template_path`.
 
 ## Проверки
 
@@ -213,44 +132,36 @@ unknown placeholders делают read-path prompt unavailable.
 
 Покрытие, которое должно присутствовать в diff:
 
+- `codex-rs/ext/memories/templates/memories/read_path.md`:
+  - содержит расширенный `Updating memories`;
+  - не содержит старого запрета `only when explicitly asked by the user`;
+  - описывает путь обновления ad-hoc карточки и `INDEX.md`.
 - `codex-rs/config/src/types.rs`:
-  - `MemoriesToml` содержит `read_template_path: Option<AbsolutePathBuf>`;
-  - `MemoriesConfig` содержит такое же поле;
-  - `Default for MemoriesConfig` ставит `read_template_path: None`;
-  - `From<MemoriesToml> for MemoriesConfig` переносит значение без дополнительной
-    нормализации.
-- `codex-rs/core/config.schema.json` содержит schema-подтверждение для
-  `read_template_path` внутри definitions memories config; актуализация этого
-  сгенерированного артефакта принадлежит `fork generators`.
-- `codex-rs/ext/memories/src/extension.rs` прокидывает
-  `config.memories.read_template_path.clone()` в `MemoriesExtensionConfig` и
-  передает `config.read_template_path.as_ref()` в prompt builder.
-- `codex-rs/ext/memories/src/prompts.rs` выбирает embedded template при `None`,
-  асинхронно читает configured template при `Some(path)`, рендерит только
-  placeholders `{{ base_path }}` и `{{ memory_summary }}` и возвращает `None`
-  при unreadable, unparsable или unknown-placeholder template.
-- `codex-rs/memories/README.md` документирует `[memories].read_template_path`,
-  разрешенные placeholders, fail-closed поведение для unknown placeholders и
-  фактический путь к runtime-шаблону
-  `codex-rs/ext/memories/templates/memories/read_path.md`.
+  - `MemoriesToml` не содержит `read_template_path`;
+  - `MemoriesConfig` не содержит `read_template_path`;
+  - default и conversion не упоминают удаленный key.
+- `codex-rs/core/config.schema.json` не содержит schema entry
+  `read_template_path`.
+- `codex-rs/ext/memories/src/extension.rs` не хранит и не передает template
+  path.
+- `codex-rs/ext/memories/src/prompts.rs` не читает configured template и
+  рендерит встроенный шаблон.
+- `codex-rs/memories/README.md` не документирует config override.
 
-Регрессионное покрытие, которое должна сохранять доработка:
+Регрессионное покрытие:
 
 - `codex-rs/core/src/config/config_tests.rs`:
-  - `test_toml_parsing` проверяет `[memories].read_template_path`;
-  - итоговый `MemoriesConfig` содержит `read_template_path`.
+  - `test_toml_parsing` продолжает проверять остальные memories settings без
+    удаленного key;
+  - итоговый `MemoriesConfig` сравнивается целиком.
 - `codex-rs/ext/memories/src/prompts_tests.rs`:
-  - `build_memory_tool_developer_instructions_renders_embedded_template`
-    вызывает builder с `None`;
-  - `build_memory_tool_developer_instructions_uses_configured_template`
-    создаёт temp template, использующий `{{ base_path }}` и
-    `{{ memory_summary }}`, и проверяет точный результат.
+  - embedded-template test проверяет подстановку summary;
+  - embedded-template test проверяет новый текст `A direct "remember this"`;
+  - embedded-template test проверяет отсутствие старого текста
+    `only when explicitly asked by the user`.
 - `codex-rs/ext/memories/src/tests.rs`:
-  - тестовые конфигурации явно задают `read_template_path: None`, если создают
-    `MemoriesExtensionConfig` напрямую.
-
-Полезный дополнительный тест при будущей правке: configured template с unknown
-placeholder должен возвращать `None`.
+  - extension tests создают `MemoriesExtensionConfig` без удаленного поля;
+  - prompt contribution по-прежнему добавляет developer-policy fragment.
 
 ### Владелец исполняемой карты
 
@@ -262,19 +173,6 @@ runbook для прямого запуска `cargo` или `just`.
 {
   "schema": "fork-tests.v1",
   "tests": [
-    {
-      "purpose": "stdio fixture binary",
-      "argv": [
-        "cargo",
-        "build",
-        "--manifest-path",
-        "codex-rs/Cargo.toml",
-        "-p",
-        "codex-rmcp-client",
-        "--bin",
-        "test_stdio_server"
-      ]
-    },
     {
       "purpose": "core config",
       "argv": ["just", "test", "-p", "codex-core", "config"]
@@ -290,69 +188,69 @@ runbook для прямого запуска `cargo` или `just`.
 ### Дополнительные gates
 
 - Форму карточки, наличие strict-подразделов `Проверки` и связь с блоком
-  `fork-tests.v1` проверяет `fork cards validate`.
-- Gate schema/generator для `codex-rs/core/config.schema.json` принадлежит
-  `fork generators`; прямой внутренний argv генерации не должен быть
-  нормативным шагом в карточке.
-- Общий проверочный проход родительского агента выбирает нужные skill-owned
-  проверки после прохода по карточкам. Эта карточка не должна подменять его
-  списком прямых `just`/`cargo` команд.
+  `fork-tests.v1` проверяет skill-owned validator карточек.
+- Удаление config key требует синхронизации `codex-rs/core/config.schema.json`
+  через skill-owned generator gate.
+- После изменения Rust-кода требуется repo formatting через skill-owned format
+  gate.
 
 ### Исторические результаты
 
-- Историческая карточка не утверждает, что проверки были запущены в текущем
-  turn.
-- Checkpoint перед карточкой был пропущен по явному разрешению пользователя от
-  2026-06-08.
-- Старый формат карточки указывал `just write-config-schema` как прямой способ
-  обновить `codex-rs/core/config.schema.json`. В новом формате это сохранено
-  только как исторический контекст старого подтверждения schema/generator;
-  активный владелец такого обновления - `fork generators`.
-- Старый формат карточки также перечислял локальные ручные smoke-подсказки
-  `git diff --check` и
-  `rg -n "read_template_path|build_memory_tool_developer_instructions" codex-rs`.
-  Они не были зафиксированы как результат текущего запуска и не являются
-  нормативным runbook карточки.
+- Checkpoint перед исторической карточкой был пропущен по явному разрешению
+  пользователя от 2026-06-08.
+- Старый формат карточки вводил `[memories].read_template_path` как быстрый
+  профильный override. Этот слой намеренно удален в доправке 2026-07-08.
+- Старые migration-карты `0.140.0` и `0.141.0` сохраняют исторический факт, что
+  на тех этапах переносилась именно доработка config-слоя.
+- Текущая доправка 2026-07-08:
+  - `fork generators`: `OK`;
+  - `fork format --fix`: `OK`;
+  - `fork tests --mode list --card docs/fork/memory-read-template-path.md`: `OK`,
+    executable map содержит `core config` и `memories extension`;
+  - `fork cards validate`: `OK`;
+  - `fork tests --mode cards --card docs/fork/memory-read-template-path.md`: `OK`.
 
 ### Известные падения и пропуски
 
-- Если configured template нельзя прочитать или нельзя распарсить, memory
-  developer prompt становится недоступным (`None`), а config load не падает.
-- Если configured template содержит unknown placeholder, prompt становится
-  недоступным (`None`); частичный render запрещен.
-- Если `memory_summary.md` пустая или отсутствует, prompt не добавляется.
-- Дополнительный регрессионный тест на unknown placeholder полезен при будущей
-  правке, но в текущем `fork-tests.v1` отдельным argv не закреплен.
+- Профильный `~/.codex/hermione.config.toml` не входит в scope этой карточки.
+  Если в нем остается `read_template_path`, новый бинарник с `deny_unknown_fields`
+  будет считать этот key устаревшим, пока пользователь не уберет строку отдельно.
+- Отдельный test на configured template удаляется вместе с самим поведением.
+- Нельзя заменять встроенный шаблон внешним override только ради удобства
+  локального профиля: это снова спрятало бы расхождение с upstream.
 
 ## Ограничения
 
-- Не менять пользовательский `hermione.config.toml` в рамках этой доработки.
-- Не писать сам template в repo, если задача только добавляет config surface.
-- Не использовать unknown placeholders как частичный render: это должно быть
-  fail-closed через `None`.
+- Не менять пользовательский `~/.codex/hermione.config.toml` в рамках этой
+  карточки.
+- Не восстанавливать `[memories].read_template_path` как deprecated no-op: это
+  оставило бы мертвый config key и не помогло бы увидеть расхождение шаблона.
+- Не переносить политику обновления памяти обратно в профильный файл как
+  активный источник runtime prompt.
 - Не запускать Rust/Cargo/`just` как нормативный шаг из карточки. Для fork
   workflow использовать skill-owned владельцев, а внутренние argv хранить только
   в `fork-tests.v1` или историческом подтверждении.
 
 ## Риски
 
-- Upstream может переносить код memory extension между crates. При rebase
-  искать живого владельца по `build_memory_tool_developer_instructions`, а не
-  полагаться на старый путь.
-- Тихий `None` при unreadable template означает, что профиль может лишиться
-  memory instructions без ошибки загрузки config. Это осознанная деградация, но при
-  диагностике prompt нужно проверять путь и placeholders.
-- Если schema не обновить, config key будет работать в Rust type, но инструменты и
-  редакторские подсказки будут устаревшими.
+- Upstream может снова изменить форму memory read-path prompt. При rebase нужно
+  сравнить встроенный `read_path.md`, а не полагаться на профильный override.
+- Удаление config key является ломающим изменением для локальных profile configs,
+  где этот key еще указан. Эта карточка намеренно не редактирует пользовательский
+  config.
+- Если schema не обновить, редакторские подсказки и runtime-контракт config
+  разойдутся.
 
 ## Проверка покрытия
 
 | Пункт | Статус | Где отражено |
 | --- | --- | --- |
-| Добавить `[memories].read_template_path` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Сохранить embedded template как default | перенесено | "Итоговый контракт" |
-| Поддержать только `base_path` и `memory_summary` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Учесть перенос owner crate после upstream merge | перенесено | "Пошаговое воспроизведение", "Риски" |
-| Синхронизировать README с фактическим путём к runtime-шаблону | перенесено | "Карта файлов", "Пошаговое воспроизведение" |
+| Встроить политику обновления памяти Hermione в embedded `read_path.md` | перенесено | "Итоговый контракт", "Порядок повторения при переносе", "Проверки" |
+| Убрать старый запрет на самостоятельные memory updates | перенесено | "Итоговый контракт", "Смысловое покрытие" |
+| Удалить `[memories].read_template_path` из активной config-области | перенесено | "Итоговый контракт", "Карта файлов", "Порядок повторения при переносе" |
+| Сохранить `memory_summary.md` read/truncate behavior | перенесено | "Итоговый контракт" |
+| Сохранить placeholders `base_path` и `memory_summary` для embedded-шаблона | перенесено | "Итоговый контракт" |
+| Зафиксировать, что профильный `hermione.config.toml` не меняется | перенесено | "Известные падения и пропуски", "Ограничения" |
+| Синхронизировать README и текущую migration-карту | перенесено | "Карта файлов", "Порядок повторения при переносе" |
 | Зафиксировать тесты, gates и владельца исполняемой карты | перенесено | "Проверки" |
-| Сохранить историческое подтверждение schema/generator без нормативного прямого runbook | перенесено | "Проверки", "Ограничения" |
+| Сохранить исторический контекст старого override без восстановления поведения | перенесено | "Обзор", "Исторические результаты" |

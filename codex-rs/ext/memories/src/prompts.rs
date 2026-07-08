@@ -26,7 +26,6 @@ fn parse_embedded_template(source: &'static str, template_name: &str) -> Templat
 /// [MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT].
 pub(crate) async fn build_memory_tool_developer_instructions(
     codex_home: &AbsolutePathBuf,
-    read_template_path: Option<&AbsolutePathBuf>,
 ) -> Option<String> {
     let base_path = codex_home.join("memories");
     let memory_summary_path = base_path.join("memory_summary.md");
@@ -43,19 +42,11 @@ pub(crate) async fn build_memory_tool_developer_instructions(
         return None;
     }
     let base_path = base_path.display().to_string();
-    let template = load_memory_tool_developer_instructions_template(read_template_path).await?;
-    render_memory_tool_developer_instructions_template(&template, &base_path, &memory_summary)
-}
-
-async fn load_memory_tool_developer_instructions_template(
-    read_template_path: Option<&AbsolutePathBuf>,
-) -> Option<Template> {
-    let Some(read_template_path) = read_template_path else {
-        return Some(MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE.clone());
-    };
-
-    let template = fs::read_to_string(read_template_path).await.ok()?;
-    Template::parse(&template).ok()
+    render_memory_tool_developer_instructions_template(
+        &MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE,
+        &base_path,
+        &memory_summary,
+    )
 }
 
 fn render_memory_tool_developer_instructions_template(

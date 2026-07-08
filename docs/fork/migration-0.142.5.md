@@ -2,7 +2,7 @@
 id: fork-migration-0.142.5
 status: complete
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-08
 source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
@@ -76,7 +76,7 @@ upstream tag `rust-v0.142.5`.
 | `exec-command-output-spill-files.md` | `перенесено` | Подагент перенес spill-контракт на `turn.model_info.truncation_policy.into()`, добавил runtime test и сохранил `SandboxDenied` без spill |
 | `hermione-version-metadata.md` | `перенесено` | Подагент обновил workspace base version до `0.142.5`, CLI/TUI explicit versions до `0.142.5+hermione` и синхронизировал `Cargo.lock` |
 | `internal-fork-docs-workflow.md` | `перенесено` | Documentation/workflow-contract карточка сверена: fork-specific internal docs в `docs/` разрешены, legacy docs-каталоги не восстанавливаются механически |
-| `memory-read-template-path.md` | `перенесено` | Подагент подтвердил `[memories].read_template_path`, config/schema, extension и prompt builder; изменений не потребовалось |
+| `memory-read-template-path.md` | `перенесено` | Доправка удаляет `[memories].read_template_path`; политика обновления памяти Hermione встроена в канонический `read_path.md`, чтобы расхождение upstream-шаблона было видно в коде |
 | `release-fast-build-profile.md` | `перенесено` | Подагент подтвердил `[profile.release-fast]`, `build-fast-release` и обновил комментарий профиля на `release-fast build`; artifact подтвержден `fork build-fast` |
 | `terminal-title-session-label.md` | `перенесено` | Подагент подтвердил `session-label` terminal title и добавил config-layer regression test для `[tui].terminal_title_label` |
 | `tui-core-tool-activity.md` | `перенесено` | Подагент подтвердил `CoreToolActivity`; generated app-server schema conflicts разрешены вручную с сохранением upstream image/context definitions, подтверждено `fork generators` |
@@ -256,19 +256,20 @@ upstream tag `rust-v0.142.5`.
 ### `memory-read-template-path.md`
 
 - Статус: `перенесено`.
-- Что изменилось: кодовых и документационных изменений по карточке не
-  потребовалось; текущая реализация уже содержит `read_template_path` в
-  `MemoriesToml` и `MemoriesConfig`, default `None`, перенос из TOML в runtime
-  config, schema entry, передачу пути из memories extension в prompt builder и
-  fallback на embedded `memories/read_path.md`.
-- Какие проверки нужны: в общем проходе запустить card-level проверки через
-  `fork tests --mode cards --card docs/fork/memory-read-template-path.md --version 0.142.5`;
-  перед этим проверить исполняемую карту через
-  `fork tests --mode list --card docs/fork/memory-read-template-path.md`. Так как
-  карточка владеет config/schema surface, общий проход должен включать
-  `fork generators`.
-- Блокирующие условия: в области карточки не осталось; общие generators/tests
-  gates и соседние конфликты еще не выполнялись.
+- Что изменилось: доправка удаляет `read_template_path` из `MemoriesToml`,
+  `MemoriesConfig`, schema, extension wiring и prompt builder. Канонический
+  `codex-rs/ext/memories/templates/memories/read_path.md` теперь содержит
+  политику обновления памяти Hermione напрямую, без профильного
+  override-шаблона.
+- Какие проверки выполнены в доправке 2026-07-08:
+  - `fork generators`: `OK`;
+  - `fork format --fix`: `OK`;
+  - `fork tests --mode list --card docs/fork/memory-read-template-path.md`:
+    `OK`;
+  - `fork cards validate`: `OK`;
+  - `fork tests --mode cards --card docs/fork/memory-read-template-path.md`:
+    `OK`.
+- Блокирующие условия: в области карточки не осталось.
 
 ### `release-fast-build-profile.md`
 

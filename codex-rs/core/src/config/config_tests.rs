@@ -241,14 +241,11 @@ persistence = "none"
         history_no_persistence_cfg.history
     );
 
-    let read_template_path = test_absolute_path("/tmp/memory-read-template.md");
-    let memories = format!(
-        r#"
+    let memories = r#"
 [memories]
 disable_on_external_context = true
 generate_memories = false
 use_memories = false
-read_template_path = "{}"
 dedicated_tools = true
 max_raw_memories_for_consolidation = 512
 max_unused_days = 21
@@ -258,9 +255,7 @@ min_rollout_idle_hours = 24
 min_rate_limit_remaining_percent = 12
 extract_model = "gpt-5-mini"
 consolidation_model = "gpt-5.2"
-"#,
-        read_template_path.display()
-    );
+"#;
     let memories_cfg =
         toml::from_str::<ConfigToml>(&memories).expect("TOML deserialization should succeed");
     assert_eq!(
@@ -268,7 +263,6 @@ consolidation_model = "gpt-5.2"
             disable_on_external_context: Some(true),
             generate_memories: Some(false),
             use_memories: Some(false),
-            read_template_path: Some(read_template_path.clone()),
             dedicated_tools: Some(true),
             max_raw_memories_for_consolidation: Some(512),
             max_unused_days: Some(21),
@@ -295,7 +289,6 @@ consolidation_model = "gpt-5.2"
             disable_on_external_context: true,
             generate_memories: false,
             use_memories: false,
-            read_template_path: Some(read_template_path),
             dedicated_tools: true,
             max_raw_memories_for_consolidation: 512,
             max_unused_days: 21,

@@ -1514,14 +1514,6 @@
           "format": "int64",
           "type": "integer"
         },
-        "read_template_path": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AbsolutePathBuf"
-            }
-          ],
-          "description": "Optional Markdown template used to render memory usage instructions into developer prompts."
-        },
         "use_memories": {
           "description": "When `false`, skip injecting memory usage instructions into developer prompts.",
           "type": "boolean"

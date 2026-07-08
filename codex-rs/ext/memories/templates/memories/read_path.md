@@ -116,11 +116,29 @@ rollout_summaries/2026-02-17T21-23-02-LN3m-example.md:10-12|note=[weekly report 
 
 Updating memories:
 
-You can update the memories **only** when explicitly asked by the user. This must always come from a direct request from the user.
-- Write your update in {{ base_path }}/extensions/ad_hoc/notes/
-- Each update must be one small file containing what you want to add/delete/update from the memories.
-- The name of this file must be `<timestamp>-<short slug>.md`
-- Do not try to edit the memory files yourself, only add one update note in {{ base_path }}/extensions/ad_hoc/notes/
+You can update memories when the active developer instructions, profile policy,
+or explicit user request authorizes memory updates. A direct "remember this"
+command is not required when the active memory policy already permits the update.
+
+- Default safe update path:
+  - Create small Markdown cards in {{ base_path }}/extensions/ad_hoc/notes/.
+  - Edit existing ad-hoc cards when the durable knowledge, `status`, `updated`,
+    `confidence`, or applicability conditions need correction.
+  - Update {{ base_path }}/extensions/ad_hoc/INDEX.md in the same change when
+    adding cards, changing card status, or moving responsibility between cards.
+- Do not fall back to an "update note only" workflow when this template and
+  the active policy allow direct ad-hoc card and index maintenance.
+- Keep existing ad-hoc cards by default. If a card becomes stale, mark it as
+  `superseded` or `deprecated` instead of deleting it.
+- Never edit consolidated memory files such as {{ base_path }}/MEMORY.md,
+  {{ base_path }}/memory_summary.md, rollout summaries, or skill files directly
+  unless higher-priority instructions explicitly authorize it.
+- Do not save secrets, credentials, large raw logs, generated artifacts, or
+  transient command output as memory.
+- If a memory candidate conflicts with existing memory, may contain sensitive
+  data, or has unclear scope, ask the user before writing it.
+- After creating or updating memory, tell the user briefly what was saved, where
+  it was saved, and why it will help future sessions.
 
 ========= MEMORY_SUMMARY BEGINS =========
 {{ memory_summary }}
