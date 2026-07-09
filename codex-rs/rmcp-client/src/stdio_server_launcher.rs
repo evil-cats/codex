@@ -58,6 +58,8 @@ use tracing::warn;
 
 use crate::executor_process_transport::ExecutorProcessTransport;
 use crate::program_resolver;
+use crate::stdio_diagnostics::StdioDiagnosticSnapshot;
+use crate::stdio_diagnostics::StdioServerDiagnosticState;
 use crate::utils::create_env_for_mcp_server;
 use crate::utils::create_env_overlay_for_remote_mcp_server;
 use crate::utils::remote_mcp_env_var_names;
@@ -165,6 +167,10 @@ impl StdioServerCommand {
             cwd,
         }
     }
+
+    pub(crate) fn server_name(&self) -> &str {
+        &self.server_name
+    }
 }
 
 // Local public implementation.
@@ -225,6 +231,7 @@ pub(crate) struct StdioServerProcessHandle {
 struct StdioServerProcessHandleInner {
     program_name: String,
     kind: StdioServerProcessKind,
+    diagnostics: Arc<StdioServerDiagnosticState>,
     terminated: AtomicBool,
 }
 
@@ -273,19 +280,23 @@ impl LocalStdioServerLauncher {
         let (transport, stderr) = TokioChildProcess::builder(command)
             .stderr(Stdio::piped())
             .spawn()?;
+        let diagnostics = StdioServerDiagnosticState::new();
         let process = StdioServerProcessHandle::local(
             program_name.clone(),
             transport.id().map(LocalProcessTerminator::new),
+            Arc::clone(&diagnostics),
         );
 
         if let Some(stderr) = stderr {
             let stderr_span = tracing::Span::current();
+            let diagnostics = Arc::clone(&diagnostics);
             tokio::spawn(
                 async move {
                     let mut reader = BufReader::new(stderr).lines();
                     loop {
                         match reader.next_line().await {
                             Ok(Some(line)) => {
+                                diagnostics.push_stderr_line(line.clone());
                                 info!(
                                     server_name = %server_name,
                                     program = %program_name,
@@ -293,7 +304,10 @@ impl LocalStdioServerLauncher {
                                     "MCP server stderr"
                                 );
                             }
-                            Ok(None) => break,
+                            Ok(None) => {
+                                diagnostics.mark_dead();
+                                break;
+                            }
                             Err(error) => {
                                 warn!(
                                     server_name = %server_name,
@@ -301,6 +315,7 @@ impl LocalStdioServerLauncher {
                                     error = %error,
                                     "Failed to read MCP server stderr"
                                 );
+                                diagnostics.mark_dead();
                                 break;
                             }
                         }
@@ -374,24 +389,46 @@ impl LocalProcessTerminator {
 }
 
 impl StdioServerProcessHandle {
-    fn local(program_name: String, terminator: Option<LocalProcessTerminator>) -> Self {
+    fn local(
+        program_name: String,
+        terminator: Option<LocalProcessTerminator>,
+        diagnostics: Arc<StdioServerDiagnosticState>,
+    ) -> Self {
         Self {
             inner: Arc::new(StdioServerProcessHandleInner {
                 program_name,
                 kind: StdioServerProcessKind::Local(terminator),
+                diagnostics,
                 terminated: AtomicBool::new(false),
             }),
         }
     }
 
-    pub(crate) fn executor(program_name: String, process: Arc<dyn ExecProcess>) -> Self {
+    pub(crate) fn executor(
+        program_name: String,
+        process: Arc<dyn ExecProcess>,
+        diagnostics: Arc<StdioServerDiagnosticState>,
+    ) -> Self {
         Self {
             inner: Arc::new(StdioServerProcessHandleInner {
                 program_name,
                 kind: StdioServerProcessKind::Executor(process),
+                diagnostics,
                 terminated: AtomicBool::new(false),
             }),
         }
+    }
+
+    pub(crate) fn diagnostic_snapshot(&self) -> StdioDiagnosticSnapshot {
+        self.inner.diagnostics.snapshot()
+    }
+
+    pub(crate) fn is_dead(&self) -> bool {
+        self.inner.diagnostics.is_dead()
+    }
+
+    pub(crate) fn take_dead_report_pending(&self) -> bool {
+        self.inner.diagnostics.take_dead_report_pending()
     }
 
     pub(crate) async fn terminate(&self) -> io::Result<()> {
@@ -534,13 +571,18 @@ impl ExecutorStdioServerLauncher {
             .await
             .map_err(io::Error::other)?;
 
-        let process =
-            StdioServerProcessHandle::executor(program_name.clone(), Arc::clone(&started.process));
+        let diagnostics = StdioServerDiagnosticState::new();
+        let process = StdioServerProcessHandle::executor(
+            program_name.clone(),
+            Arc::clone(&started.process),
+            Arc::clone(&diagnostics),
+        );
         Ok(StdioServerTransport {
             inner: StdioServerTransportInner::Executor(ExecutorProcessTransport::new(
                 started.process,
                 server_name,
                 program_name,
+                diagnostics,
             )),
             process,
         })

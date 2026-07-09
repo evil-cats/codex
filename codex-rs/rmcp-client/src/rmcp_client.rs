@@ -7,6 +7,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
 use anyhow::anyhow;
@@ -68,12 +70,15 @@ use crate::load_oauth_tokens;
 use crate::oauth::OAuthPersistor;
 use crate::oauth::StoredOAuthTokens;
 use crate::oauth_http_client::OAuthHttpClientAdapter;
+use crate::stdio_diagnostics::StdioDiagnosticSnapshot;
 use crate::stdio_server_launcher::StdioServerCommand;
 use crate::stdio_server_launcher::StdioServerLauncher;
 use crate::stdio_server_launcher::StdioServerProcessHandle;
 use crate::stdio_server_launcher::StdioServerTransport;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
+use codex_protocol::protocol::McpDiagnosticEvent;
+use codex_protocol::protocol::McpDiagnosticItem;
 
 #[path = "streamable_http_retry.rs"]
 mod streamable_http_retry;
@@ -129,6 +134,16 @@ enum TransportRecipe {
         http_client: Arc<dyn HttpClient>,
         auth_provider: Option<SharedAuthProvider>,
     },
+}
+
+impl TransportRecipe {
+    fn server_name(&self) -> Option<&str> {
+        match self {
+            Self::InProcess { .. } => None,
+            Self::Stdio { command, .. } => Some(command.server_name()),
+            Self::StreamableHttp { server_name, .. } => Some(server_name.as_str()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -251,6 +266,13 @@ fn remaining_operation_timeout(
     }
 }
 
+fn current_time_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Elicitation {
     Mcp(CreateElicitationRequestParams),
@@ -316,15 +338,31 @@ pub struct ListToolsWithConnectorIdResult {
     pub tools: Vec<ToolWithConnectorId>,
 }
 
+pub type McpDiagnosticSink = Arc<dyn Fn(McpDiagnosticItem) -> BoxFuture<'static, ()> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct McpDiagnosticContext {
+    pub thread_id: String,
+    pub sink: McpDiagnosticSink,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct McpOperationDiagnosticContext {
+    pub turn_id: Option<String>,
+    pub call_id: Option<String>,
+    pub tool_name: Option<String>,
+}
+
 /// MCP client implemented on top of the official `rmcp` SDK.
 /// https://github.com/modelcontextprotocol/rust-sdk
 pub struct RmcpClient {
     state: Mutex<ClientState>,
-    stdio_process: Option<StdioServerProcessHandle>,
+    stdio_process: Mutex<Option<StdioServerProcessHandle>>,
     transport_recipe: TransportRecipe,
     initialize_context: Mutex<Option<InitializeContext>>,
     session_recovery_lock: Semaphore,
     elicitation_pause_state: ElicitationPauseState,
+    diagnostic_context: Option<McpDiagnosticContext>,
 }
 
 impl RmcpClient {
@@ -340,11 +378,12 @@ impl RmcpClient {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process: None,
+            stdio_process: Mutex::new(None),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            diagnostic_context: None,
         })
     }
 
@@ -371,22 +410,18 @@ impl RmcpClient {
         let transport = Self::create_pending_transport(&transport_recipe)
             .await
             .map_err(io::Error::other)?;
-        let stdio_process = match &transport {
-            PendingTransport::Stdio { transport } => Some(transport.process_handle()),
-            PendingTransport::InProcess { .. }
-            | PendingTransport::StreamableHttp { .. }
-            | PendingTransport::StreamableHttpWithOAuth { .. } => None,
-        };
+        let stdio_process = Self::stdio_process_from_pending_transport(&transport);
 
         Ok(Self {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process,
+            stdio_process: Mutex::new(stdio_process),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            diagnostic_context: None,
         })
     }
 
@@ -418,12 +453,29 @@ impl RmcpClient {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process: None,
+            stdio_process: Mutex::new(None),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
+            diagnostic_context: None,
         })
+    }
+
+    pub fn with_diagnostic_context(mut self, diagnostic_context: McpDiagnosticContext) -> Self {
+        self.diagnostic_context = Some(diagnostic_context);
+        self
+    }
+
+    fn stdio_process_from_pending_transport(
+        transport: &PendingTransport,
+    ) -> Option<StdioServerProcessHandle> {
+        match transport {
+            PendingTransport::Stdio { transport } => Some(transport.process_handle()),
+            PendingTransport::InProcess { .. }
+            | PendingTransport::StreamableHttp { .. }
+            | PendingTransport::StreamableHttpWithOAuth { .. } => None,
+        }
     }
 
     /// Perform the initialization handshake with the MCP server.
@@ -490,6 +542,17 @@ impl RmcpClient {
         {
             warn!("failed to persist OAuth tokens after initialize: {error}");
         }
+        if let Some(snapshot) = self.current_stdio_snapshot().await {
+            self.emit_mcp_diagnostic(
+                None,
+                McpDiagnosticEvent::ProcessStarted,
+                &snapshot,
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
 
         Ok(initialize_result)
     }
@@ -501,10 +564,15 @@ impl RmcpClient {
     ) -> Result<ListToolsResult> {
         self.refresh_oauth_if_needed().await;
         let result = self
-            .run_service_operation("tools/list", timeout, move |service| {
-                let params = params.clone();
-                async move { service.list_tools(params).await }.boxed()
-            })
+            .run_service_operation(
+                "tools/list",
+                timeout,
+                move |service| {
+                    let params = params.clone();
+                    async move { service.list_tools(params).await }.boxed()
+                },
+                None,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
@@ -518,10 +586,15 @@ impl RmcpClient {
     ) -> Result<ListToolsWithConnectorIdResult> {
         self.refresh_oauth_if_needed().await;
         let result = self
-            .run_service_operation("tools/list", timeout, move |service| {
-                let params = params.clone();
-                async move { service.list_tools(params).await }.boxed()
-            })
+            .run_service_operation(
+                "tools/list",
+                timeout,
+                move |service| {
+                    let params = params.clone();
+                    async move { service.list_tools(params).await }.boxed()
+                },
+                None,
+            )
             .await?;
         let tools = result
             .tools
@@ -563,10 +636,15 @@ impl RmcpClient {
     ) -> Result<ListResourcesResult> {
         self.refresh_oauth_if_needed().await;
         let result = self
-            .run_service_operation("resources/list", timeout, move |service| {
-                let params = params.clone();
-                async move { service.list_resources(params).await }.boxed()
-            })
+            .run_service_operation(
+                "resources/list",
+                timeout,
+                move |service| {
+                    let params = params.clone();
+                    async move { service.list_resources(params).await }.boxed()
+                },
+                None,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
@@ -579,10 +657,15 @@ impl RmcpClient {
     ) -> Result<ListResourceTemplatesResult> {
         self.refresh_oauth_if_needed().await;
         let result = self
-            .run_service_operation("resources/templates/list", timeout, move |service| {
-                let params = params.clone();
-                async move { service.list_resource_templates(params).await }.boxed()
-            })
+            .run_service_operation(
+                "resources/templates/list",
+                timeout,
+                move |service| {
+                    let params = params.clone();
+                    async move { service.list_resource_templates(params).await }.boxed()
+                },
+                None,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
@@ -595,10 +678,15 @@ impl RmcpClient {
     ) -> Result<ReadResourceResult> {
         self.refresh_oauth_if_needed().await;
         let result = self
-            .run_service_operation("resources/read", timeout, move |service| {
-                let params = params.clone();
-                async move { service.read_resource(params).await }.boxed()
-            })
+            .run_service_operation(
+                "resources/read",
+                timeout,
+                move |service| {
+                    let params = params.clone();
+                    async move { service.read_resource(params).await }.boxed()
+                },
+                None,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
@@ -611,7 +699,25 @@ impl RmcpClient {
         meta: Option<serde_json::Value>,
         timeout: Option<Duration>,
     ) -> Result<CallToolResult> {
+        self.call_tool_with_diagnostic_context(name, arguments, meta, timeout, None)
+            .await
+    }
+
+    pub async fn call_tool_with_diagnostic_context(
+        &self,
+        name: String,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+        timeout: Option<Duration>,
+        diagnostic_context: Option<McpOperationDiagnosticContext>,
+    ) -> Result<CallToolResult> {
         self.refresh_oauth_if_needed().await;
+        let diagnostic_context = diagnostic_context.or_else(|| {
+            Some(McpOperationDiagnosticContext {
+                tool_name: Some(name.clone()),
+                ..Default::default()
+            })
+        });
         let arguments = match arguments {
             Some(Value::Object(map)) => Some(map),
             Some(other) => {
@@ -633,30 +739,35 @@ impl RmcpClient {
         let mut rmcp_params = CallToolRequestParams::new(name);
         rmcp_params.arguments = arguments;
         let result = self
-            .run_service_operation("tools/call", timeout, move |service| {
-                let rmcp_params = rmcp_params.clone();
-                let meta = meta.clone();
-                async move {
-                    let mut options = rmcp::service::PeerRequestOptions::no_options();
-                    options.meta = meta;
-                    let result = service
-                        .peer()
-                        .send_request_with_option(
-                            ClientRequest::CallToolRequest(rmcp::model::CallToolRequest::new(
-                                rmcp_params,
-                            )),
-                            options,
-                        )
-                        .await?
-                        .await_response()
-                        .await?;
-                    match result {
-                        ServerResult::CallToolResult(result) => Ok(result),
-                        _ => Err(rmcp::service::ServiceError::UnexpectedResponse),
+            .run_service_operation(
+                "tools/call",
+                timeout,
+                move |service| {
+                    let rmcp_params = rmcp_params.clone();
+                    let meta = meta.clone();
+                    async move {
+                        let mut options = rmcp::service::PeerRequestOptions::no_options();
+                        options.meta = meta;
+                        let result = service
+                            .peer()
+                            .send_request_with_option(
+                                ClientRequest::CallToolRequest(rmcp::model::CallToolRequest::new(
+                                    rmcp_params,
+                                )),
+                                options,
+                            )
+                            .await?
+                            .await_response()
+                            .await?;
+                        match result {
+                            ServerResult::CallToolResult(result) => Ok(result),
+                            _ => Err(rmcp::service::ServiceError::UnexpectedResponse),
+                        }
                     }
-                }
-                .boxed()
-            })
+                    .boxed()
+                },
+                diagnostic_context,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(result)
@@ -686,6 +797,7 @@ impl RmcpClient {
                 }
                 .boxed()
             },
+            None,
         )
         .await?;
         self.persist_oauth_tokens().await;
@@ -699,17 +811,22 @@ impl RmcpClient {
     ) -> Result<ServerResult> {
         self.refresh_oauth_if_needed().await;
         let response = self
-            .run_service_operation("requests/custom", /*timeout*/ None, move |service| {
-                let params = params.clone();
-                async move {
-                    service
-                        .send_request(ClientRequest::CustomRequest(CustomRequest::new(
-                            method, params,
-                        )))
-                        .await
-                }
-                .boxed()
-            })
+            .run_service_operation(
+                "requests/custom",
+                /*timeout*/ None,
+                move |service| {
+                    let params = params.clone();
+                    async move {
+                        service
+                            .send_request(ClientRequest::CustomRequest(CustomRequest::new(
+                                method, params,
+                            )))
+                            .await
+                    }
+                    .boxed()
+                },
+                None,
+            )
             .await?;
         self.persist_oauth_tokens().await;
         Ok(response)
@@ -742,7 +859,8 @@ impl RmcpClient {
             std::mem::replace(&mut *guard, ClientState::Closed)
         };
 
-        if let Some(process) = &self.stdio_process
+        let stdio_process = self.stdio_process.lock().await.clone();
+        if let Some(process) = &stdio_process
             && let Err(error) = process.terminate().await
         {
             warn!("failed to terminate MCP stdio server process: {error}");
@@ -949,11 +1067,14 @@ impl RmcpClient {
         label: &str,
         timeout: Option<Duration>,
         operation: F,
+        diagnostic_context: Option<McpOperationDiagnosticContext>,
     ) -> Result<T>
     where
         F: Fn(Arc<RunningService<RoleClient, ElicitationClientService>>) -> Fut,
         Fut: std::future::Future<Output = std::result::Result<T, rmcp::service::ServiceError>>,
     {
+        self.recover_dead_stdio_launch_before_operation(diagnostic_context.as_ref())
+            .await?;
         let service = self.service().await?;
         match Self::run_service_operation_with_transient_retries(
             Arc::clone(&service),
@@ -978,7 +1099,152 @@ impl RmcpClient {
                 .await
                 .map_err(Into::into)
             }
-            Err(error) => Err(error.into()),
+            Err(error) => {
+                let Some(event) = Self::recoverable_stdio_transport_event(&error) else {
+                    return Err(error.into());
+                };
+                if self.current_stdio_snapshot().await.is_none() {
+                    return Err(error.into());
+                }
+                self.emit_dead_process_diagnostic_if_pending(diagnostic_context.as_ref())
+                    .await;
+                if let Some(snapshot) = self.current_stdio_snapshot().await {
+                    self.emit_mcp_diagnostic(
+                        diagnostic_context.as_ref(),
+                        event,
+                        &snapshot,
+                        None,
+                        None,
+                        Some(error.to_string()),
+                    )
+                    .await;
+                }
+                self.reinitialize_after_transport_failure(&service, diagnostic_context.as_ref())
+                    .await?;
+                let recovered_service = self.service().await?;
+                Self::run_service_operation_with_transient_retries(
+                    recovered_service,
+                    label,
+                    timeout,
+                    self.elicitation_pause_state.clone(),
+                    &operation,
+                )
+                .await
+                .map_err(Into::into)
+            }
+        }
+    }
+
+    async fn recover_dead_stdio_launch_before_operation(
+        &self,
+        diagnostic_context: Option<&McpOperationDiagnosticContext>,
+    ) -> Result<()> {
+        let Some(process) = self.current_stdio_process().await else {
+            return Ok(());
+        };
+        if !process.is_dead() {
+            return Ok(());
+        }
+
+        if process.take_dead_report_pending() {
+            let snapshot = process.diagnostic_snapshot();
+            self.emit_mcp_diagnostic(
+                diagnostic_context,
+                McpDiagnosticEvent::ProcessExited,
+                &snapshot,
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+
+        let service = self.service().await?;
+        self.reinitialize_after_transport_failure(&service, diagnostic_context)
+            .await
+    }
+
+    async fn emit_dead_process_diagnostic_if_pending(
+        &self,
+        diagnostic_context: Option<&McpOperationDiagnosticContext>,
+    ) {
+        let Some(process) = self.current_stdio_process().await else {
+            return;
+        };
+        if !process.take_dead_report_pending() {
+            return;
+        }
+        let snapshot = process.diagnostic_snapshot();
+        self.emit_mcp_diagnostic(
+            diagnostic_context,
+            McpDiagnosticEvent::ProcessExited,
+            &snapshot,
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    async fn current_stdio_process(&self) -> Option<StdioServerProcessHandle> {
+        self.stdio_process.lock().await.clone()
+    }
+
+    async fn current_stdio_snapshot(&self) -> Option<StdioDiagnosticSnapshot> {
+        self.current_stdio_process()
+            .await
+            .map(|process| process.diagnostic_snapshot())
+    }
+
+    async fn emit_mcp_diagnostic(
+        &self,
+        operation_context: Option<&McpOperationDiagnosticContext>,
+        event: McpDiagnosticEvent,
+        snapshot: &StdioDiagnosticSnapshot,
+        old_launch_id: Option<String>,
+        new_launch_id: Option<String>,
+        error: Option<String>,
+    ) {
+        let Some(diagnostic_context) = &self.diagnostic_context else {
+            return;
+        };
+        let Some(server_name) = self.transport_recipe.server_name() else {
+            return;
+        };
+        let item = McpDiagnosticItem {
+            thread_id: diagnostic_context.thread_id.clone(),
+            turn_id: operation_context.and_then(|context| context.turn_id.clone()),
+            call_id: operation_context.and_then(|context| context.call_id.clone()),
+            server_name: server_name.to_string(),
+            tool_name: operation_context.and_then(|context| context.tool_name.clone()),
+            launch_id: snapshot.launch_id.clone(),
+            old_launch_id,
+            new_launch_id,
+            event,
+            timestamp_ms: current_time_millis(),
+            error,
+            stderr_tail: snapshot.stderr_tail.clone(),
+            stderr_truncated: snapshot.stderr_truncated,
+        };
+        (diagnostic_context.sink)(item).await;
+    }
+
+    fn recoverable_stdio_transport_event(
+        error: &ClientOperationError,
+    ) -> Option<McpDiagnosticEvent> {
+        match error {
+            ClientOperationError::Service(rmcp::service::ServiceError::TransportClosed) => {
+                Some(McpDiagnosticEvent::TransportClosed)
+            }
+            ClientOperationError::Service(rmcp::service::ServiceError::TransportSend(error))
+                if error
+                    .error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe) =>
+            {
+                Some(McpDiagnosticEvent::TransportBrokenPipe)
+            }
+            _ => None,
         }
     }
 
@@ -1132,6 +1398,7 @@ impl RmcpClient {
             .clone()
             .ok_or_else(|| anyhow!("MCP client cannot recover before initialize succeeds"))?;
         let pending_transport = Self::create_pending_transport(&self.transport_recipe).await?;
+        let stdio_process = Self::stdio_process_from_pending_transport(&pending_transport);
         let (service, oauth_persistor) = self
             .connect_pending_transport_with_initialize_retries(
                 pending_transport,
@@ -1150,11 +1417,127 @@ impl RmcpClient {
                 oauth: oauth_persistor.clone(),
             };
         }
+        *self.stdio_process.lock().await = stdio_process;
 
         if let Some(runtime) = oauth_persistor
             && let Err(error) = runtime.persist_if_needed().await
         {
             warn!("failed to persist OAuth tokens after session recovery: {error}");
+        }
+
+        Ok(())
+    }
+
+    async fn reinitialize_after_transport_failure(
+        &self,
+        failed_service: &Arc<RunningService<RoleClient, ElicitationClientService>>,
+        diagnostic_context: Option<&McpOperationDiagnosticContext>,
+    ) -> Result<()> {
+        let _recovery_guard = self
+            .session_recovery_lock
+            .acquire()
+            .await
+            .map_err(|_| anyhow!("MCP client recovery semaphore closed"))?;
+
+        {
+            let guard = self.state.lock().await;
+            match &*guard {
+                ClientState::Ready { service, .. } if !Arc::ptr_eq(service, failed_service) => {
+                    return Ok(());
+                }
+                ClientState::Ready { .. } => {}
+                ClientState::Connecting { .. } => {
+                    return Err(anyhow!("MCP client not initialized"));
+                }
+                ClientState::Closed => {
+                    return Err(anyhow!("MCP client is shut down"));
+                }
+            }
+        }
+
+        let old_snapshot = self.current_stdio_snapshot().await;
+        if let Some(snapshot) = &old_snapshot {
+            self.emit_mcp_diagnostic(
+                diagnostic_context,
+                McpDiagnosticEvent::RecoveryStarted,
+                snapshot,
+                Some(snapshot.launch_id.clone()),
+                None,
+                None,
+            )
+            .await;
+        }
+
+        let initialize_context = self
+            .initialize_context
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("MCP client cannot recover before initialize succeeds"))?;
+        let pending_transport = Self::create_pending_transport(&self.transport_recipe).await?;
+        let stdio_process = Self::stdio_process_from_pending_transport(&pending_transport);
+        let new_snapshot = stdio_process
+            .as_ref()
+            .map(StdioServerProcessHandle::diagnostic_snapshot);
+        let connect_result = self
+            .connect_pending_transport_with_initialize_retries(
+                pending_transport,
+                initialize_context.client_service,
+                initialize_context.timeout,
+            )
+            .await;
+        let (service, oauth_persistor) = match connect_result {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(snapshot) = old_snapshot.as_ref().or(new_snapshot.as_ref()) {
+                    self.emit_mcp_diagnostic(
+                        diagnostic_context,
+                        McpDiagnosticEvent::RecoveryFailed,
+                        snapshot,
+                        old_snapshot
+                            .as_ref()
+                            .map(|snapshot| snapshot.launch_id.clone()),
+                        new_snapshot
+                            .as_ref()
+                            .map(|snapshot| snapshot.launch_id.clone()),
+                        Some(error.to_string()),
+                    )
+                    .await;
+                }
+                return Err(error);
+            }
+        };
+
+        {
+            let mut guard = self.state.lock().await;
+            if matches!(*guard, ClientState::Closed) {
+                return Err(anyhow!("MCP client is shut down"));
+            }
+            *guard = ClientState::Ready {
+                service,
+                oauth: oauth_persistor.clone(),
+            };
+        }
+        *self.stdio_process.lock().await = stdio_process;
+
+        if let Some(snapshot) = new_snapshot.as_ref() {
+            self.emit_mcp_diagnostic(
+                diagnostic_context,
+                McpDiagnosticEvent::RecoverySucceeded,
+                snapshot,
+                old_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.launch_id.clone()),
+                Some(snapshot.launch_id.clone()),
+                None,
+            )
+            .await;
+        }
+
+        if let Some(runtime) = oauth_persistor
+            && let Err(error) = runtime.persist_if_needed().await
+        {
+            warn!("failed to persist OAuth tokens after transport recovery: {error}");
         }
 
         Ok(())

@@ -45,6 +45,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::stdio_diagnostics::StdioServerDiagnosticState;
+
 static PROCESS_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Default)]
@@ -119,6 +121,9 @@ pub(super) struct ExecutorProcessTransport {
     /// Buffered stderr bytes for diagnostic logging.
     stderr: LineBuffer,
 
+    /// Bounded diagnostics shared with the MCP client recovery path.
+    diagnostics: Arc<StdioServerDiagnosticState>,
+
     /// Whether the executor has reported process closure or a terminal
     /// subscription failure. Once closed, any remaining partial stdout line is
     /// flushed once and then rmcp receives EOF.
@@ -140,6 +145,7 @@ impl ExecutorProcessTransport {
         process: Arc<dyn ExecProcess>,
         server_name: String,
         program_name: String,
+        diagnostics: Arc<StdioServerDiagnosticState>,
     ) -> Self {
         // Subscribe before returning the transport to rmcp. Some test servers
         // can emit output or exit quickly after `process/start`, and the
@@ -153,6 +159,7 @@ impl ExecutorProcessTransport {
             server_name,
             stdout: LineBuffer::default(),
             stderr: LineBuffer::default(),
+            diagnostics,
             closed: false,
             terminated: false,
             last_seq: 0,
@@ -231,12 +238,14 @@ impl ExecutorProcessTransport {
                 }
                 Ok(ExecProcessEvent::Exited { seq, .. }) => {
                     self.note_seq(seq);
+                    self.diagnostics.mark_dead();
                     // Wait for `Closed` before ending the rmcp stream so any
                     // output flushed during process shutdown can still be
                     // decoded into JSON-RPC messages.
                 }
                 Ok(ExecProcessEvent::Closed { seq }) => {
                     self.note_seq(seq);
+                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
                 Ok(ExecProcessEvent::Failed(message)) => {
@@ -244,6 +253,7 @@ impl ExecutorProcessTransport {
                         "Remote MCP server process failed ({}): {message}",
                         self.program_name
                     );
+                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -260,6 +270,7 @@ impl ExecutorProcessTransport {
                     }
                 }
                 Err(broadcast::error::RecvError::Closed) => {
+                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
             }
@@ -297,8 +308,10 @@ impl ExecutorProcessTransport {
                 "Remote MCP server process failed ({}): {message}",
                 self.program_name
             );
+            self.diagnostics.mark_dead();
             self.closed = true;
         } else if response.closed {
+            self.diagnostics.mark_dead();
             self.closed = true;
         }
         Ok(())
@@ -359,6 +372,7 @@ impl ExecutorProcessTransport {
         while let Some(line) = self.stderr.take_line() {
             let line = Self::trim_trailing_carriage_return(line);
             let stderr_line = String::from_utf8_lossy(&line);
+            self.diagnostics.push_stderr_line(stderr_line.to_string());
             info!(
                 server_name = %self.server_name,
                 program = %self.program_name,
@@ -373,6 +387,7 @@ impl ExecutorProcessTransport {
             return;
         };
         let stderr_line = String::from_utf8_lossy(&line);
+        self.diagnostics.push_stderr_line(stderr_line.to_string());
         info!(
             server_name = %self.server_name,
             program = %self.program_name,

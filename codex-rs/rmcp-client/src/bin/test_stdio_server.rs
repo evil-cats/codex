@@ -2,6 +2,8 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
@@ -96,6 +98,7 @@ impl TestToolServer {
             Self::cwd_tool(),
             Self::sync_tool(),
             Self::sync_readonly_tool(),
+            Self::flaky_recovery_tool(),
             Self::image_tool(),
             Self::image_scenario_tool(),
             sandbox_meta_tool,
@@ -272,6 +275,24 @@ impl TestToolServer {
         let mut tool = Tool::new(
             Cow::Borrowed("image"),
             Cow::Borrowed("Return a single image content block."),
+            Arc::new(schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn flaky_recovery_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("flaky recovery tool schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("flaky_recovery"),
+            Cow::Borrowed("Close stdio once, then return success on the recovered launch."),
             Arc::new(schema),
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
@@ -479,6 +500,7 @@ impl ServerHandler for TestToolServer {
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         let tools = self.tools.clone();
         async move {
+            maybe_schedule_exit_after_list_tools_once()?;
             Ok(ListToolsResult {
                 tools: (*tools).clone(),
                 next_cursor: None,
@@ -628,6 +650,7 @@ impl ServerHandler for TestToolServer {
                 let args = Self::parse_call_args::<SyncArgs>(&request, "sync_readonly")?;
                 Self::sync_result(args).await
             }
+            "flaky_recovery" => Self::flaky_recovery_result(),
             other => Err(McpError::invalid_params(
                 format!("unknown tool: {other}"),
                 None,
@@ -726,6 +749,19 @@ impl TestToolServer {
         Ok(CallToolResult::success(content))
     }
 
+    fn flaky_recovery_result() -> Result<CallToolResult, McpError> {
+        if write_state_file_once(
+            "MCP_TEST_TRANSPORT_CLOSE_ONCE_STATE_FILE",
+            "transport-closed",
+        )? {
+            eprintln!("mcp flaky_recovery forced transport close");
+            let _ = std::io::stderr().flush();
+            std::process::exit(86);
+        }
+
+        Ok(Self::structured_result(json!({ "result": "recovered" })))
+    }
+
     async fn sync_result(args: SyncArgs) -> Result<CallToolResult, McpError> {
         if let Some(delay) = args.sleep_before_ms
             && delay > 0
@@ -751,6 +787,36 @@ impl TestToolServer {
         result.structured_content = Some(value);
         result
     }
+}
+
+fn maybe_schedule_exit_after_list_tools_once() -> Result<(), McpError> {
+    if !write_state_file_once(
+        "MCP_TEST_EXIT_AFTER_LIST_TOOLS_STATE_FILE",
+        "process-exited",
+    )? {
+        return Ok(());
+    }
+
+    eprintln!("mcp test server scheduled process exit after tools/list");
+    let _ = std::io::stderr().flush();
+    tokio::spawn(async {
+        sleep(Duration::from_millis(50)).await;
+        std::process::exit(87);
+    });
+    Ok(())
+}
+
+fn write_state_file_once(env_var: &str, marker: &str) -> Result<bool, McpError> {
+    let Ok(path) = std::env::var(env_var) else {
+        return Ok(false);
+    };
+    if Path::new(&path).exists() {
+        return Ok(false);
+    }
+    std::fs::write(&path, marker).map_err(|err| {
+        McpError::internal_error(format!("failed to write {env_var}: {err}"), None)
+    })?;
+    Ok(true)
 }
 
 async fn wait_on_sync_barrier(args: SyncBarrierArgs) -> Result<(), McpError> {

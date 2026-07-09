@@ -61,7 +61,9 @@ use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ElicitationResponse;
 use codex_rmcp_client::McpAuthState;
+use codex_rmcp_client::McpDiagnosticContext;
 use codex_rmcp_client::McpLoginRequirement;
+use codex_rmcp_client::McpOperationDiagnosticContext;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
@@ -137,6 +139,7 @@ impl McpConnectionManager {
         codex_apps_tools_cache: CodexAppsToolsCache,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         prefix_mcp_tool_names: bool,
+        diagnostic_context: Option<McpDiagnosticContext>,
         client_elicitation_capability: ElicitationCapability,
         supports_openai_form_elicitation: bool,
         tool_plugin_provenance: ToolPluginProvenance,
@@ -221,6 +224,7 @@ impl McpConnectionManager {
                 Arc::clone(&tool_plugin_provenance),
                 runtime_context.clone(),
                 runtime_auth_provider,
+                diagnostic_context.clone(),
                 client_elicitation_capability.clone(),
                 supports_openai_form_elicitation,
             );
@@ -742,6 +746,18 @@ impl McpConnectionManager {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> Result<CallToolResult> {
+        self.call_tool_with_diagnostic_context(server, tool, arguments, meta, None)
+            .await
+    }
+
+    pub async fn call_tool_with_diagnostic_context(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: Option<serde_json::Value>,
+        meta: Option<serde_json::Value>,
+        diagnostic_context: Option<McpOperationDiagnosticContext>,
+    ) -> Result<CallToolResult> {
         let client = self.client_by_name(server).await?;
         if !client.tool_filter.allows(tool) {
             return Err(anyhow!(
@@ -751,7 +767,13 @@ impl McpConnectionManager {
 
         let result: rmcp::model::CallToolResult = client
             .client
-            .call_tool(tool.to_string(), arguments, meta, client.tool_timeout)
+            .call_tool_with_diagnostic_context(
+                tool.to_string(),
+                arguments,
+                meta,
+                client.tool_timeout,
+                diagnostic_context,
+            )
             .await
             .with_context(|| format!("tool call failed for `{server}/{tool}`"))?;
 

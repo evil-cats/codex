@@ -54,6 +54,7 @@ use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ExecutorStdioServerLauncher;
 use codex_rmcp_client::LocalStdioServerLauncher;
+use codex_rmcp_client::McpDiagnosticContext;
 use codex_rmcp_client::RmcpClient;
 use codex_rmcp_client::StdioServerLauncher;
 use codex_rmcp_client::ToolWithConnectorId;
@@ -274,6 +275,7 @@ struct ManagedClientStartup {
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
     runtime_context: McpRuntimeContext,
     runtime_auth_provider: Option<SharedAuthProvider>,
+    diagnostic_context: Option<McpDiagnosticContext>,
     client_elicitation_capability: ElicitationCapability,
     supports_openai_form_elicitation: bool,
     cancel_token: CancellationToken,
@@ -292,6 +294,7 @@ impl ManagedClientStartup {
             codex_apps_tools_cache_context,
             runtime_context,
             runtime_auth_provider,
+            diagnostic_context,
             client_elicitation_capability,
             supports_openai_form_elicitation,
             cancel_token,
@@ -317,6 +320,7 @@ impl ManagedClientStartup {
                         keyring_backend_kind,
                         runtime_context,
                         runtime_auth_provider,
+                        diagnostic_context,
                     )
                     .await?,
                 );
@@ -390,6 +394,7 @@ impl AsyncManagedClient {
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_context: McpRuntimeContext,
         runtime_auth_provider: Option<SharedAuthProvider>,
+        diagnostic_context: Option<McpDiagnosticContext>,
         client_elicitation_capability: ElicitationCapability,
         supports_openai_form_elicitation: bool,
     ) -> Self {
@@ -418,6 +423,7 @@ impl AsyncManagedClient {
             codex_apps_tools_cache_context: codex_apps_tools_cache_context.clone(),
             runtime_context,
             runtime_auth_provider,
+            diagnostic_context,
             client_elicitation_capability,
             supports_openai_form_elicitation,
             cancel_token: cancel_token.clone(),
@@ -924,6 +930,7 @@ async fn make_rmcp_client(
     keyring_backend_kind: AuthKeyringBackendKind,
     runtime_context: McpRuntimeContext,
     runtime_auth_provider: Option<SharedAuthProvider>,
+    diagnostic_context: Option<McpDiagnosticContext>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
     let config = match server.launch() {
         McpServerLaunch::Configured(config) => config.as_ref().clone(),
@@ -968,7 +975,7 @@ async fn make_rmcp_client(
             };
 
             let cwd = cwd.map(codex_utils_path_uri::LegacyAppPathString::into_string);
-            RmcpClient::new_stdio_client(
+            let client = RmcpClient::new_stdio_client(
                 server_name.to_string(),
                 command_os,
                 args_os,
@@ -978,7 +985,8 @@ async fn make_rmcp_client(
                 launcher,
             )
             .await
-            .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
+            .map_err(|err| StartupOutcomeError::from(anyhow!(err)))?;
+            Ok(with_diagnostic_context(client, diagnostic_context))
         }
         McpServerTransportConfig::StreamableHttp {
             url,
@@ -995,7 +1003,7 @@ async fn make_rmcp_client(
                     Ok(token) => token,
                     Err(error) => return Err(error.into()),
                 };
-            RmcpClient::new_streamable_http_client(
+            let client = RmcpClient::new_streamable_http_client(
                 server_name,
                 &url,
                 resolved_bearer_token,
@@ -1007,8 +1015,19 @@ async fn make_rmcp_client(
                 runtime_auth_provider,
             )
             .await
-            .map_err(StartupOutcomeError::from)
+            .map_err(StartupOutcomeError::from)?;
+            Ok(with_diagnostic_context(client, diagnostic_context))
         }
+    }
+}
+
+fn with_diagnostic_context(
+    client: RmcpClient,
+    diagnostic_context: Option<McpDiagnosticContext>,
+) -> RmcpClient {
+    match diagnostic_context {
+        Some(diagnostic_context) => client.with_diagnostic_context(diagnostic_context),
+        None => client,
     }
 }
 

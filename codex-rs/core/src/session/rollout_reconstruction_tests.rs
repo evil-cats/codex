@@ -9,6 +9,8 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
+use codex_protocol::protocol::McpDiagnosticEvent;
+use codex_protocol::protocol::McpDiagnosticItem;
 use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::SessionContextWindow;
 use codex_protocol::protocol::SessionMeta;
@@ -62,6 +64,24 @@ fn inter_agent_assistant_message(text: &str) -> ResponseItem {
     }
 }
 
+fn mcp_diagnostic_item() -> McpDiagnosticItem {
+    McpDiagnosticItem {
+        thread_id: "thread-1".to_string(),
+        turn_id: Some("turn-1".to_string()),
+        call_id: Some("call-1".to_string()),
+        server_name: "server".to_string(),
+        tool_name: Some("tool".to_string()),
+        launch_id: "launch-1".to_string(),
+        old_launch_id: None,
+        new_launch_id: None,
+        event: McpDiagnosticEvent::TransportClosed,
+        timestamp_ms: 1_725_000_000_000,
+        error: Some("Transport closed".to_string()),
+        stderr_tail: Some("server failed".to_string()),
+        stderr_truncated: false,
+    }
+}
+
 fn completed_user_turn_rollout(
     turn_context_item: TurnContextItem,
     items: Vec<RolloutItem>,
@@ -103,6 +123,35 @@ fn completed_user_turn_rollout(
         },
     )));
     rollout_items
+}
+
+#[tokio::test]
+async fn mcp_diagnostic_rollout_item_is_not_replayed_to_model_history() {
+    let (session, turn_context) = make_session_and_context().await;
+    let user = user_message("visible user message");
+    let assistant = assistant_message("visible assistant message");
+    let diagnostic_item = mcp_diagnostic_item();
+    let diagnostic = RolloutItem::McpDiagnostic(diagnostic_item.clone());
+    let serialized = serde_json::to_value(&diagnostic).expect("serialize diagnostic item");
+    let deserialized: RolloutItem =
+        serde_json::from_value(serialized).expect("deserialize diagnostic item");
+    let RolloutItem::McpDiagnostic(deserialized_item) = deserialized else {
+        panic!("expected deserialized MCP diagnostic item");
+    };
+    assert_eq!(deserialized_item, diagnostic_item);
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(
+            &turn_context,
+            &[
+                RolloutItem::ResponseItem(user.clone()),
+                diagnostic,
+                RolloutItem::ResponseItem(assistant.clone()),
+            ],
+        )
+        .await;
+
+    assert_eq!(reconstructed.history, vec![user, assistant]);
 }
 
 #[tokio::test]

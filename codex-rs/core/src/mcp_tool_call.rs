@@ -74,6 +74,7 @@ use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
+use codex_rmcp_client::McpOperationDiagnosticContext;
 use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -589,11 +590,16 @@ async fn execute_mcp_tool_call(
         .start_mcp_call_trace(call_id);
     let request_meta = mcp_call_trace.add_request_meta(request_meta);
     let result = manager
-        .call_tool(
+        .call_tool_with_diagnostic_context(
             &invocation.server,
             &invocation.tool,
             rewritten_arguments,
             request_meta,
+            Some(McpOperationDiagnosticContext {
+                turn_id: Some(turn_context.sub_id.clone()),
+                call_id: Some(call_id.to_string()),
+                tool_name: Some(invocation.tool.clone()),
+            }),
         )
         .await
         .map_err(|e| format!("tool call error: {e:?}"))?;

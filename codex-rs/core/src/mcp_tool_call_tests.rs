@@ -1434,6 +1434,7 @@ async fn host_owned_codex_apps_manager(
         session.services.mcp_manager.codex_apps_tools_cache(),
         codex_mcp::codex_apps_tools_cache_key(auth.as_ref()),
         turn_context.config.prefix_mcp_tool_names(),
+        /*diagnostic_context*/ None,
         rmcp::model::ElicitationCapability::default(),
         /*supports_openai_form_elicitation*/ false,
         codex_mcp::ToolPluginProvenance::default(),

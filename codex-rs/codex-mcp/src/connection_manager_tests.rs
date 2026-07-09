@@ -1557,6 +1557,7 @@ async fn no_local_runtime_fails_local_stdio_but_keeps_local_http_server() {
             is_workspace_account: false,
         },
         /*prefix_mcp_tool_names*/ true,
+        /*diagnostic_context*/ None,
         ElicitationCapability::default(),
         /*supports_openai_form_elicitation*/ false,
         ToolPluginProvenance::default(),

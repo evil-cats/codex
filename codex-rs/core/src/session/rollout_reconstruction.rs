@@ -280,6 +280,7 @@ impl Session {
                 }
                 RolloutItem::EventMsg(_)
                 | RolloutItem::SessionMeta(_)
+                | RolloutItem::McpDiagnostic(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. } => {}
             }
 
@@ -368,6 +369,7 @@ impl Session {
                 RolloutItem::EventMsg(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::WorldState(_)
+                | RolloutItem::McpDiagnostic(_)
                 | RolloutItem::SessionMeta(_) => {}
             }
         }
@@ -414,6 +416,7 @@ impl Session {
                 | RolloutItem::ResponseItem(_)
                 | RolloutItem::InterAgentCommunication(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. }
+                | RolloutItem::McpDiagnostic(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::EventMsg(_) => {
                     unreachable!("only world-state replay items are collected")
