@@ -206,9 +206,10 @@ impl App {
                 if let Some(thread_id) = self.chat_widget.thread_id() {
                     self.refresh_in_memory_config_from_disk_best_effort("forking the thread")
                         .await;
+                    let old_runtime_thread_ids = self.tracked_runtime_thread_ids();
                     match app_server.fork_thread(self.config.clone(), thread_id).await {
                         Ok(forked) => {
-                            self.shutdown_current_thread(app_server).await;
+                            let forked_thread_id = forked.session.thread_id;
                             match self
                                 .replace_chat_widget_with_app_server_thread(
                                     tui, app_server, forked, /*initial_user_message*/ None,
@@ -216,6 +217,12 @@ impl App {
                                 .await
                             {
                                 Ok(()) => {
+                                    self.unload_thread_runtimes_except(
+                                        app_server,
+                                        old_runtime_thread_ids,
+                                        Some(forked_thread_id),
+                                    )
+                                    .await;
                                     if let Some(summary) = summary {
                                         let mut lines: Vec<Line<'static>> = Vec::new();
                                         if let Some(usage_line) = summary.usage_line {
@@ -2417,13 +2424,13 @@ impl App {
                     self.active_thread_id.or(self.chat_widget.thread_id());
                 if self.pending_shutdown_exit_thread_id.is_some() {
                     // This is a UI escape-hatch budget, not a protocol
-                    // deadline. A healthy local thread/unsubscribe round trip
+                    // deadline. A healthy local thread/unload round trip
                     // should finish comfortably inside two seconds, while a
                     // longer wait makes Ctrl+C feel broken when the app-server
                     // is already wedged.
                     if tokio::time::timeout(
                         SHUTDOWN_FIRST_EXIT_TIMEOUT,
-                        self.shutdown_current_thread(app_server),
+                        self.unload_current_thread_runtime(app_server),
                     )
                     .await
                     .is_err()

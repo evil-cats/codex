@@ -506,6 +506,11 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadUnsubscribeResponse,
     },
+    ThreadUnload => "thread/unload" {
+        params: v2::ThreadUnloadParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadUnloadResponse,
+    },
     #[experimental("thread/increment_elicitation")]
     /// Increment the thread-local out-of-band elicitation counter.
     ///
@@ -1784,6 +1789,19 @@ mod tests {
         };
         assert_eq!(
             thread_fork.serialization_scope(),
+            Some(ClientRequestSerializationScope::Thread {
+                thread_id: thread_id.clone()
+            })
+        );
+
+        let thread_unload = ClientRequest::ThreadUnload {
+            request_id: request_id(),
+            params: v2::ThreadUnloadParams {
+                thread_id: thread_id.clone(),
+            },
+        };
+        assert_eq!(
+            thread_unload.serialization_scope(),
             Some(ClientRequestSerializationScope::Thread { thread_id })
         );
 

@@ -9,6 +9,7 @@ use super::*;
 use crate::app_backtrack::BacktrackSelection;
 use crate::app_backtrack::BacktrackState;
 use crate::app_backtrack::user_count;
+use app_test_support::create_fake_rollout;
 
 use crate::chatwidget::ChatWidgetInit;
 use crate::chatwidget::create_initial_user_message;
@@ -65,6 +66,7 @@ use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadClosedNotification;
 use codex_app_server_protocol::ThreadItem;
+use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadSettings;
 use codex_app_server_protocol::ThreadSettingsUpdatedNotification;
 use codex_app_server_protocol::ThreadStartedNotification;
@@ -3706,7 +3708,7 @@ async fn side_discard_selection_keeps_current_side_thread() {
 }
 
 #[tokio::test]
-async fn discard_side_thread_removes_agent_navigation_entry() -> Result<()> {
+async fn discard_side_thread_unloads_side_runtime() -> Result<()> {
     Box::pin(async {
         let mut app = make_test_app().await;
         let mut app_server =
@@ -3731,6 +3733,12 @@ async fn discard_side_thread_removes_agent_navigation_entry() -> Result<()> {
 
         assert_eq!(app.agent_navigation.get(&side_thread_id), None);
         assert!(!app.side_threads.contains_key(&side_thread_id));
+        let loaded_thread_ids = app_server_loaded_thread_ids(&mut app_server).await?;
+        assert!(
+            !loaded_thread_ids.contains(&side_thread_id.to_string()),
+            "discarded side runtime should be unloaded"
+        );
+        app_server.shutdown().await?;
         Ok(())
     })
     .await
@@ -5688,7 +5696,130 @@ async fn thread_rollback_response_discards_queued_active_thread_events() {
 }
 
 #[tokio::test]
-async fn new_session_requests_shutdown_for_previous_conversation() {
+async fn resume_target_session_unloads_previous_thread_runtime() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+        let target_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            "target thread",
+        )?;
+
+        let control = Box::pin(app.resume_target_session(
+            &mut tui,
+            &mut app_server,
+            crate::resume_picker::SessionTarget {
+                path: None,
+                thread_id: target_thread_id,
+            },
+        ))
+        .await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        let resumed_thread_id = app
+            .chat_widget
+            .thread_id()
+            .expect("resume should attach the resumed thread");
+        assert_ne!(resumed_thread_id, previous_thread_id);
+        let loaded_thread_ids = app_server_loaded_thread_ids(&mut app_server).await?;
+        assert!(
+            !loaded_thread_ids.contains(&previous_thread_id.to_string()),
+            "previous primary runtime should be unloaded after resume"
+        );
+        assert!(loaded_thread_ids.contains(&resumed_thread_id.to_string()));
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn clear_ui_unloads_previous_thread_runtime() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+
+        let control =
+            Box::pin(app.handle_event(&mut tui, &mut app_server, AppEvent::ClearUi)).await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        let new_thread_id = app
+            .chat_widget
+            .thread_id()
+            .expect("clear should attach a replacement thread");
+        assert_ne!(new_thread_id, previous_thread_id);
+        let loaded_thread_ids = app_server_loaded_thread_ids(&mut app_server).await?;
+        assert!(
+            !loaded_thread_ids.contains(&previous_thread_id.to_string()),
+            "previous primary runtime should be unloaded after clear"
+        );
+        assert!(loaded_thread_ids.contains(&new_thread_id.to_string()));
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn fork_current_session_unloads_previous_thread_runtime() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let source_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            "source thread",
+        )?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let resumed = app_server
+            .resume_thread(app.config.clone(), source_thread_id)
+            .await?;
+        let previous_thread_id = resumed.session.thread_id;
+        app.enqueue_primary_thread_session(resumed.session, resumed.turns)
+            .await?;
+
+        let control =
+            Box::pin(app.handle_event(&mut tui, &mut app_server, AppEvent::ForkCurrentSession))
+                .await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        let forked_thread_id = app
+            .chat_widget
+            .thread_id()
+            .expect("fork should attach the forked thread");
+        assert_ne!(forked_thread_id, previous_thread_id);
+        let loaded_thread_ids = app_server_loaded_thread_ids(&mut app_server).await?;
+        assert!(
+            !loaded_thread_ids.contains(&previous_thread_id.to_string()),
+            "source primary runtime should be unloaded after fork switch"
+        );
+        assert!(loaded_thread_ids.contains(&forked_thread_id.to_string()));
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn new_session_requests_unload_for_previous_conversation() {
     Box::pin(async {
         let (mut app, mut app_event_rx, mut op_rx) = Box::pin(make_test_app_with_channels()).await;
 
@@ -5726,11 +5857,11 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
         ))
         .await
         .expect("embedded app server");
-        Box::pin(app.shutdown_current_thread(&mut app_server)).await;
+        Box::pin(app.unload_current_thread_runtime(&mut app_server)).await;
 
         assert!(
             op_rx.try_recv().is_err(),
-            "shutdown should not submit Op::Shutdown"
+            "runtime unload should not submit Op::Shutdown"
         );
     })
     .await;
@@ -6264,4 +6395,47 @@ async fn side_backtrack_rejection_reports_unavailable_message_snapshot() {
 }
 async fn start_config_write_test_app_server(app: &App) -> Result<AppServerSession> {
     Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await
+}
+
+async fn start_loaded_primary_thread(
+    app: &mut App,
+    app_server: &mut AppServerSession,
+) -> Result<ThreadId> {
+    let started = app_server
+        .start_thread(app.chat_widget.config_ref())
+        .await?;
+    let thread_id = started.session.thread_id;
+    app.enqueue_primary_thread_session(started.session, started.turns)
+        .await?;
+    Ok(thread_id)
+}
+
+async fn app_server_loaded_thread_ids(app_server: &mut AppServerSession) -> Result<Vec<String>> {
+    let response = app_server
+        .thread_loaded_list(ThreadLoadedListParams {
+            cursor: None,
+            limit: None,
+        })
+        .await?;
+    let mut data = response.data;
+    data.sort();
+    Ok(data)
+}
+
+fn create_persisted_test_rollout(
+    app: &App,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    preview: &str,
+) -> Result<ThreadId> {
+    let thread_id = create_fake_rollout(
+        app.config.codex_home.as_path(),
+        filename_ts,
+        meta_rfc3339,
+        preview,
+        Some(app.config.model_provider_id.as_str()),
+        /*git_info*/ None,
+    )
+    .map_err(|err| color_eyre::eyre::eyre!("failed to create test rollout: {err}"))?;
+    Ok(ThreadId::from_string(&thread_id)?)
 }

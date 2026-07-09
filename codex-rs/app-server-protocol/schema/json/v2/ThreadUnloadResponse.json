@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ThreadUnloadStatus": {
+      "enum": [
+        "notLoaded",
+        "unloaded"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "status": {
+      "$ref": "#/definitions/ThreadUnloadStatus"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "ThreadUnloadResponse",
+  "type": "object"
+}

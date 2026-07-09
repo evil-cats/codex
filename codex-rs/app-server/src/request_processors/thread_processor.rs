@@ -450,6 +450,15 @@ impl ThreadRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn thread_unload(
+        &self,
+        params: ThreadUnloadParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.thread_unload_response_inner(params)
+            .await
+            .map(|response| Some(response.into()))
+    }
+
     pub(crate) async fn thread_resume(
         &self,
         request_id: ConnectionRequestId,
@@ -830,6 +839,67 @@ impl ThreadRequestProcessor {
             ThreadUnsubscribeStatus::NotSubscribed
         };
         Ok(ThreadUnsubscribeResponse { status })
+    }
+
+    async fn thread_unload_response_inner(
+        &self,
+        params: ThreadUnloadParams,
+    ) -> Result<ThreadUnloadResponse, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        {
+            let mut pending_thread_unloads = self.pending_thread_unloads.lock().await;
+            if !pending_thread_unloads.insert(thread_id) {
+                return Err(invalid_request(format!(
+                    "thread {thread_id} is already unloading"
+                )));
+            }
+        }
+
+        let Ok(thread) = self.thread_manager.get_thread(thread_id).await else {
+            self.finalize_thread_teardown(thread_id).await;
+            return Ok(ThreadUnloadResponse {
+                status: ThreadUnloadStatus::NotLoaded,
+            });
+        };
+
+        info!("thread {thread_id} unload requested; shutting down");
+        match wait_for_thread_shutdown(&thread).await {
+            ThreadShutdownResult::Complete => {}
+            ThreadShutdownResult::SubmitFailed => {
+                self.pending_thread_unloads.lock().await.remove(&thread_id);
+                return Err(internal_error(format!(
+                    "failed to submit Shutdown to thread {thread_id}"
+                )));
+            }
+            ThreadShutdownResult::TimedOut => {
+                self.pending_thread_unloads.lock().await.remove(&thread_id);
+                return Err(internal_error(format!(
+                    "thread {thread_id} shutdown timed out"
+                )));
+            }
+        }
+
+        let was_loaded = self
+            .thread_manager
+            .remove_thread(&thread_id)
+            .await
+            .is_some();
+        self.finalize_thread_teardown(thread_id).await;
+        if was_loaded {
+            self.outgoing
+                .send_server_notification(ServerNotification::ThreadClosed(
+                    ThreadClosedNotification {
+                        thread_id: thread_id.to_string(),
+                    },
+                ))
+                .await;
+        }
+
+        Ok(ThreadUnloadResponse {
+            status: ThreadUnloadStatus::Unloaded,
+        })
     }
 
     async fn prepare_thread_for_archive(&self, thread_id: ThreadId) {

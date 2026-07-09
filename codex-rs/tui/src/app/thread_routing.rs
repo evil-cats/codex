@@ -14,14 +14,60 @@ pub(super) enum ThreadRollbackOrigin {
 }
 
 impl App {
-    pub(super) async fn shutdown_current_thread(&mut self, app_server: &mut AppServerSession) {
-        if let Some(thread_id) = self.chat_widget.thread_id() {
+    pub(super) fn tracked_runtime_thread_ids(&self) -> Vec<ThreadId> {
+        let mut thread_ids: Vec<ThreadId> = self.thread_event_channels.keys().copied().collect();
+        for thread_id in [self.active_thread_id, self.chat_widget.thread_id()]
+            .into_iter()
+            .flatten()
+        {
+            if !thread_ids.contains(&thread_id) {
+                thread_ids.push(thread_id);
+            }
+        }
+        thread_ids
+    }
+
+    pub(super) async fn unload_thread_runtime(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+    ) -> bool {
+        if let Err(err) = app_server.thread_unload(thread_id).await {
+            tracing::warn!("failed to unload thread {thread_id}: {err}");
+            return false;
+        }
+        self.abort_thread_event_listener(thread_id);
+        true
+    }
+
+    pub(super) async fn unload_thread_runtimes_except(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_ids: impl IntoIterator<Item = ThreadId>,
+        preserve_thread_id: Option<ThreadId>,
+    ) {
+        let mut unloaded_thread_ids = Vec::new();
+        for thread_id in thread_ids {
+            if Some(thread_id) == preserve_thread_id || unloaded_thread_ids.contains(&thread_id) {
+                continue;
+            }
+            if self.unload_thread_runtime(app_server, thread_id).await {
+                unloaded_thread_ids.push(thread_id);
+            }
+        }
+    }
+
+    pub(super) async fn unload_current_thread_runtime(
+        &mut self,
+        app_server: &mut AppServerSession,
+    ) {
+        if let Some(thread_id) = self
+            .active_thread_id
+            .or_else(|| self.chat_widget.thread_id())
+        {
             // Clear any in-flight rollback guard when switching threads.
             self.backtrack.pending_rollback = None;
-            if let Err(err) = app_server.thread_unsubscribe(thread_id).await {
-                tracing::warn!("failed to unsubscribe thread {thread_id}: {err}");
-            }
-            self.abort_thread_event_listener(thread_id);
+            self.unload_thread_runtime(app_server, thread_id).await;
         }
     }
 

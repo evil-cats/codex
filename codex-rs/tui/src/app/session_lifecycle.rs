@@ -497,10 +497,10 @@ impl App {
         if !self.pending_startup_thread_start {
             if let Ok(started) = result {
                 let thread_id = started.session.thread_id;
-                if let Err(err) = app_server.thread_unsubscribe(thread_id).await {
+                if let Err(err) = app_server.thread_unload(thread_id).await {
                     tracing::warn!(
                         thread_id = %thread_id,
-                        "failed to unsubscribe stale startup thread: {err}"
+                        "failed to unload stale startup thread: {err}"
                     );
                 }
                 self.discard_thread_local_state(thread_id).await;
@@ -552,20 +552,14 @@ impl App {
             self.chat_widget.thread_name(),
             self.chat_widget.rollout_path().as_deref(),
         );
-        self.shutdown_current_thread(app_server).await;
-        let tracked_thread_ids: Vec<ThreadId> =
-            self.thread_event_channels.keys().copied().collect();
-        for thread_id in tracked_thread_ids {
-            if let Err(err) = app_server.thread_unsubscribe(thread_id).await {
-                tracing::warn!("failed to unsubscribe tracked thread {thread_id}: {err}");
-            }
-        }
+        let old_runtime_thread_ids = self.tracked_runtime_thread_ids();
         self.config = config.clone();
         match app_server
             .start_thread_with_session_start_source(&config, session_start_source)
             .await
         {
             Ok(started) => {
+                let started_thread_id = started.session.thread_id;
                 if let Err(err) = self
                     .replace_chat_widget_with_app_server_thread(
                         tui,
@@ -578,16 +572,25 @@ impl App {
                     self.chat_widget.add_error_message(format!(
                         "Failed to attach to fresh app-server thread: {err}"
                     ));
-                } else if let Some(summary) = summary {
-                    let mut lines: Vec<Line<'static>> = Vec::new();
-                    if let Some(usage_line) = summary.usage_line {
-                        lines.push(usage_line.into());
+                } else {
+                    self.unload_thread_runtimes_except(
+                        app_server,
+                        old_runtime_thread_ids,
+                        Some(started_thread_id),
+                    )
+                    .await;
+                    if let Some(summary) = summary {
+                        let mut lines: Vec<Line<'static>> = Vec::new();
+                        if let Some(usage_line) = summary.usage_line {
+                            lines.push(usage_line.into());
+                        }
+                        if let Some(command) = summary.resume_hint {
+                            let spans =
+                                vec!["To continue this session, run ".into(), command.cyan()];
+                            lines.push(spans.into());
+                        }
+                        self.chat_widget.add_plain_history_lines(lines);
                     }
-                    if let Some(command) = summary.resume_hint {
-                        let spans = vec!["To continue this session, run ".into(), command.cyan()];
-                        lines.push(spans.into());
-                    }
-                    self.chat_widget.add_plain_history_lines(lines);
                 }
             }
             Err(err) => {
@@ -788,13 +791,13 @@ impl App {
             self.chat_widget.thread_name(),
             self.chat_widget.rollout_path().as_deref(),
         );
+        let old_runtime_thread_ids = self.tracked_runtime_thread_ids();
         match app_server
             .resume_thread(resume_config.clone(), target_session.thread_id)
             .await
         {
             Ok(resumed) => {
                 let resumed_thread_id = resumed.session.thread_id;
-                self.shutdown_current_thread(app_server).await;
                 self.config = resume_config;
                 tui.set_notification_settings(
                     self.config.tui_notifications.method,
@@ -809,6 +812,12 @@ impl App {
                     .await
                 {
                     Ok(()) => {
+                        self.unload_thread_runtimes_except(
+                            app_server,
+                            old_runtime_thread_ids,
+                            Some(resumed_thread_id),
+                        )
+                        .await;
                         if let Some(summary) = summary {
                             let mut lines: Vec<Line<'static>> = Vec::new();
                             if let Some(usage_line) = summary.usage_line {
