@@ -87,6 +87,7 @@ async fn drop_kills_wrapper_process_group() -> Result<()> {
     let child_pid_file_str = child_pid_file.to_string_lossy().into_owned();
 
     let client = RmcpClient::new_stdio_client(
+        "process-group-cleanup-test".to_string(),
         OsString::from("/bin/sh"),
         vec![
             OsString::from("-c"),
@@ -123,6 +124,7 @@ async fn shutdown_kills_initialized_stdio_server_with_in_flight_operation() -> R
 
     let client = Arc::new(
         RmcpClient::new_stdio_client(
+            "process-group-shutdown-test".to_string(),
             stdio_server_bin()?.into(),
             Vec::<OsString>::new(),
             Some(HashMap::from([(

@@ -49,6 +49,7 @@ async fn executor_stdio_forwards_foreign_absolute_cwd_as_path_uri() {
     let launcher = Arc::new(ExecutorStdioServerLauncher::new(backend.clone()));
 
     let _ = RmcpClient::new_stdio_client(
+        "foreign-cwd-test".to_string(),
         OsString::from("echo"),
         Vec::new(),
         /*env*/ None,

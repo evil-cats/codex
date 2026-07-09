@@ -349,6 +349,7 @@ impl RmcpClient {
     }
 
     pub async fn new_stdio_client(
+        server_name: String,
         program: OsString,
         args: Vec<OsString>,
         env: Option<HashMap<OsString, OsString>>,
@@ -357,7 +358,14 @@ impl RmcpClient {
         launcher: Arc<dyn StdioServerLauncher>,
     ) -> io::Result<Self> {
         let transport_recipe = TransportRecipe::Stdio {
-            command: StdioServerCommand::new(program, args, env, env_vars.to_vec(), cwd),
+            command: StdioServerCommand::new(
+                server_name,
+                program,
+                args,
+                env,
+                env_vars.to_vec(),
+                cwd,
+            ),
             launcher,
         };
         let transport = Self::create_pending_transport(&transport_recipe)

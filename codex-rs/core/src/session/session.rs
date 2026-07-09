@@ -1225,6 +1225,7 @@ impl Session {
             .instrument(info_span!(
                 "session_init.mcp_manager_init",
                 otel.name = "session_init.mcp_manager_init",
+                thread_id = %thread_id,
             ))
             .await;
             sess.services

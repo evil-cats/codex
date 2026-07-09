@@ -52,6 +52,7 @@ use rmcp::transport::child_process::TokioChildProcess;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::process::Command;
+use tracing::Instrument;
 use tracing::info;
 use tracing::warn;
 
@@ -80,6 +81,7 @@ pub trait StdioServerLauncher: private::Sealed + Send + Sync {
 /// Command-line process shape shared by stdio server launchers.
 #[derive(Clone)]
 pub struct StdioServerCommand {
+    server_name: String,
     program: OsString,
     args: Vec<OsString>,
     env: Option<HashMap<OsString, OsString>>,
@@ -147,6 +149,7 @@ impl StdioServerCommand {
     /// Build the stdio process parameters before choosing where the process
     /// runs.
     pub(super) fn new(
+        server_name: String,
         program: OsString,
         args: Vec<OsString>,
         env: Option<HashMap<OsString, OsString>>,
@@ -154,6 +157,7 @@ impl StdioServerCommand {
         cwd: Option<String>,
     ) -> Self {
         Self {
+            server_name,
             program,
             args,
             env,
@@ -241,6 +245,7 @@ impl LocalStdioServerLauncher {
         fallback_cwd: PathBuf,
     ) -> io::Result<StdioServerTransport> {
         let StdioServerCommand {
+            server_name,
             program,
             args,
             env,
@@ -274,21 +279,35 @@ impl LocalStdioServerLauncher {
         );
 
         if let Some(stderr) = stderr {
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                loop {
-                    match reader.next_line().await {
-                        Ok(Some(line)) => {
-                            info!("MCP server stderr ({program_name}): {line}");
-                        }
-                        Ok(None) => break,
-                        Err(error) => {
-                            warn!("Failed to read MCP server stderr ({program_name}): {error}");
-                            break;
+            let stderr_span = tracing::Span::current();
+            tokio::spawn(
+                async move {
+                    let mut reader = BufReader::new(stderr).lines();
+                    loop {
+                        match reader.next_line().await {
+                            Ok(Some(line)) => {
+                                info!(
+                                    server_name = %server_name,
+                                    program = %program_name,
+                                    stderr_line = %line,
+                                    "MCP server stderr"
+                                );
+                            }
+                            Ok(None) => break,
+                            Err(error) => {
+                                warn!(
+                                    server_name = %server_name,
+                                    program = %program_name,
+                                    error = %error,
+                                    "Failed to read MCP server stderr"
+                                );
+                                break;
+                            }
                         }
                     }
                 }
-            });
+                .instrument(stderr_span),
+            );
         }
 
         Ok(StdioServerTransport {
@@ -470,6 +489,7 @@ impl ExecutorStdioServerLauncher {
         exec_backend: Arc<dyn ExecBackend>,
     ) -> io::Result<StdioServerTransport> {
         let StdioServerCommand {
+            server_name,
             program,
             args,
             env,
@@ -519,6 +539,7 @@ impl ExecutorStdioServerLauncher {
         Ok(StdioServerTransport {
             inner: StdioServerTransportInner::Executor(ExecutorProcessTransport::new(
                 started.process,
+                server_name,
                 program_name,
             )),
             process,
