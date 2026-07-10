@@ -89,15 +89,6 @@ upstream tag `rust-v0.143.0`.
 | `tui-core-tool-activity.md` | `перенесено` | `CoreToolActivity` перенесен через protocol/app-server/TUI lifecycle; shared files окончательно staged после view-image карточки |
 | `tui-history-image-previews.md` | `доработано` | `ImageView`/`view_image` перенесены на upstream `PathUri`/`LegacyAppPathString` с сохранением fork `preview_size`/`previewSize`; in-scope files staged как resolved |
 
-### Исторические migration-карты
-
-Эти карточки являются записями предыдущих апгрейдов и не обрабатываются
-подагентами как отдельные fork-доработки текущего переноса:
-
-- `migration-0.140.0.md`;
-- `migration-0.141.0.md`;
-- `migration-0.142.5.md`.
-
 ## Результаты по карточкам
 
 ### `codex-agent-env-var.md`

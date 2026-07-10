@@ -1,6 +1,6 @@
 ---
 id: fork-migration-0.141.0
-status: active
+status: completed
 created: 2026-06-19
 updated: 2026-06-29
 source_scope: rust-v0.141.0..working-tree
@@ -19,7 +19,7 @@ upstream tag `rust-v0.141.0`.
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `active` |
+| Статус | `completed` |
 | Новая ветка | `hermione-0.141.0` |
 | Upstream tag | `rust-v0.141.0` |
 | Предыдущая fork-ветка | `hermione-0.140.0` |

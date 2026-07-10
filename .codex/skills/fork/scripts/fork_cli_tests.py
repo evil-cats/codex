@@ -1,4 +1,5 @@
 import importlib.util
+import unittest.mock
 import tempfile
 import textwrap
 import unittest
@@ -173,6 +174,51 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertIsNotNone(error)
         assert error is not None
         self.assertIn("card(s) have no fork-tests.v1 entries: fork-planned-only", error)
+
+
+class CardsListTests(unittest.TestCase):
+    def test_cards_list_excludes_migration_cards(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+
+        repo_root = Path(temp_dir.name)
+        docs_fork = repo_root / "docs/fork"
+        docs_fork.mkdir(parents=True)
+        (docs_fork / "core-read-file-tool.md").write_text(
+            "---\n"
+            "id: fork-core-read-file-tool\n"
+            "status: active\n"
+            "---\n"
+            "# Read file\n",
+            encoding="utf-8",
+        )
+        (docs_fork / "migration-0.143.0.md").write_text(
+            "---\n"
+            "id: fork-migration-0.143.0\n"
+            "status: completed\n"
+            "---\n"
+            "# Migration check: `0.143.0`\n",
+            encoding="utf-8",
+        )
+
+        args = type(
+            "Args",
+            (),
+            {
+                "repo_root": str(repo_root),
+                "format": "tsv",
+            },
+        )()
+
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
+            with unittest.mock.patch("sys.stdout", stdout):
+                result = fork_cli.cmd_cards_list(args)
+            stdout.seek(0)
+            output = stdout.read()
+
+        self.assertEqual(result, 0)
+        self.assertIn("docs/fork/core-read-file-tool.md\tactive\tRead file", output)
+        self.assertNotIn("migration-0.143.0.md", output)
 
 
 class CardValidationTests(unittest.TestCase):

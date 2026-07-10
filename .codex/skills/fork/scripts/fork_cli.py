@@ -645,6 +645,14 @@ def fork_doc_paths(repo_root: Path) -> list[Path]:
     return sorted(docs_fork.glob("*.md"))
 
 
+def is_migration_card(path: Path) -> bool:
+    return path.name.startswith("migration-")
+
+
+def owner_card_paths(repo_root: Path) -> list[Path]:
+    return [path for path in fork_doc_paths(repo_root) if not is_migration_card(path)]
+
+
 def current_branch(repo_root: Path) -> str:
     result = subprocess.run(
         ["git", "branch", "--show-current"],
@@ -1103,7 +1111,7 @@ def cmd_cards_list(args: argparse.Namespace) -> int:
         print(f"ERROR: missing docs/fork directory: {docs_fork}", file=sys.stderr)
         return 2
 
-    cards = sorted(docs_fork.glob("*.md"))
+    cards = owner_card_paths(repo_root)
     if args.format == "tsv":
         print("path\tstatus\ttitle")
         for path in cards:

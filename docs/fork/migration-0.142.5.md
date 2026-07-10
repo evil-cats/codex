@@ -1,6 +1,6 @@
 ---
 id: fork-migration-0.142.5
-status: complete
+status: completed
 created: 2026-07-05
 updated: 2026-07-08
 source_scope: rust-v0.142.5..hermione-0.142.5
