@@ -35,3 +35,9 @@ async fn build_memory_tool_developer_instructions_renders_embedded_template() {
         1
     );
 }
+
+#[test]
+#[should_panic(expected = "unsupported placeholder")]
+fn parse_embedded_template_rejects_unknown_placeholder() {
+    let _ = parse_embedded_template("{{ unknown }}", "test-template.md");
+}

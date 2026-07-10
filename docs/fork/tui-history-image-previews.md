@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-08
+updated: 2026-07-10
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -328,6 +328,14 @@ rows. Cursor movement внутри одной строки недостаточ�
 `ThreadItem::ImageView`, TUI replay и `ChatWidget::on_view_image_tool_call`
 должны переносить один и тот же `ImagePreviewSize` без возврата к числовому
 `preview_rows`.
+
+Заметка для переноса на `rust-v0.144.1`: если конфликт возникает в
+сгенерированном TypeScript `v2/ThreadItem.ts`, сохраняй upstream-форму
+`{ "type": "webSearch" } & WebSearchItem` и
+`{ "type": "imageGeneration" } & ImageGenerationItem`, но добавляй fork-поле
+`previewSize: ImagePreviewSize` в `imageView`. Не возвращай встроенное поле
+`savedPath?: AbsolutePathBuf` в `ThreadItem.ts`: после upstream-выноса оно живет
+в `ImageGenerationItem`.
 
 ## Проверки
 

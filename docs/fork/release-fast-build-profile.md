@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-07-08
+updated: 2026-07-10
 source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
@@ -287,6 +287,28 @@ strip = "symbols"
 stripped-артефакта должен выполнить общий родительский проход через
 `fork build-fast`.
 
+## Migration check: `0.144.1`
+
+Во время one-card переноса на `rust-v0.144.1` в текущем checkout подтверждены
+кодовые якоря `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`,
+`strip = "symbols"` и owned target `build-fast-release`.
+
+Связанные migration-repair якоря тоже сохранены: effective
+`Config.tui_terminal_title_label` заполняется из `cfg.tui.terminal_title_label`,
+`HistoryCellDisplayItem::Line` несёт `HyperlinkLine`,
+`HistoryCellDisplayItem::from(Line<'static>)` создаёт `HyperlinkLine::new(...)`,
+а `insert_history_lines_with_wrap_policy` переводит plain `Line` в static через
+`line_to_static` перед `plain_hyperlink_lines(...)`.
+
+В `codex-rs/tui/src/history_cell/messages.rs` разрешён конфликт между
+upstream-очисткой пользовательского текста и fork-поддержкой элементов
+`LocalImage`: `raw_lines` вызывает `sanitize_user_text(...)`, а rich-режим
+продолжает возвращать `HistoryCellDisplayItem`, включая `LocalImage` для
+истории терминала.
+Сборка, тесты, генераторы, форматирование и markdownlint в этом one-card проходе
+не запускались; проверку stripped-артефакта должен выполнить общий родительский
+проход через `fork build-fast`.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -329,6 +351,7 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Migration `0.140.0` | локально подтверждены anchors `[profile.release-fast]`, `codegen-units = 32`, `debug = "none"`, `strip = "symbols"` и target `build-fast-release`; сборка была зафиксирована на `f-ms-dev` | эта карточка не утверждает, что build запускался в текущем turn |
 | Migration `0.142.5` | локально подтверждены якоря профиля, target `build-fast-release`, восстановление effective config и конвертации TUI history; комментарий `remote build` заменён на формулировку про `release-fast build` | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем one-card проходе |
 | Migration `0.143.0` | локально подтверждены якоря профиля, target `build-fast-release`, восстановление effective config и конвертации TUI history; кодовые правки не потребовались | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем one-card проходе |
+| Migration `0.144.1` | локально подтверждены якоря профиля, target `build-fast-release`, восстановление effective config и конвертации TUI history; конфликт в `messages.rs` разрешён с сохранением upstream-очистки и fork-поддержки элементов `LocalImage` | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем one-card проходе |
 
 ### Известные падения и пропуски
 
@@ -379,3 +402,4 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Проверить перенос profile на `0.140.0` | перенесено; сборка на `f-ms-dev` должна подтвердить stripped-артефакт | "Migration check: `0.140.0`", "Проверки" |
 | Проверить перенос profile на `0.142.5` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.142.5`", "Проверки" |
 | Проверить перенос profile на `0.143.0` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.143.0`", "Проверки" |
+| Проверить перенос profile на `0.144.1` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.144.1`", "Проверки" |

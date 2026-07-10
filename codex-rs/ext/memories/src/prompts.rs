@@ -14,10 +14,19 @@ static MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_TEMPLATE: LazyLock<Template> = LazyLoc
 });
 
 fn parse_embedded_template(source: &'static str, template_name: &str) -> Template {
-    match Template::parse(source) {
+    let template = match Template::parse(source) {
         Ok(template) => template,
         Err(err) => panic!("embedded template {template_name} is invalid: {err}"),
+    };
+    for placeholder in template.placeholders() {
+        match placeholder {
+            "base_path" | "memory_summary" => {}
+            _ => panic!(
+                "embedded template {template_name} contains unsupported placeholder {placeholder:?}"
+            ),
+        }
     }
+    template
 }
 
 /// Build the memory read-path prompt that is added to developer instructions.

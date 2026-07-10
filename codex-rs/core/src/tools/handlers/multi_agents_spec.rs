@@ -667,9 +667,11 @@ fn spawn_agent_tool_description(
         r#"
         {tool_description}
 This spawn_agent tool creates a sub-agent for an already selected concrete,
-bounded subtask. The session delegation policy owns when to consider delegation,
-when not to delegate, how to avoid duplicate parent/sub-agent work, and how to
-integrate results.
+bounded subtask that is useful to delegate. Consider delegation for non-trivial
+work that can be split into independent research, implementation, or
+verification tasks whose results will materially affect your next steps.
+Do not spawn agents for trivial, vague, tightly coupled work, or just to create
+parallel activity.
 
 Spawned agents inherit your current model by default. Do not set the `model`
 field unless the task clearly needs a different model, a configured agent role
@@ -694,8 +696,9 @@ selected subtask.
 
 After spawning agents for delegated work, wait for all agents in the current
 delegation round to complete, close them when they are no longer needed, and only
-then continue substantive parent work. Do not repeatedly wait without using
-returned information."#
+then continue substantive parent work. Do not duplicate delegated work locally
+while agents are running, and do not repeatedly wait without using returned
+information."#
     )
 }
 

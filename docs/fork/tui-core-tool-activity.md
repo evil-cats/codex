@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-08
+updated: 2026-07-10
 source_scope: working-tree
 ---
 
@@ -565,6 +565,8 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Миграционный проход `rust-v0.142.5`: сгенерированные артефакты схем v2 | `resolved-current-pass` | Убраны маркеры конфликтов в `ThreadItem.ts` и файлах JSON Schema; сохранены обе сгенерированные записи `definitions`: `ImagePreviewSize`, `LegacyAppPathString` и `McpToolCallAppContext` |
 | Миграционный проход `rust-v0.143.0`: lifecycle и слой legacy-событий для `CoreToolActivity` | `resolved-current-pass` | `thread_history` объединяет upstream materialized lifecycle с `CoreToolActivity`; `legacy_events.rs` явно игнорирует `CoreToolActivity`, чтобы не добавлять legacy-событие или менять model-visible поток |
 | Миграционный проход `rust-v0.143.0`: проверки подагента | `not-run-current-pass` | По явному ограничению текущего subagent-запуска проверки, генераторы, форматирование, сборка, `fork tests --mode list` и `fork cards validate` не запускались |
+| Миграционный проход `rust-v0.144.1`: конфликты live/replay/history для `CoreToolActivity` | `resolved-current-pass` | Разрешены конфликты в `chatwidget/protocol.rs`, `chatwidget/replay.rs` и `thread_history.rs`: сохранен fork lifecycle `CoreToolActivity` и объединены upstream-изменения `WebSearch(item)`, `Extension(ImageGeneration)` и materialized review/extension items |
+| Миграционный проход `rust-v0.144.1`: проверки подагента | `not-run-current-pass` | По явному ограничению текущего subagent-запуска проверки, генераторы, форматирование, сборка, `fork tests --mode list` и `fork cards validate` не запускались |
 | `.codex/skills/fork/scripts/fork cards validate` после исправления completed-only replay | `ok` | Проверка карточек прошла: `cards_checked: 19`, `card_errors: 0` |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |

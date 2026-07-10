@@ -177,7 +177,7 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
 }
 
 #[test]
-fn spawn_agent_tool_v1_uses_session_policy_scoped_guidance() {
+fn spawn_agent_tool_v1_uses_tool_owned_delegation_guidance() {
     let description = spawn_agent_tool_v1_description(SpawnAgentToolOptions {
         available_models: vec![model_preset("visible", /*show_in_picker*/ true)],
         agent_type_description: "role help".to_string(),
@@ -190,7 +190,10 @@ fn spawn_agent_tool_v1_uses_session_policy_scoped_guidance() {
             "This spawn_agent tool creates a sub-agent for an already selected concrete,"
         )
     );
-    assert!(description.contains("The session delegation policy owns when to consider delegation"));
+    assert!(description.contains("bounded subtask that is useful to delegate"));
+    assert!(description.contains("Consider delegation for non-trivial"));
+    assert!(description.contains("independent research, implementation, or"));
+    assert!(description.contains("Do not spawn agents for trivial, vague, tightly coupled work"));
     assert!(description.contains("Spawned agents inherit your current model by default."));
     assert!(description.contains("Give each sub-agent a self-contained task message"));
     assert!(description.contains("For read-only tasks, ask for concise findings with file paths"));
@@ -202,10 +205,12 @@ fn spawn_agent_tool_v1_uses_session_policy_scoped_guidance() {
     assert!(description.contains("wait for all agents in the current"));
     assert!(description.contains("close them when they are no longer needed"));
     assert!(description.contains("then continue substantive parent work"));
+    assert!(description.contains("Do not duplicate delegated work locally"));
     assert!(
         description
             .contains("Available model overrides (optional; inherited parent model is preferred):")
     );
+    assert!(!description.contains("session delegation policy owns"));
     assert!(!description.contains("### Delegation workflow"));
     assert!(
         !description.contains("Use sub-agents when the user's task can be usefully decomposed")

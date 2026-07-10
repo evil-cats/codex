@@ -159,6 +159,8 @@ Hermione-профиль должен получать инструкции чт�
   - embedded-template test проверяет новый текст `A direct "remember this"`;
   - embedded-template test проверяет отсутствие старого текста
     `only when explicitly asked by the user`.
+  - embedded-template test проверяет, что unknown placeholder в embedded-шаблоне
+    падает при lazy parse.
 - `codex-rs/ext/memories/src/tests.rs`:
   - extension tests создают `MemoriesExtensionConfig` без удаленного поля;
   - prompt contribution по-прежнему добавляет developer-policy fragment.

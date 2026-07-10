@@ -2,38 +2,37 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-08
-source_scope: discussion-2026-07-05
+updated: 2026-07-10
+source_scope: discussion-2026-07-05..discussion-2026-07-10
 ---
 
-# MultiAgent V1: session-policy split for `spawn_agent` guidance
+# MultiAgent V1: tool-owned `spawn_agent` guidance
 
 ## Обзор
 
-Эта карточка фиксирует согласованный split для fork-доработки Hermione:
-root-visible `session-policy` получает правила выбора и workflow делегирования,
-а V1 `spawn_agent` tool description остается короткой инструкцией по механике
-конкретного tool.
+Эта карточка фиксирует fork-доработку Hermione для V1 `spawn_agent` tool
+description. Текущий контракт больше не опирается на профильную
+`session-policy`: правила делегирования подагентов были убраны из policy как
+неудачная модель, поэтому V1 tool description должен быть самодостаточным и не
+ссылаться на отсутствующий policy-owner.
 
-Цель доработки: вернуть родительскому агенту практическую возможность запускать
-sub-agents без старого запрета "только если пользователь явно попросил", решить
-bootstrap-проблему видимости правил до tool discovery и одновременно убрать
-неэффективную схему, где родитель после делегирования продолжает делать ту же
-работу локально и расходует в несколько раз больше токенов и контекста.
+Цель доработки: сохранить полезную возможность запускать sub-agents для
+конкретных bounded subtasks, но не возвращать старый запрет "только если
+пользователь явно попросил sub-agents" и не поощрять схему, где родитель после
+делегирования параллельно выполняет ту же содержательную работу локально.
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `active`; split согласован, code/policy правки вносятся в текущем проходе |
-| Root-visible owner | `${HOME}/.codex/policies/session-policy.md` |
+| Статус | `active`; V1 tool-owned guidance согласован, policy-split удален как legacy |
 | Целевой tool | V1 `spawn_agent` |
 | Owner-файл prompt | `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` |
 | Тесты | `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` |
-| Видимая для модели поверхность | `session-policy` в developer prompt; описание tool, раскрываемое напрямую или через `tool_search` |
-| Главный контракт | `session-policy` решает, когда рассматривать delegation; `spawn_agent` description объясняет, как оформить уже выбранный concrete bounded subtask |
+| Видимая для модели поверхность | описание tool, раскрываемое напрямую или через `tool_search` |
+| Главный контракт | V1 `spawn_agent` description сам содержит критерии useful delegation и механику уже выбранного concrete bounded subtask |
 
 ## Зачем это нужно
 
-Текущий V1 usage hint содержит запрет:
+Старый V1 usage hint содержал запрет:
 
 ```text
 Do not spawn sub-agents unless the user explicitly asks for sub-agents, delegation, or parallel agent work.
@@ -41,33 +40,34 @@ Requests for depth, thoroughness, research, investigation, or detailed codebase 
 {agent_role_usage_hint}
 ```
 
-Этот запрет слишком сильно сужает полезность MultiAgent V1 в профиле Hermione и
-конфликтует с проверенным fork workflow, где parent-agent разбивает задачу на
+Этот запрет слишком сильно сужал полезность MultiAgent V1 в профиле Hermione и
+конфликтовал с проверенным fork workflow, где parent-agent разбивает задачу на
 карточки или bounded subtasks, запускает sub-agent, ждёт короткий результат и
 анализирует его.
 
-Дополнительная проблема текущего блока: он учит родителя делать
-"meaningful non-overlapping work" после запуска sub-agent. На практике это часто
-превращается в дублирование исследования или реализации, тратит токены и
-засоряет контекст. Новый split должен учить другой модели работы:
-`consider delegation -> decompose -> spawn batch -> wait -> integrate`.
+Следующая модель со split между `session-policy` и tool description тоже
+оказалась legacy: делегирование подагентов из policy убрано, потому что эта
+модель не работала достаточно предсказуемо. Поэтому теперь владелец правил V1
+usage hint - сам `spawn_agent` tool description, а карточка не требует правок
+профильных policy-файлов.
 
-Главная bootstrap-проблема: правила из `spawn_agent` tool description не видны
-модели до обращения к tool metadata. Поэтому критерии "когда рассматривать
-delegation" и "когда не делегировать" должны жить в `session-policy`, а не в
-описании `spawn_agent`.
+Дополнительная проблема старых формулировок: они учили родителя делать
+"meaningful non-overlapping work" после запуска sub-agent. На практике это часто
+превращалось в дублирование исследования или реализации, тратило токены и
+засоряло контекст. Новый текст должен учить другой модели:
+`choose useful delegation -> spawn bounded task -> wait -> close -> integrate`.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `${HOME}/.codex/policies/session-policy.md` | Владеет root-visible правилами выбора, декомпозиции, ожидания и интеграции подагентов |
-| `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` | Владеет V1 и V2 `spawn_agent` tool descriptions; здесь V1 usage hint должен остаться tool-specific |
-| `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` | Закрепляет короткий model-visible текст V1 `spawn_agent`, отсутствие старого запрета и поведение `usage_hint_text` override |
-| `docs/fork/multi-agent-v1-spawn-agent-guidance.md` | Handoff-карточка с согласованным split, обоснованием, проверками и условиями переноса |
+| `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` | Владеет V1 и V2 `spawn_agent` tool descriptions; здесь V1 default usage hint должен оставаться tool-owned и самодостаточным |
+| `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` | Закрепляет model-visible текст V1 `spawn_agent`, отсутствие старого запрета, отсутствие legacy policy-ссылки и поведение `usage_hint_text` override |
+| `docs/fork/multi-agent-v1-spawn-agent-guidance.md` | Handoff-карточка с текущим tool-owned контрактом, обоснованием, проверками и условиями переноса |
 
 Намеренно не менять в этой доработке:
 
+- `${HOME}/.codex/policies/session-policy.md` и другие профильные policy-файлы;
 - runtime API V1 `spawn_agent`;
 - V2 inter-agent протокол;
 - config keys вроде `usage_hint_text`, `root_agent_usage_hint_text` и
@@ -77,108 +77,28 @@ delegation" и "когда не делегировать" должны жить 
 
 ## Итоговый контракт
 
-Правка разделяет прежний длинный V1 usage hint на два уровня:
-
-1. `${HOME}/.codex/policies/session-policy.md` получает root-visible правила
-   выбора, декомпозиции, ожидания и интеграции подагентов.
-2. `spawn_agent_tool_description(...)` в
-   `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` получает короткий V1
-   usage hint только про механику уже выбранного `spawn_agent` вызова.
+1. V1 `spawn_agent` description сам содержит компактный tool-owned usage hint:
+   когда делегирование полезно, когда его не применять и как оформить bounded
+   subtask.
+2. V1 `spawn_agent` больше не ссылается на `session delegation policy` или
+   профильный policy-owner.
 3. Старый запрет на spawn без явного запроса пользователя не возвращается.
 4. `{agent_role_usage_hint}` не возвращается как authorization guard.
 5. `usage_hint_text` override продолжает заменять дефолтный V1 usage hint.
 6. V2 `spawn_agent` description, runtime API, config keys и
    `usage_hint_enabled` не меняются в этой доработке.
+7. Родитель после delegation ждёт всех подагентов текущего раунда, закрывает их и
+   не дублирует delegated work локально, пока подагенты работают.
 
-## Согласованный split
-
-### Текст для `session-policy`
-
-```markdown
-## Делегирование задач подагентам
-
-### Назначение делегирования
-- Используй подагентов для ограниченных частей сложной работы, когда делегирование
-  улучшает качество, скорость, покрытие проверки или дисциплину контекста.
-- Родительский агент остаётся ответственным за решение, что делегировать,
-  ожидание нужных результатов, проверку decisive evidence и интеграцию итогового
-  ответа.
-- Делегирование не требует отдельной явной просьбы пользователя, если текущая
-  сессия предоставляет инструменты подагентов и декомпозиция реально продвигает
-  задачу пользователя.
-
-### Когда рассматривать делегирование
-- Рассматривай делегирование для нетривиальных задач, которые можно разложить на
-  независимые, ограниченные и проверяемые подзадачи.
-- Хорошие кандидаты: независимые исследования разных частей кодовой базы,
-  disjoint implementation slices, verification passes, миграционные или
-  workflow-единицы, review passes, сравнение альтернатив или сбор evidence из
-  разных областей.
-- Подзадачи должны быть concrete bounded subtasks, результаты которых родитель
-  сможет объединить в общий ответ или общий diff.
-- Делегирование должно materially advance основную задачу, а не просто создавать
-  параллельную активность.
-- Если результат подагента не нужен для дальнейших решений родителя, такого
-  подагента не запускай.
-
-### Когда не делегировать
-- Не делегируй тривиальную, одношаговую, неясную, tightly coupled работу или
-  задачи, требующие непрерывного локального judgement.
-- Не запускай подагентов только потому, что пользователь попросил глубину,
-  тщательность, исследование, расследование или подробный анализ.
-- Не делегируй, если разделение работы будет стоить дороже, чем локальное
-  выполнение.
-- Не создавай пересекающиеся назначения или нескольких подагентов на одну и ту
-  же работу.
-
-### Перед запуском
-- Сформируй короткий план декомпозиции.
-- Определи каждую подзадачу, почему ей должен владеть подагент и какой результат
-  нужен родителю.
-- По возможности запускай все полезные независимые подзадачи в одном раунде
-  делегирования.
-- Давай каждому подагенту concrete, self-contained task: objective, scope,
-  relevant files или modules, constraints, expected output и режим edit/report.
-- Для coding subtasks держи write scopes disjoint.
-
-### После запуска подагентов
-- Дождись выполнения всех подзадач, которые были переданы подагентам в текущем
-  раунде делегирования.
-- Жди результаты, потому что ответы подагентов могут существенно изменить
-  дальнейший план работы родителя.
-- Не выполняй дальнейшую содержательную работу родителем, пока все подагенты
-  текущего раунда не завершили задачи и не закрыты.
-- Не выполняй delegated investigation, implementation или verification локально,
-  пока назначенные им подагенты работают.
-- Во время ожидания занимайся только координацией и unblockers, если это
-  необходимо для завершения уже запущенных подзадач.
-
-### После завершения подагентов
-- Сначала дождись final answers от всех подагентов текущего раунда.
-- Закрой подагентов текущего раунда, когда их результаты получены и они больше
-  не нужны.
-- Затем сравни final answers с исходным планом декомпозиции.
-- Проверяй только decisive evidence, changed files, контракты и риски, нужные для
-  доверенной интеграции результата.
-- Не повторяй полный delegated audit, кроме случаев, когда результат неполный,
-  противоречивый или high-risk.
-- Разрешай конфликты между ответами подагентов явно.
-- Если нужно, попроси focused follow-up, запусти более узкую replacement subtask
-  или заверши остаток работы локально.
-- Продолжай содержательную работу родителем только после того, как все
-  подагенты текущего раунда завершены и закрыты, а их результаты
-  проанализированы и интегрированы.
-- Сообщай пользователю, что было делегировано, что вернулось, что родитель
-  проверил и какие риски или ограничения остались.
-```
-
-### Текст для V1 `spawn_agent` tool description
+## Текст для V1 `spawn_agent` tool description
 
 ```text
 This spawn_agent tool creates a sub-agent for an already selected concrete,
-bounded subtask. The session delegation policy owns when to consider delegation,
-when not to delegate, how to avoid duplicate parent/sub-agent work, and how to
-integrate results.
+bounded subtask that is useful to delegate. Consider delegation for non-trivial
+work that can be split into independent research, implementation, or
+verification tasks whose results will materially affect your next steps.
+Do not spawn agents for trivial, vague, tightly coupled work, or just to create
+parallel activity.
 
 Spawned agents inherit your current model by default. Do not set the `model`
 field unless the task clearly needs a different model, a configured agent role
@@ -203,29 +123,42 @@ selected subtask.
 
 After spawning agents for delegated work, wait for all agents in the current
 delegation round to complete, close them when they are no longer needed, and only
-then continue substantive parent work. Do not repeatedly wait without using
-returned information.
+then continue substantive parent work. Do not duplicate delegated work locally
+while agents are running, and do not repeatedly wait without using returned
+information.
 ```
 
 ## Архитектурное решение
 
-### Почему split нужен
+### Почему policy-split удалён
 
-`spawn_agent` tool description виден модели только после раскрытия tool metadata
-или обращения к tool. Поэтому он не должен владеть решением "рассматривать ли
-delegation вообще". Это решение должно жить в `session-policy`, который попадает
-в root-visible developer prompt.
+Предыдущая версия карточки считала, что критерии "когда рассматривать
+delegation" и "когда не делегировать" должны жить в `session-policy`, потому что
+tool description виден модели только после раскрытия tool metadata. Это решение
+отменено: делегирование агентов из policy убрано, потому что такая модель не
+работала нормально и оставляла несогласованность между policy, tool metadata и
+реальным workflow.
+
+Текущий контракт проще: V1 `spawn_agent` tool description является владельцем
+своего usage hint. Он не пытается быть общим rulebook-ом делегирования, но
+содержит минимальные критерии, без которых tool metadata подталкивает модель к
+устаревшему или вредному поведению.
 
 ### Что остается в tool description
 
-Tool description оставляет только механику конкретного вызова: inherited model,
-`model` override, task message shape, read-only/coding output contract, disjoint
-write scopes, agent roles и минимальную связку с `wait_agent`.
+Tool description оставляет:
 
-Если результат подагента не нужен для дальнейшей работы родителя, запускать
-такого подагента не следует. Если результат нужен, родитель ждёт завершения
-текущего раунда подагентов до продолжения содержательной работы, потому что
-результаты могут изменить дальнейший план.
+- criteria for useful delegation: non-trivial, independent research,
+  implementation или verification tasks;
+- negative criteria: trivial, vague, tightly coupled work и parallel activity
+  ради самой параллельности;
+- inherited model и правила `model` override;
+- task message shape;
+- read-only/coding output contract;
+- disjoint write scopes;
+- agent roles;
+- wait/close/integrate hint;
+- запрет дублировать delegated work локально, пока подагенты работают.
 
 ### Что не возвращаем из старого V1/V2
 
@@ -256,17 +189,17 @@ that can run independently alongside useful local work
 2. Найти ветку дефолтного V1 usage hint, которая добавляется, когда
    `usage_hint_text` не задан, через вызов `create_spawn_agent_tool_v1(...)`.
 3. Заменить дефолтный usage hint на блок из раздела
-   [Согласованный split](#согласованный-split) без редакторской переработки.
+   [Текст для V1 `spawn_agent` tool description](#текст-для-v1-spawn_agent-tool-description)
+   без редакторской переработки.
 4. Сохранить базовый `tool_description`, `available_models_description`,
    inherited model guidance и логику `usage_hint_text` override.
 5. Обновить тесты в
    `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs`, чтобы они
-   проверяли короткий V1 tool-specific guidance, отсутствие старого
-   explicit-user-request запрета и отсутствие перенесённого в `session-policy`
-   workflow-блока в tool description.
+   проверяли tool-owned V1 guidance, отсутствие legacy policy-ссылки, отсутствие
+   старого explicit-user-request запрета и отсутствие sidecar-work workflow.
 6. Если upstream успел изменить V2 description, использовать его только как
-   дополнительный контекст; согласованный split выше остается owner-текстом этой
-   карточки, пока пользователь не примет новое решение.
+   дополнительный контекст; tool-owned V1 guidance выше остается owner-текстом
+   этой карточки, пока пользователь не примет новое решение.
 
 ## Проверки
 
@@ -274,13 +207,15 @@ that can run independently alongside useful local work
 
 | Контракт | Обязательность | Где покрывается |
 | --- | --- | --- |
-| `session-policy` содержит root-visible правила: когда рассматривать delegation, когда не делегировать, как декомпозировать, ждать всех подагентов, закрывать их, анализировать и интегрировать результаты | `required` | профильная проверка `check-hermione-profile.py`; редакторская проверка policy |
-| V1 `spawn_agent` содержит короткий tool-specific guidance для already selected concrete bounded subtask | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
-| V1 `spawn_agent` больше не содержит старый запрет "Do not spawn sub-agents unless the user explicitly asks..." | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
-| V1 `spawn_agent` больше не содержит "Requests for depth, thoroughness..." | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
-| `{agent_role_usage_hint}` не возвращается как отдельный authorization guard | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
-| V1 `spawn_agent` больше не дублирует `session-policy` workflow вроде `### Delegation workflow` | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
-| V1 `spawn_agent` сохраняет task message shape, read-only findings, coding worker subtasks, direct fork workspace edits, disjoint write scopes, agent roles и wait/close hint | `required` | `spawn_agent_tool_v1_uses_session_policy_scoped_guidance` |
+| V1 `spawn_agent` содержит самодостаточный tool-owned guidance для useful concrete bounded subtask | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` больше не ссылается на `session delegation policy` | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` содержит критерии useful delegation для non-trivial independent research/implementation/verification tasks | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` запрещает trivial, vague, tightly coupled work и parallel activity ради самой параллельности | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` больше не содержит старый запрет "Do not spawn sub-agents unless the user explicitly asks..." | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` больше не содержит "Requests for depth, thoroughness..." | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| `{agent_role_usage_hint}` не возвращается как отдельный authorization guard | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` не возвращает `### Delegation workflow` и sidecar-work guidance | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 `spawn_agent` сохраняет task message shape, read-only findings, coding worker subtasks, direct fork workspace edits, disjoint write scopes, agent roles и wait/close hint | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
 | `usage_hint_text` override продолжает заменять дефолтный usage hint | `required` | `spawn_agent_tool_v1_usage_hint_text_replaces_default_guidance` |
 
 ### Владелец исполняемой карты
@@ -309,20 +244,21 @@ runbook прямого запуска.
   принадлежит владельцу `fork tests`.
 - После кодовой правки применяются обычные skill-owned format gates для
   Rust-файлов.
-- Build gate нужен только в общем проверочном проходе перед установкой или
-  релизным handoff. В текущем проходе он выполнен по явной просьбе установить
-  новый fork-бинарник.
+- Build gate нужен в общем проверочном проходе миграции перед установкой или
+  релизным handoff.
 
 ### Исторические результаты
 
-На момент создания карточки код, тесты и сборка не запускались. В текущем
-проходе после кодовой правки выполнено:
-
 При переносе на `rust-v0.143.0` подагент разрешил конфликт в V1
-`spawn_agent` description, сохранив согласованный короткий tool-specific
-guidance и не вернув upstream-блок с explicit-request guard и sidecar-work
-workflow. Проверки, форматирование, генераторы и сборка в этом card-pass не
-запускались; общий проверочный проход остаётся за parent-agent.
+`spawn_agent` description, сохранив короткий tool-specific guidance и не вернув
+upstream-блок с explicit-request guard и sidecar-work workflow. Проверки,
+форматирование, генераторы и сборка в том card-pass не запускались; общий
+проверочный проход оставался за parent-agent.
+
+При переносе на `rust-v0.144.1` обнаружено, что предыдущая версия карточки
+ошибочно требовала восстановить policy-split. По решению пользователя
+`session-policy` не правится; legacy policy text удален из карточки, а V1
+`spawn_agent` prompt и тест синхронизированы с tool-owned guidance.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |
@@ -330,12 +266,10 @@ workflow. Проверки, форматирование, генераторы �
 | `fork format --check` | `ok` | Финальная проверка форматирования прошла без изменений |
 | `fork cards validate` | `ok` | Проверено 19 карточек, ошибок формы нет |
 | `fork tests --mode list --card docs/fork/multi-agent-v1-spawn-agent-guidance.md` | `ok` | Исполняемая карта печатает одну проверку `multi agent v1 spawn agent guidance` |
-| `fork tests --mode list` | `ok` | Общая исполняемая карта содержит новую строку `fork-multi-agent-v1-spawn-agent-guidance` |
-| `fork tests --mode cards --card docs/fork/multi-agent-v1-spawn-agent-guidance.md` | `ok` | Проверка уровня карточки прошла после split; внутренний target `spawn_agent_tool_v1` зеленый |
-| `python3 -B ${HOME}/.codex/scripts/check-hermione-profile.py` | `ok` | `session-policy.md` виден в `role: developer` |
-| `markdownlint-cli2 --config ${HOME}/.codex/.markdownlint-cli2.yaml ${HOME}/.codex/policies/session-policy.md` | `ok` | Профильная policy проходит fallback Markdown-конфигурацию |
-| `fork build-fast` | `ok` | После split-правки `release-fast` сборка прошла; wrapper проверил metadata и версию бинарника |
-| `fork install` | `ok` | После split-правки установлен `${HOME}/.local/bin/codex-hermione`; wrapper проверил source, temporary и installed binary |
+| `fork tests --mode list` | `ok` | Общая исполняемая карта содержит строку `fork-multi-agent-v1-spawn-agent-guidance` |
+| `fork tests --mode cards --card docs/fork/multi-agent-v1-spawn-agent-guidance.md` | `ok` | Проверка уровня карточки прошла после prompt-правки |
+| `fork build-fast` | `ok` | После prompt-правки `release-fast` сборка прошла; wrapper проверил metadata и версию бинарника |
+| `fork install` | `ok` | После prompt-правки установлен `${HOME}/.local/bin/codex-hermione`; wrapper проверил source, temporary и installed binary |
 | `${HOME}/.local/bin/codex-hermione --version` | `ok` | Установленный бинарник ответил `codex-cli 0.142.5+hermione`; неблокирующий warning про PATH aliases не повлиял на результат |
 | `markdownlint-cli2 --config docs/.markdownlint-cli2.yaml docs/fork/multi-agent-v1-spawn-agent-guidance.md` | `ok` | Локальная Markdown-конфигурация проекта не нашла ошибок |
 | `git diff --check` | `ok` | Whitespace-проверка diff прошла |
@@ -344,14 +278,16 @@ workflow. Проверки, форматирование, генераторы �
 
 - Поведенческий smoke test с реальным V1 `tool_search -> spawn_agent` после
   установки нового binary ещё не выполнялся.
-- Первый повтор card-level test после split упал только из-за line-wrap-sensitive
-  assert в тесте для строки про agent roles; assert исправлен, повторный запуск
-  прошёл успешно.
+- Первый повтор card-level test после старой split-правки упал только из-за
+  line-wrap-sensitive assert в тесте для строки про agent roles; assert был
+  исправлен, повторный запуск прошёл успешно.
+- Исторические проверки profile policy больше не относятся к этой карточке,
+  потому что policy-owner удален из текущего контракта.
 
 ## Runtime, сборка и установка
 
-По явной просьбе пользователя после prompt/spec-правки, а затем повторно после
-финального split-а выполнены skill-owned сборка и установка:
+По явной просьбе пользователя после ранней prompt/spec-правки выполнялись
+skill-owned сборка и установка:
 
 - `release-fast` бинарник собран через `fork build-fast`; wrapper подтвердил
   metadata и версию.
@@ -369,15 +305,16 @@ workflow. Проверки, форматирование, генераторы �
 - Tool description является model-visible context. Даже небольшая правка меняет
   поведение агента и должна проверяться как prompt/tool spec change, а не как
   обычная документационная строка.
-- Новый split намеренно разрешительнее старого V1 запрета. Риск смягчается тем,
-  что `session-policy` запрещает trivial/vague delegation, требует bounded
-  subtasks, заставляет родителя дождаться всех подагентов текущего раунда и
-  продолжать содержательную работу только после анализа и интеграции результатов.
+- Tool-owned guidance намеренно разрешительнее старого V1 запрета. Риск
+  смягчается тем, что prompt требует concrete bounded subtasks, запрещает
+  trivial/vague/tightly coupled delegation, запрещает parallel activity ради
+  самой параллельности и требует ждать/закрывать текущий delegation round перед
+  продолжением содержательной работы.
 - Если будущий upstream снова изменит V1/V2 multi-agent prompts, эту карточку
   нужно сверять с актуальным `multi_agents_spec.rs`, но не переписывать
   согласованный prompt без отдельного решения пользователя.
-- Конфиговый `usage_hint_text` остаётся резервной настройкой и по-прежнему заменяет
-  дефолтный V1 prompt целиком.
+- Конфиговый `usage_hint_text` остаётся резервной настройкой и по-прежнему
+  заменяет дефолтный V1 prompt целиком.
 
 ## Проверка покрытия
 
@@ -385,13 +322,12 @@ workflow. Проверки, форматирование, генераторы �
 | --- | --- | --- |
 | Убрать старую фразу `Do not spawn sub-agents unless...` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
 | Убрать фразу `Requests for depth, thoroughness...` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
+| Убрать legacy-ссылку на `session delegation policy` | `перенесено в карточку` | `Итоговый контракт`, `Проверки` |
+| Не править `${HOME}/.codex/policies/session-policy.md` | `перенесено в карточку` | `Карта файлов`, `Архитектурное решение` |
 | Не возвращать `{agent_role_usage_hint}` | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
-| Использовать из V2 хорошую идею concrete/bounded subtasks | `перенесено в карточку` | `Архитектурное решение`, `Согласованный split` |
+| Использовать из V2 хорошую идею concrete/bounded subtasks | `перенесено в карточку` | `Архитектурное решение`, `Текст для V1 spawn_agent tool description` |
 | Не переносить V2 "alongside useful local work" | `перенесено в карточку` | `Архитектурное решение`, `Итоговый контракт` |
-| Split-текст для `session-policy` и V1 tool description переносится без переработки | `перенесено в карточку` | `Согласованный split` |
-| Parent после delegation ждёт всех подагентов текущего раунда, закрывает их и не делает delegated work сам | `перенесено в карточку` | `Согласованный split`, `Итоговый контракт` |
-| Parent анализирует, проверяет decisive evidence и интегрирует ответы до продолжения содержательной работы | `перенесено в карточку` | `Согласованный split`, `Итоговый контракт` |
-| Если результат подагента не нужен для дальнейших решений родителя, такого подагента не запускать | `перенесено в карточку` | `Согласованный split`, `Архитектурное решение` |
-| Проверенный fork skill workflow со схемой parent/subagent/wait является обоснованием | `перенесено в карточку` | `Зачем это нужно`, `Архитектурное решение` |
+| Parent после delegation ждёт всех подагентов текущего раунда, закрывает их и не делает delegated work сам | `перенесено в карточку` | `Текст для V1 spawn_agent tool description`, `Итоговый контракт` |
+| Parent анализирует и интегрирует ответы до продолжения содержательной работы | `перенесено в карточку` | `Текст для V1 spawn_agent tool description`, `Итоговый контракт` |
 | Кодовая реализация и тесты выполнены | `перенесено в карточку` | `Карта файлов`, `Проверки` |
 | Проверка уровня карточки принадлежит `fork tests` | `перенесено в карточку` | `Владелец исполняемой карты`, блок `fork-tests.v1` |

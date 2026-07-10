@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-07-05
+updated: 2026-07-10
 source_scope: working-tree
 ---
 
@@ -86,6 +86,8 @@ source_scope: working-tree
 | `codex-rs/core/src/tools/handlers/thread_info_spec_tests.rs` | Unit tests для spec-контракта: optional `thread_id` и nullable output fields |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `thread_info` и `thread_info_spec`, экспортирует `ThreadInfoHandler` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
+| `codex-rs/core/src/tools/core_tool_activity.rs` | Отображает вызов `get_thread_info` в core tool activity как `kind = ThreadInfo` с кратким полем `detail` по текущему или указанному `thread_id` |
+| `codex-rs/protocol/src/items.rs` | Содержит `CoreToolActivityKind::ThreadInfo` для `CoreToolActivityItem` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `docs/fork/core-thread-info-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 | `docs/fork/codex-agent-env-var.md` | Связанная fork-карточка runtime env: `CODEX_AGENT` использует тот же helper и тот же контракт `agent_name`; `CODEX_ROLLOUT` использует тот же live rollout path как best-effort env-подсказку |
@@ -341,6 +343,9 @@ tool текущего runtime, а не app-server API и не extension tool.
   `agent_path` и `agent_nickname`;
 - обход parent chain для persisted thread ограничен и возвращает `null`, если
   root `session_id` нельзя определить честно;
+- core tool activity для вызова `get_thread_info` использует `kind = ThreadInfo`
+  и показывает `current` для вызова без `thread_id` или короткий префикс
+  указанного `thread_id`;
 - cache-sensitive список prompt tools остается согласованным после добавления
   нового tool.
 
@@ -481,6 +486,29 @@ runtime env и ее дополнительные проверки зафикси
   ограничению запуска подагента одной карточки; эти проверки должен выполнить
   родительский агент в общем проходе.
 
+Миграционная сверка 2026-07-10 после слияния `rust-v0.144.1`:
+
+- вручную сверены файлы-владельцы выбранной карточки:
+  `codex-rs/core/src/tools/handlers/thread_info.rs`,
+  `codex-rs/core/src/tools/handlers/thread_info_spec.rs`,
+  `codex-rs/core/src/agent/agent_name.rs`,
+  `codex-rs/core/src/tools/handlers/mod.rs`,
+  `codex-rs/core/src/tools/spec_plan.rs`,
+  `codex-rs/core/src/tools/core_tool_activity.rs`,
+  `codex-rs/protocol/src/items.rs`,
+  `codex-rs/core/tests/suite/prompt_caching.rs`;
+- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
+  текущий thread обслуживается через live `Session`, другой persisted thread
+  читается через `ThreadStore`, `include_archived: true` и
+  `include_history: false` сохранены, видимое модели описание различает
+  `thread_id` и `session_id`, а список prompt tools содержит `get_thread_info`;
+- уточнено, что текущая интеграция включает `CoreToolActivityKind::ThreadInfo`
+  и поле `detail` со значением `current` или префиксом указанного `thread_id`
+  для `CoreToolActivityItem`;
+- команды форматирования, сборки, тестов, генераторов и `fix` не запускались по
+  ограничению запуска подагента одной карточки; эти проверки должен выполнить
+  родительский агент в общем проходе.
+
 ### Известные падения и пропуски
 
 - Первый узкий запуск проверки `thread_info` 2026-06-16 поймал compile error
@@ -535,3 +563,4 @@ binary, используй обычный fork workflow для remote release-fa
 | Проверки `fmt`, `test`, `fix` | выполнены; полный `codex-core` suite запускался и упал на remote-инфраструктуре, подробности зафиксированы выше |
 | Миграционная сверка после обновления upstream 2026-06-19 | ручная сверка выполнена; тестовое покрытие fallback-контракта `agent_name` усилено; команды проверок должен запустить основной агент |
 | Миграционная сверка после слияния `rust-v0.142.5` 2026-07-05 | ручная сверка выполнена; тестовое покрытие runtime-разбора `thread_info` восстановлено для невалидного UUID и неизвестных полей; команды проверок должен запустить основной агент |
+| Миграционная сверка после слияния `rust-v0.144.1` 2026-07-10 | ручная сверка выполнена; карта файлов уточнена для core tool activity и protocol kind; команды проверок должен запустить основной агент |
