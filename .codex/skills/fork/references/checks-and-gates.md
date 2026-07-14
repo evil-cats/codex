@@ -27,12 +27,22 @@ commands.
 .codex/skills/fork/scripts/fork install
 .codex/skills/fork/scripts/fork cards list
 .codex/skills/fork/scripts/fork cards validate
+.codex/skills/fork/scripts/fork migration init --version X.Y.Z
+.codex/skills/fork/scripts/fork migration show --version X.Y.Z
+.codex/skills/fork/scripts/fork migration next --version X.Y.Z
+.codex/skills/fork/scripts/fork migration set-card-status --version X.Y.Z --card CARD --status STATUS
+.codex/skills/fork/scripts/fork migration set-gate-status --version X.Y.Z --gate GATE --status STATUS
+.codex/skills/fork/scripts/fork migration validate --version X.Y.Z
+.codex/skills/fork/scripts/fork migration complete --version X.Y.Z
 .codex/skills/fork/scripts/fork render-subagent-prompt
 .codex/skills/fork/scripts/fork check-source-coverage
 ```
 
 `--version` можно опустить, если команда однозначно выводит версию из текущей
-ветки `hermione-X.Y.Z` или единственной `docs/fork/migration-X.Y.Z.md`.
+ветки `hermione-X.Y.Z`. Наличие единственного файла в `docs/fork/migration/` или
+исторического `docs/fork/migration-*.md` не выбирает версию и не является
+решением пользователя о возобновлении миграции. Подкоманды `fork migration`
+требуют явный `--version`.
 
 `fork install` по умолчанию устанавливает
 `codex-rs/target/release-fast/codex` в
@@ -86,9 +96,10 @@ Rust workflow:
 | --- | --- |
 | `fork cards list` | Навигация по fork-карточкам |
 | `fork cards validate` | Строгая связь active cards, блоков `fork-tests.v1` и формы `Проверки` |
+| `fork migration *` | Генерация, чтение, точечное обновление и валидация JSON migration map |
 | `fork tests --mode list` | Печать исполняемой карты без запуска внутренних argv |
 | `fork tests --mode cards` | Card-level запуск с предусловиями и логами |
-| `fork preflight` | Составной gate для skill/files/cards/untracked/conflicts/markdown |
+| `fork preflight` | Составной gate для skill/files/cards/JSON map/untracked/conflicts/markdown |
 | `fork check-source-coverage` | Structural coverage gate переноса skill workflow |
 | `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
 | `fork build-fast` | Fork build gate с проверкой бинарника и версии |
@@ -187,13 +198,18 @@ semantic audit.
    `fork tests --mode cards` и `fork build-fast`. Полный тестовый проход
    запускай через `fork tests --mode full`, когда нужен полный регрессионный
    gate.
-4. Зафиксируй в migration-карточке реальные результаты, известные падения,
-   пропущенные проверки, metadata сборки и статус установки бинарника без
-   локальных путей к файлам логов.
+4. Зафиксируй результат каждого общего gate только закрытым статусом
+   `passed`, `failed` или `skipped` через
+   `fork migration set-gate-status`. JSON не хранит пояснения, команды, metadata
+   сборки или пути к логам; существенные результаты конкретной доработки
+   принадлежат owner-карточке.
 5. Перед commit проверь, что каждая активная fork-доработка имеет статус
-   `перенесено`, `не применимо`, `reverted`, `open question` или
-   `требует исправления`. Статус `проверяется` является незавершенным и
-   блокирует финальные gates.
+   `migrated`, `notApplicable` или `reverted`. Статусы `pending`, `inProgress`,
+   `blocked` и `needsFix` являются незавершенными и блокируют финальные gates.
+6. Когда все карточки финальны, а каждый gate получил `passed` или `skipped`,
+   выполни `fork migration validate --version X.Y.Z`, затем
+   `fork migration complete --version X.Y.Z`. Завершённая карта неизменна;
+   исправляй ошибочный статус до `complete`, а не редактируй JSON после него.
 
 `fork tests --mode full` не запускается по инерции: нужен явный запрос
 пользователя или понятная необходимость полного регрессионного gate.
@@ -237,14 +253,14 @@ snapshot/schema/generator, условие пропуска проверки ли
 в блоке `fork-tests.v1`, либо если карточка хранит канонический command runbook
 вместо ссылки на skill-owned owner.
 
-Проверяй `fork preflight`, только если изменилась форма migration-карты или
+Проверяй `fork preflight`, только если изменилась форма JSON migration map или
 общий контракт предварительной проверки. Например:
 
-- добавлен новый статус строки таблицы миграции;
-- изменен формат строк `docs/fork/migration-X.Y.Z.md`;
-- переименована migration-карта;
-- изменены правила для `pending`, `проверяется`, `open question`,
-  `требует исправления`, `перенесено`, `не применимо` или `reverted`;
+- добавлен новый статус карточки или gate;
+- изменены поля `docs/fork/migration/X.Y.Z.json`;
+- переименована или перемещена JSON-карта;
+- изменены правила для `pending`, `inProgress`, `blocked`, `needsFix`,
+  `migrated`, `notApplicable` или `reverted`;
 - добавлен новый общий invariant, который должен проверяться до тестов и
   сборки.
 
@@ -275,6 +291,7 @@ snapshot/schema/generator, условие пропуска проверки ли
 - `render-subagent-prompt`;
 - `cards list`;
 - `cards validate`;
+- `migration init/show/next/set-card-status/set-gate-status/validate/complete`;
 - `format --check`;
 - `format --fix`;
 - `preflight --skill-only`;

@@ -2,7 +2,7 @@
 
 ## Fork workflow
 
-Для fork-доработок, `docs/fork/*.md`, migration table, parent/subagent flow,
+Для fork-доработок, `docs/fork/*.md`, JSON migration map, parent/subagent flow,
 fork gates, fast build, генераторов и локальной сборки используй project skill
 `fork`.
 

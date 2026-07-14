@@ -5,7 +5,7 @@ description: >-
   карточки `docs/fork/`, миграция на новую upstream-версию, работа
   parent/subagent по одной карточке, prompt templates и skill-owned скрипты
   проверок, сборки, тестов и установки. Используй, когда задача касается fork workflow,
-  `docs/fork/*.md`, migration table, subagent one-card flow, fork gates, fast
+  `docs/fork/*.md`, JSON migration map, subagent one-card flow, fork gates, fast
   build, генераторов, retired legacy fork workflow или cleanup после переноса в
   skill-owned workflow.
 ---
@@ -14,7 +14,8 @@ description: >-
 
 Этот skill является активным владельцем fork workflow для локальной разработки,
 сборки, установки, тестирования, миграции fork-доработок, карточек
-`docs/fork/*.md`, parent/subagent flow и skill-owned scripts.
+`docs/fork/*.md`, одноразовых карт `docs/fork/migration/<version>.json`,
+parent/subagent flow и skill-owned scripts.
 
 Switch выполнен после structural coverage gate, независимого semantic audit без
 блокирующих P0/P1 findings и явного подтверждения пользователя.
@@ -56,6 +57,9 @@ skill-owned command; если его нет, обновляй skill-owned workfl
 - `fork render-subagent-prompt`
 - `fork cards list`
 - `fork cards validate`
+- `fork migration init --version X.Y.Z`
+- `fork migration show --version X.Y.Z`
+- `fork migration validate --version X.Y.Z`
 - `fork preflight --skill-only`
 
 Skill-owned scripts не вызывают retired legacy scripts как runtime dependency.
@@ -65,7 +69,8 @@ Skill-owned scripts не вызывают retired legacy scripts как runtime 
 
 Если задача добавляет active fork-карточку, меняет `docs/fork/*.md`, раздел
 `Проверки`, обязательное покрытие, crate/test target, tool spec, config/schema,
-prompt или model-visible context, прочитай `references/checks-and-gates.md`.
+prompt, model-visible context или контракт JSON migration map, прочитай
+`references/checks-and-gates.md`.
 
 Перед финалом такой задачи синхронизируй блоки `fork-tests.v1` в карточках и
 проверь `fork tests --mode list`. `fork cards validate` является строгим gate

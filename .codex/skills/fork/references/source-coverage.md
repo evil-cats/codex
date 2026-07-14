@@ -50,10 +50,11 @@ Structural coverage по-прежнему не доказывает семант
 | `references/local-development.md` | Host-agnostic local checkout workflow | перенесено |
 | `references/checks-and-gates.md` | Skill-owned gates, исполняемые карты и scripts | перенесено |
 | `assets/templates/fork-card.md` | Шаблон fork-карточки с разделением смыслового покрытия, владельца исполняемой карты и evidence | перенесено |
-| `assets/templates/migration-card.md` | Шаблон migration-карты | перенесено |
+| `scripts/migration_map.py` | Строгий формат `fork-migration.v1`, вычисляемый прогресс и атомарные обновления JSON-карты | перенесено с нормализацией |
+| `scripts/migration_cli.py` | Лёгкие команды `fork migration` для создания, чтения, точечного обновления, валидации и завершения JSON-карты | перенесено с нормализацией |
 | `assets/templates/parent-subagent-prompt.md` | Шаблон prompt для подагента | перенесено |
 | `scripts/fork` | Skill-owned CLI entrypoint | перенесено |
-| `scripts/fork_cli.py` | Строгая validation для связи active cards с блоками `fork-tests.v1` и исполняемыми картами | перенесено |
+| `scripts/fork_cli.py` | Маршрутизация готовности JSON-карты в `preflight`, тесты и сборку; строгая validation active cards и `fork-tests.v1` | перенесено |
 
 ## Status values
 

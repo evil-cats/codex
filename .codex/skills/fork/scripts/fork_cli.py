@@ -1,3 +1,12 @@
+"""Skill-owned CLI обслуживания Hermione fork.
+
+Скрипт объединяет лёгкие операции с fork-карточками, машинной картой текущей
+миграции, проверками, генераторами, тестами, сборкой и установкой. Команды
+работают только в явно выбранном checkout, не возобновляют миграцию сами и
+пишут тяжёлые логи в ``target/fork-migration``. Деструктивные Git-операции и
+автоматическое управление agent threads не входят в его контракт.
+"""
+
 import argparse
 import json
 import os
@@ -11,6 +20,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import migration_cli
+import migration_map as migration_map_model
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
@@ -22,13 +34,6 @@ OPEN_STATUSES = (
     "draft",
     "pending",
     "требует проверки",
-)
-
-BLOCKING_MIGRATION_STATUSES = (
-    "pending",
-    "проверяется",
-    "open question",
-    "требует исправления",
 )
 
 COVERAGE_ROW_STATUSES = (
@@ -54,9 +59,10 @@ REQUIRED_FILES = (
     "references/local-development.md",
     "references/checks-and-gates.md",
     "assets/templates/fork-card.md",
-    "assets/templates/migration-card.md",
     "assets/templates/parent-subagent-prompt.md",
     "scripts/fork",
+    "scripts/migration_cli.py",
+    "scripts/migration_map.py",
     "scripts/fork_cli_tests.py",
 )
 
@@ -70,7 +76,6 @@ SKILL_MARKDOWN = (
     "references/local-development.md",
     "references/checks-and-gates.md",
     "assets/templates/fork-card.md",
-    "assets/templates/migration-card.md",
     "assets/templates/parent-subagent-prompt.md",
 )
 
@@ -306,7 +311,9 @@ def card_tests_from_payload(
         if not isinstance(argv, list) or not argv:
             entry_errors.append(f"{entry_label}: `argv` must be a non-empty array")
         elif not all(isinstance(arg, str) and arg for arg in argv):
-            entry_errors.append(f"{entry_label}: `argv` entries must be non-empty strings")
+            entry_errors.append(
+                f"{entry_label}: `argv` entries must be non-empty strings"
+            )
 
         if entry_errors:
             errors.extend(entry_errors)
@@ -373,7 +380,9 @@ def card_tests(
 def find_repo_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
-        if (candidate / ".git").exists() and (candidate / ".codex/skills/fork").exists():
+        if (candidate / ".git").exists() and (
+            candidate / ".codex/skills/fork"
+        ).exists():
             return candidate
     return DEFAULT_REPO_ROOT
 
@@ -528,7 +537,9 @@ class LogSession:
         with self.log_file.open("a", encoding="utf-8") as log:
             log.write(text)
 
-    def log_command(self, label: str, argv: list[str] | tuple[str, ...] | None = None) -> None:
+    def log_command(
+        self, label: str, argv: list[str] | tuple[str, ...] | None = None
+    ) -> None:
         self.write(f"\n==> {label}\n")
         if argv:
             self.write(f"argv: {shell_quote(argv)}\n")
@@ -669,15 +680,16 @@ def current_branch(repo_root: Path) -> str:
 
 
 def infer_version(repo_root: Path) -> str | None:
+    """Выводит версию только из текущей Hermione-ветки.
+
+    Исторические migration artifacts намеренно не сканируются: отсутствие чата
+    или наличие старой карты не является решением пользователя о возобновлении.
+    """
+
     branch = current_branch(repo_root)
-    match = re.fullmatch(r"hermione-(.+)", branch)
+    match = re.fullmatch(r"hermione-([0-9]+\.[0-9]+\.[0-9]+)", branch)
     if match:
         return match.group(1)
-
-    migration_cards = sorted((repo_root / "docs/fork").glob("migration-*.md"))
-    if len(migration_cards) == 1:
-        name = migration_cards[0].stem
-        return name.removeprefix("migration-")
     return None
 
 
@@ -685,8 +697,10 @@ def resolved_version(args: argparse.Namespace, repo_root: Path) -> str | None:
     return getattr(args, "version", None) or infer_version(repo_root)
 
 
-def migration_card(repo_root: Path, version: str) -> Path:
-    return repo_root / "docs/fork" / f"migration-{version}.md"
+def migration_map_path(repo_root: Path, version: str) -> Path:
+    """Возвращает путь JSON-карты для явно определённой версии."""
+
+    return migration_map_model.migration_map_path(repo_root, version)
 
 
 def check_branch(session: LogSession, version: str, skip_branch_check: bool) -> int:
@@ -703,49 +717,33 @@ def check_branch(session: LogSession, version: str, skip_branch_check: bool) -> 
     return session.fail(label=label)
 
 
-def check_migration_card_exists(session: LogSession, path: Path) -> int:
-    label = "migration card exists"
+def check_migration_map_ready(session: LogSession, version: str) -> int:
+    """Проверяет карту и отсутствие незавершённых карточек перед heavy gates."""
+
+    label = "migration map ready"
     print()
     print(f"==> {label}")
     session.log_command(label)
+    path = migration_map_path(session.repo_root, version)
     session.write(f"path: {path}\n")
-    if path.exists():
-        print("OK")
-        return 0
-    return session.fail(label=label)
-
-
-def check_unfinished_migration_rows(session: LogSession, path: Path) -> int:
-    statuses = "|".join(
-        re.escape(status).replace(r"\ ", " ") for status in BLOCKING_MIGRATION_STATUSES
+    value, errors = migration_cli.load_validated_migration_map(
+        session.repo_root, version
     )
-    return session.rg_no_match(
-        "unfinished migration rows",
-        rf"\| [^|]*\.md[^|]* \| [^|]*({statuses})[^|]* \|",
-        [str(path)],
-    )
-
-
-def check_reverted_card_row(session: LogSession, path: Path) -> int:
-    label = "reverted card row"
-    pattern = r"^\| [^|]*multi-agent-v2-task-depth\.md[^|]* \|"
-    rg = session.check_command("rg")
-    if not rg:
-        return session.fail(label="require command: rg")
-
-    print()
-    print(f"==> {label}")
-    status, stdout, stderr = session.run_capture(label, [rg, "-n", pattern, str(path)])
-    if status == 1 or "reverted" in stdout:
-        print("OK")
-        return 0
-    if status == 0:
-        if stdout:
-            print(stdout, end="")
+    if value is not None and not errors:
+        cards = value["cards"]
+        assert isinstance(cards, list)
+        for card in cards:
+            assert isinstance(card, Mapping)
+            if card.get("status") not in migration_map_model.FINAL_CARD_STATUSES:
+                errors.append(
+                    f"unfinished migration card: {card.get('id')} [{card.get('status')}]"
+                )
+    for error in errors:
+        session.write(f"{error}\n")
+    if errors:
         return session.fail(label=label)
-    if stderr:
-        print(stderr, end="", file=sys.stderr)
-    return session.fail(label=label, exit_code=status)
+    print("OK")
+    return 0
 
 
 def run_preconditions(
@@ -753,24 +751,24 @@ def run_preconditions(
     session: LogSession,
     version: str | None,
     skip_branch_check: bool,
-    require_migration_card: bool,
+    require_migration_map: bool,
 ) -> int:
+    """Проверяет общие требования heavy gate и готовность выбранной JSON-карты."""
+
     for command in ("git", "rg", "just", "cargo"):
         if not session.check_command(command):
             return session.fail(label=f"require command: {command}")
 
-    if not require_migration_card:
+    if not require_migration_map:
         return 0
 
     if not version:
         session.write("migration version could not be inferred\n")
         return session.fail(label="resolve migration version")
 
-    card = migration_card(session.repo_root, version)
     for check in (
-        lambda: check_migration_card_exists(session, card),
         lambda: check_branch(session, version, skip_branch_check),
-        lambda: check_unfinished_migration_rows(session, card),
+        lambda: check_migration_map_ready(session, version),
     ):
         result = check()
         if result != 0:
@@ -868,7 +866,9 @@ def remove_subsection(section: str, heading: str) -> str:
     if not match:
         return section
 
-    next_match = re.search(rf"^{re.escape(marker)}\s+", section[match.end() :], re.MULTILINE)
+    next_match = re.search(
+        rf"^{re.escape(marker)}\s+", section[match.end() :], re.MULTILINE
+    )
     end = match.end() + next_match.start() if next_match else len(section)
     return section[: match.start()] + section[end:]
 
@@ -1014,8 +1014,12 @@ def cmd_check_source_coverage(args: argparse.Namespace) -> int:
 
     rows = legacy_script_rows(text)
     current_scripts = current_legacy_scripts(repo_root)
-    missing_current_scripts = [script for script in current_scripts if script not in rows]
-    missing_retired_scripts = [script for script in RETIRED_LEGACY_SCRIPTS if script not in rows]
+    missing_current_scripts = [
+        script for script in current_scripts if script not in rows
+    ]
+    missing_retired_scripts = [
+        script for script in RETIRED_LEGACY_SCRIPTS if script not in rows
+    ]
     invalid_script_rows = []
 
     for script, (command, status, note) in rows.items():
@@ -1154,7 +1158,9 @@ def strict_card_validation_errors(path: Path) -> list[str]:
 
     for subsection in STRICT_CHECK_SUBSECTIONS:
         if not subsection_text(checks, subsection):
-            errors.append(f"active card missing strict `Проверки` subsection: {subsection}")
+            errors.append(
+                f"active card missing strict `Проверки` subsection: {subsection}"
+            )
 
     owner = subsection_text(checks, "Владелец исполняемой карты")
     has_fork_tests_owner = "`fork tests`" in owner or "fork tests" in owner
@@ -1190,7 +1196,10 @@ def cmd_cards_validate(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     cards = fork_doc_paths(repo_root)
     if not cards:
-        print(f"ERROR: no fork cards found under {repo_root / 'docs/fork'}", file=sys.stderr)
+        print(
+            f"ERROR: no fork cards found under {repo_root / 'docs/fork'}",
+            file=sys.stderr,
+        )
         return 2
 
     failures = []
@@ -1291,18 +1300,17 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             session.write("migration version could not be inferred\n")
             return session.fail(label="resolve migration version")
 
-        card = migration_card(repo_root, version)
         for check in (
             lambda: check_branch(session, version, args.skip_branch_check),
-            lambda: check_migration_card_exists(session, card),
-            lambda: check_unfinished_migration_rows(session, card),
-            lambda: check_reverted_card_row(session, card),
+            lambda: check_migration_map_ready(session, version),
         ):
             result = check()
             if result != 0:
                 return result
 
-        result = session.run_step("git diff whitespace check", ["git", "diff", "--check"])
+        result = session.run_step(
+            "git diff whitespace check", ["git", "diff", "--check"]
+        )
         if result != 0:
             return result
 
@@ -1382,7 +1390,10 @@ def cmd_generators(args: argparse.Namespace) -> int:
 
     for label, argv in (
         ("config schema", [just, "write-config-schema"]),
-        ("app-server experimental schema", [just, "write-app-server-schema", "--experimental"]),
+        (
+            "app-server experimental schema",
+            [just, "write-app-server-schema", "--experimental"],
+        ),
         ("app-server schema", [just, "write-app-server-schema"]),
     ):
         result = session.run_step(label, argv)
@@ -1420,19 +1431,23 @@ def cmd_tests(args: argparse.Namespace) -> int:
             print(f"{test.card_id:<36} {test.purpose:<24} {shell_quote(test.argv)}")
         return 0
 
-    session = LogSession(repo_root=repo_root, log_kind="test", mode=args.mode, version=version)
+    session = LogSession(
+        repo_root=repo_root, log_kind="test", mode=args.mode, version=version
+    )
     result = run_preconditions(
         session=session,
         version=version,
         skip_branch_check=args.skip_branch_check,
-        require_migration_card=True,
+        require_migration_map=True,
     )
     if result != 0:
         return result
 
     if args.mode == "cards":
         for test in selected_tests:
-            result = session.run_step(f"{test.card_id}: {test.purpose}", list(test.argv))
+            result = session.run_step(
+                f"{test.card_id}: {test.purpose}", list(test.argv)
+            )
             if result != 0:
                 return result
         return session.ok()
@@ -1442,7 +1457,10 @@ def cmd_tests(args: argparse.Namespace) -> int:
         return session.fail(label="require command: just")
     for label, argv in (
         ("full test suite", [just, "test"]),
-        ("tui pending snapshots", ["cargo", "insta", "pending-snapshots", "-p", "codex-tui"]),
+        (
+            "tui pending snapshots",
+            ["cargo", "insta", "pending-snapshots", "-p", "codex-tui"],
+        ),
     ):
         result = session.run_step(label, argv)
         if result != 0:
@@ -1453,13 +1471,15 @@ def cmd_tests(args: argparse.Namespace) -> int:
 def cmd_build_fast(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     version = resolved_version(args, repo_root)
-    session = LogSession(repo_root=repo_root, log_kind="build", mode="build-fast", version=version)
+    session = LogSession(
+        repo_root=repo_root, log_kind="build", mode="build-fast", version=version
+    )
 
     result = run_preconditions(
         session=session,
         version=version,
         skip_branch_check=args.skip_branch_check,
-        require_migration_card=True,
+        require_migration_map=True,
     )
     if result != 0:
         return result
@@ -1502,7 +1522,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     )
     try:
         target_path = (
-            resolve_path_arg(args.target, repo_root) if args.target else default_install_target()
+            resolve_path_arg(args.target, repo_root)
+            if args.target
+            else default_install_target()
         )
     except ValueError as exc:
         session.write(f"{exc}\n")
@@ -1601,6 +1623,8 @@ def build_parser() -> argparse.ArgumentParser:
     cards_validate = cards_sub.add_parser("validate")
     cards_validate.add_argument("--repo-root")
     cards_validate.set_defaults(func=cmd_cards_validate)
+
+    migration_cli.add_migration_parser(sub)
 
     preflight = sub.add_parser("preflight")
     preflight.add_argument("--skill-only", action="store_true")
