@@ -34,7 +34,7 @@ Structural coverage по-прежнему не доказывает семант
 | До switch skill проходил review; после switch skill является активным владельцем workflow | перенесено | `SKILL.md`, этот файл |
 | В новом workflow не закреплять host-specific зависимость | перенесено | `references/local-development.md` |
 | Source of truth формулировать как текущий локальный checkout | перенесено | `references/local-development.md` |
-| Новые source/task-owned файлы должны попадать в Git index минимум через `git add -N`; build artifacts и unrelated untracked не добавляются | перенесено | `references/fork-rules.md`, `references/local-development.md`, `references/checks-and-gates.md`, `scripts/fork_cli.py` |
+| Новые source/task-owned файлы должны попадать в Git index минимум через `git add -N`; подагент может точечно добавить созданный им новый файл или полностью разрешённый конфликт своей карточки; build artifacts и unrelated untracked не добавляются | перенесено с нормализацией | `references/fork-rules.md`, `references/local-development.md`, `references/checks-and-gates.md`, `references/subagent-one-card.md`, `references/parent-migration.md`, `assets/templates/parent-subagent-prompt.md`, `scripts/fork_cli.py` |
 | Структурную полноту переноса проверять coverage artifact и script | перенесено | этот файл, `scripts/fork check-source-coverage` |
 | Семантическую полноту переноса проверять отдельным independent audit | перенесено | `SKILL.md`, этот файл |
 
@@ -91,7 +91,7 @@ Structural coverage по-прежнему не доказывает семант
 | `# Инструкция для подагента: одна fork-карточка` | `references/subagent-one-card.md` | перенесено с нормализацией | Родитель назван parent-only references, `FORK.md` запрет сохранен |
 | `## Главное правило` | `references/subagent-one-card.md` | перенесено | Смысл и handoff-обязанность перенесены |
 | `## Что читать` | `references/subagent-one-card.md` | перенесено | Список разрешенных источников перенесен |
-| `## Что запрещено` | `references/subagent-one-card.md` | перенесено с нормализацией | Добавлен запрет читать parent-only references, legacy `FORK.md` запрет сохранен |
+| `## Что запрещено` | `references/subagent-one-card.md` | перенесено с нормализацией | Добавлен запрет читать parent-only references; полный запрет `git add` заменён точечным исключением для новых файлов и полностью разрешённых конфликтов выбранной карточки; `commit`, `push` и широкие Git-операции по-прежнему запрещены |
 | `## Рабочий порядок` | `references/subagent-one-card.md` | перенесено | Шаги перенесены |
 | `## Формат отчета` | `references/subagent-one-card.md` | перенесено с нормализацией | Parent-only граница добавлена в старое подтверждение, лимит 12 пунктов сохранен |
 
