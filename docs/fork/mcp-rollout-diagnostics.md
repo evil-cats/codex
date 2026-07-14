@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: active
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-07-14
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -310,10 +310,30 @@ runtime evidence, а не пользовательским событием по
 хранит машиночитаемый блок `fork-tests.v1`; внутренние `argv` ниже являются
 данными для `fork tests`, а не пользовательским runbook прямого запуска.
 
+Первый шаг исполняемой карты собирает тестовый бинарник `test_stdio_server` из
+пакета `codex-rmcp-client`. Это обязательное предусловие для двух последующих
+тестов `codex-core`: запуск с фильтром пакета `codex-core` не собирает бинарник
+другого пакета, а `cargo_bin("test_stdio_server")` ожидает резервный путь
+`codex-rs/target/debug/test_stdio_server`, если Cargo не передал
+`CARGO_BIN_EXE_test_stdio_server`.
+
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
+    {
+      "purpose": "mcp stdio fixture binary",
+      "argv": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "codex-rs/Cargo.toml",
+        "-p",
+        "codex-rmcp-client",
+        "--bin",
+        "test_stdio_server"
+      ]
+    },
     {
       "purpose": "mcp rollout diagnostic reconstruction",
       "argv": [
@@ -377,7 +397,7 @@ runtime evidence, а не пользовательским событием по
 | Source audit `RolloutItem` | `found` | Rollout уже содержит служебные элементы, не являющиеся `ResponseItem` |
 | Source audit `rollout_reconstruction` | `found` | Служебные rollout items могут быть явно проигнорированы при model history replay |
 | Runtime discussion | `accepted` | MCP-вызовы считаются идемпотентными для recovery/retry policy |
-| `fork tests --mode list --card docs/fork/mcp-rollout-diagnostics.md` | `ok` | Исполняемая карта содержит 4 проверки |
+| `fork tests --mode list --card docs/fork/mcp-rollout-diagnostics.md` | `ok` | Исполняемая карта содержит подготовку `test_stdio_server` и 4 проверки |
 | `fork tests --mode cards --card docs/fork/mcp-rollout-diagnostics.md` | `ok` | Прошли reconstruction, transport recovery, lazy process recovery и stderr-tail tests |
 | `fork cards validate` | `ok` | `cards_checked: 22`, `card_errors: 0` |
 | `fork format --check` | `ok` | Rust formatting gate прошел после реализации |
@@ -390,6 +410,12 @@ runtime evidence, а не пользовательским событием по
 
 - Runtime smoke на установленном fork-бинаре отдельно не выполнялся. Покрытие
   recovery path подтверждено card-level integration tests.
+- При миграции на `rust-v0.144.4` проверка уровня карточки остановилась до теста
+  восстановления: запуск с фильтром пакета `codex-core` не собрал
+  `test_stdio_server`, поэтому `cargo_bin("test_stdio_server")` не нашёл бинарник
+  по резервному пути. Исполняемая карта теперь готовит тестовый бинарник
+  отдельным шагом с остановкой при ошибке перед тестами `codex-core`; проверку
+  уровня карточки нужно повторить в общем проверочном проходе.
 - Текущая установленная версия может продолжать терять stderr в SQLite
   retention; эта карточка не исправляет уже произошедшие rollouts.
 - Если future implementation решит хранить полный stderr artifact рядом с

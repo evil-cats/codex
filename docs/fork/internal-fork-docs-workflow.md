@@ -2,7 +2,7 @@
 id: fork-internal-docs-workflow
 status: active
 created: 2026-06-08
-updated: 2026-07-10
+updated: 2026-07-14
 source_scope: rust-v0.141.0..hermione-0.141.0
 ---
 
@@ -14,7 +14,7 @@ source_scope: rust-v0.141.0..hermione-0.141.0
 документацию Hermione fork внутри `docs/`, не превращая ее в пользовательскую
 документацию upstream Codex.
 
-В текущем checkout после слияния `rust-v0.144.1` обязательные каталоги
+В текущем checkout после слияния `rust-v0.144.4` обязательные каталоги
 `docs/architecture`, `docs/plans`, `docs/follow-ups` и `docs/backlog` не
 восстанавливаются. Они остаются историческим контекстом раннего workflow, но не
 являются требованием к текущему checkout. Текущие handoff-документы fork
@@ -80,7 +80,8 @@ the app-server guidance below.
 | Файл | Роль |
 | --- | --- |
 | `AGENTS.md` | Уточняет границу между upstream product docs и внутренними fork-docs |
-| `docs/fork/*.md` | Живые handoff-карточки fork-доработок и migration-карты |
+| `docs/fork/*.md` | Живые handoff-карточки fork-доработок |
+| `docs/fork/migration/<version>.json` | Одноразовая машинная карта покрытия релизной миграции |
 | Project skill `fork` | Workflow, checks, templates и инструкция для подагента одной fork-карточки |
 | `docs/.markdownlint-cli2.yaml` | Локальная markdownlint-конфигурация для внутренних документов |
 | `docs/table-rendering-long-links-test.md` | Временный визуальный fixture для длинных Markdown-ссылок в таблицах |
@@ -117,8 +118,10 @@ the app-server guidance below.
 - для новой кодовой fork-доработки обновлять или создавать owner-карточку в
   `docs/fork/` по правилам project skill `fork`;
 - для релизных миграций использовать соответствующую
-  `docs/fork/migration-X.Y.Z.md` как таблицу покрытия, а project skill `fork`
-  как workflow для подагента одной карточки;
+  `docs/fork/migration/<version>.json` как машинную карту покрытия, а project
+  skill `fork` — как владельца рабочего процесса родительского агента и
+  подагента; обновлять статус карточки через skill-owned
+  `fork migration set-card-status`, а не прямой правкой JSON;
 - не восстанавливать старые каталоги `docs/architecture`, `docs/plans`,
   `docs/follow-ups` и `docs/backlog` механически;
 - при появлении нового документационного каталога сразу определить его назначение,
@@ -191,7 +194,7 @@ config:
 
 Инвентаризация в режиме чтения для исторических docs-каталогов нашла
 существующие lint issues в committed fork docs. В текущей миграции на
-`rust-v0.144.1` эти пути могут отсутствовать; не восстанавливай их только ради
+`rust-v0.144.4` эти пути могут отсутствовать; не восстанавливай их только ради
 этой карточки. Заметки ниже - контекст для будущей очистки, если эти каталоги
 снова появятся или будут проверяться по старой истории:
 
@@ -237,8 +240,9 @@ fork-specific внутренних документов в `docs/`.
 - создать или обновить owner-карточку в `docs/fork/`;
 - держать карточку синхронизированной с runtime-поведением, тестами,
   config/schema, prompts и известным статусом проверки;
-- для релизных миграций обновлять соответствующую строку и секцию в
-  `docs/fork/migration-X.Y.Z.md`.
+- для релизных миграций после отчета подагента обновлять машинный статус
+  соответствующей записи `docs/fork/migration/<version>.json` через skill-owned
+  `fork migration set-card-status`, не редактируя JSON вручную.
 
 ### 4. Создавать новые каталоги только при необходимости
 
@@ -355,7 +359,7 @@ git diff --check
 - Исторические lint issues перечислены в разделе `Исторические lint-заметки`:
   `MD038/no-space-in-code`, `MD056/table-column-count` и unused reference
   definitions в legacy docs-каталогах.
-- В текущей миграции на `rust-v0.144.1` legacy paths могут отсутствовать; не
+- В текущей миграции на `rust-v0.144.4` legacy paths могут отсутствовать; не
   восстанавливай `docs/architecture`, `docs/plans`, `docs/follow-ups` или
   `docs/backlog` только ради этой карточки.
 - Простой markdownlint-вызов с config может проверить ноль файлов; для реальной

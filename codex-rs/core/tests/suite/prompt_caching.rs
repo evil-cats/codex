@@ -202,6 +202,7 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         "update_plan",
         "get_system_time",
         "get_thread_info",
+        "read_file",
         "request_user_input",
         "apply_patch",
         "view_image",

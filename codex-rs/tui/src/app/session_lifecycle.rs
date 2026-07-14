@@ -269,7 +269,7 @@ impl App {
         }
 
         let (session, turns, live_attached) = match app_server
-            .resume_thread(self.config.clone(), thread_id)
+            .resume_thread(self.config.clone(), thread_id, self.resume_model_settings())
             .await
         {
             Ok(started) => (started.session, started.turns, true),
@@ -793,7 +793,11 @@ impl App {
         );
         let old_runtime_thread_ids = self.tracked_runtime_thread_ids();
         match app_server
-            .resume_thread(resume_config.clone(), target_session.thread_id)
+            .resume_thread(
+                resume_config.clone(),
+                target_session.thread_id,
+                self.resume_model_settings(),
+            )
             .await
         {
             Ok(resumed) => {

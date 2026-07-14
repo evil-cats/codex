@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-10
+updated: 2026-07-14
 source_scope: working-tree
 ---
 
@@ -155,7 +155,8 @@ thread и чтение текущего времени host. Но если эт�
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
-| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools с activity item, компактный `detail`, raw `arguments`, lifecycle started/completed и status |
+| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет, что `read_file detail` использует `environment_id` и path convention выбранного foreign `PathUri`, а не primary cwd текущего host |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает выполнение подходящих core function tools событиями `emit_turn_item_started` и `emit_turn_item_completed` без изменения model-visible `FunctionCallOutput` |
 | `codex-rs/core/src/tools/mod.rs` | Подключает модуль `core_tool_activity` |
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Экспортирует v2 `ThreadItem::CoreToolActivity`, wire enums, `id()` и conversion из core `TurnItem` |
@@ -254,10 +255,15 @@ shell-read renderer может продолжать писать `Read`, пот�
 Правила:
 
 - путь берется из аргумента `path`;
-- обычная история TUI показывает только короткое имя файла, извлеченное из
-  `path` по смыслу старого shell `Read`: последний значимый компонент пути, без
-  префикса workspace/root и без служебных сегментов вроде `src`, `build`,
-  `dist` или `node_modules`;
+- при явном `environment_id` путь для `detail` разрешается относительно cwd
+  выбранной step environment через `PathUri`; это сохраняет foreign path
+  convention и показывает фактический basename прочитанного файла;
+- обычная история TUI показывает basename разрешённого файла; если имя самого
+  файла совпадает со служебным именем каталога вроде `src`, оно не отбрасывается;
+- если путь нельзя разрешить через environment `PathUri`, fallback сокращает
+  исходный `path` по смыслу старого shell `Read`: оставляет последний значимый
+  компонент без префикса workspace/root и служебных сегментов вроде `src`,
+  `build`, `dist` или `node_modules`;
 - `start_line` и `end_line` не добавляются в компактную историю;
 - последовательные события `read_file` activity коалессятся в один
   блок `Exploring`/`Explored`, пока поток работы не прерывается другим видимым
@@ -394,7 +400,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | App-server v2 | `ThreadItem::CoreToolActivity` |
 | Kind | `File`, `ThreadInfo`, `SystemTime` |
 | Status | `InProgress`, `Completed`, `Failed` |
-| Detail | Короткая строка, вычисленная из аргументов: имя файла для `read_file`, `current`, `local`, `utc` или фиксированный offset |
+| Detail | Короткая строка, вычисленная из аргументов: basename файла для `read_file`, разрешенный через выбранную step environment, `current`, `local`, `utc` или фиксированный offset |
 | Raw diagnostics | `tool_name` и `arguments` сохраняются в structured payload |
 
 Главный инвариант: model-visible output остается `FunctionCallOutput`, а TUI
@@ -427,7 +433,10 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 7. Для `read_file` в компактной истории показывать короткое имя файла без
    диапазонов строк; коалесить соседние `File` activity в один блок без
    повторов и приклеивать `File` к текущему exploration-блоку shell
-   `Search`/`List`/`Read`, если он еще активен в transcript tail.
+   `Search`/`List`/`Read`, если он еще активен в transcript tail. Если указан
+   `environment_id`, разрешать путь через cwd той же step environment, которую
+   выбирает handler, чтобы не интерпретировать foreign path по правилам primary
+   host.
 8. Поддержать completed-only replay: если сохраненная thread history уже
    схлопнула `ItemStarted`/`ItemCompleted` в completed item, соседние `File`
    entries должны группироваться так же, как live start/completion flow.
@@ -454,6 +463,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | --- | --- | --- |
 | `read_file` отображается как `Exploring/Explored -> File` | `required` | TUI snapshot `active_core_tool_activity_read_file_snapshot` |
 | `read_file` в компактной истории показывает короткое имя файла без префикса пути | `required` | TUI snapshots `active_core_tool_activity_read_file_snapshot` и сгруппированная `File` activity |
+| `read_file` с явным `environment_id` берет basename по path convention выбранной step environment, включая foreign Windows `PathUri` | `required` | core test `read_file_detail_uses_selected_environment_path_convention` |
 | `read_file` в компактной истории не показывает `:start-end` диапазоны строк | `required` | TUI snapshots для одиночной и сгруппированной `File` activity |
 | Последовательные `read_file` calls коалессятся в один блок `File` | `required` | TUI lifecycle test `sequential_core_tool_activity_files_coalesce_in_active_cell` |
 | `read_file` коалесится с текущим shell exploration-блоком `Search`/`List`/`Read` и для `Exploring`, и для `Explored` | `required` | TUI lifecycle test `core_tool_activity_file_coalesces_with_exec_exploration_cell` |
@@ -474,12 +484,16 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 
 | Владелец | Метка | Статус |
 | --- | --- | --- |
-| `fork tests` | `fork-tui-core-tool-activity` | `required`: исполняемая карта содержит TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
+| `fork tests` | `fork-tui-core-tool-activity` | `required`: исполняемая карта содержит core activity path detail, TUI snapshots, app-server replay, protocol item model, analytics reducer и pending snapshots |
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
+    {
+      "purpose": "core activity path detail",
+      "argv": ["just", "test", "-p", "codex-core", "core_tool_activity"]
+    },
     {
       "purpose": "tui snapshots and lifecycle",
       "argv": ["just", "test", "-p", "codex-tui", "core_tool_activity"]
@@ -570,11 +584,15 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork cards validate` после исправления completed-only replay | `ok` | Проверка карточек прошла: `cards_checked: 19`, `card_errors: 0` |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и проверен |
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
+| Миграционный проход `rust-v0.144.4`: environment-aware `read_file detail` | `resolved-current-pass` | Activity выбирает ту же step environment по `environment_id`, что и handler, и получает basename через ее `PathUri`; добавлен regression test с foreign Windows cwd |
+| Миграционный проход `rust-v0.144.4`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow форматирование, card-level tests, generators и сборка переданы parent-agent |
 
 ### Известные падения и пропуски
 
-- Актуальных падений card-level checks, проверки карточек, форматирования и
-  быстрой сборки нет.
+- До текущего миграционного прохода актуальных падений card-level checks,
+  проверки карточек, форматирования и быстрой сборки не было.
+- Для точечного исправления `read_file detail` текущие проверки не запускались:
+  их выполняет parent-agent после объединения subagent-изменений.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
   `CoreToolActivity` в app-server thread history, exhaustive match в
   `codex-analytics`, неверный TUI test filter и внешний `.snap.new` вместо
@@ -619,6 +637,9 @@ wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
   карточки требуют отдельной синхронизации.
 - Видимость не должна раскрывать лишний полный path, если текущий TUI обычно
   показывает workspace-relative или compact path.
+- `read_file detail` нельзя вычислять через primary cwd, если handler выбрал
+  другую environment: host-native разбор foreign path может показать соседний
+  сегмент вместо basename реально прочитанного файла.
 
 ## Проверка покрытия
 
@@ -627,6 +648,7 @@ wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
 | Новая доработка оформлена отдельно от runtime-контрактов core tools | `перенесено в карточку` | `Обзор`, `Карта файлов`, `Архитектурное решение` |
 | `read_file` должен отображаться как `Exploring/Explored -> File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
 | `read_file` должен показывать в компактной истории короткие имена файлов без префикса пути | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки` |
+| `read_file detail` должен использовать `environment_id` и path convention выбранной step environment | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение`, `Проверки`, `Риски и ограничения` |
 | `read_file` не должен показывать номера строк в компактной истории | `перенесено в карточку` | `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
 | Последовательные `read_file` calls должны коалеситься в один блок `File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
 | `read_file` должен коалеситься с текущим shell exploration-блоком `Search`/`List`/`Read` для `Exploring` и `Explored` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |

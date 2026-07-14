@@ -194,6 +194,55 @@ async fn read_file_tool_reads_utf8_file_with_line_metadata() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_tool_routes_to_selected_step_environment() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config.read_file_content_max_tokens = 10_000;
+    });
+    let fixture = builder.build(&server).await?;
+    let selected_cwd = fixture.config.cwd.join("selected-read-file-cwd");
+    fs::create_dir_all(&selected_cwd).context("create selected read_file cwd")?;
+    fs::write(selected_cwd.join("selected.txt"), "selected environment\n")
+        .context("write selected read_file fixture")?;
+
+    let call_id = "read-file-selected-environment";
+    let args = json!({ "path": "selected.txt" });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(call_id, "read_file", &serde_json::to_string(&args)?),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    fixture
+        .submit_turn_with_environments(
+            "read from the selected environment",
+            Some(vec![local(selected_cwd)]),
+        )
+        .await?;
+
+    assert_eq!(
+        mock.function_call_output_text(call_id)
+            .context("read_file output present")?,
+        "ReadFile: selected.txt\nLines: total=1 requested=1-1 returned=1-1 complete=yes\nLineNumbers: yes\n\n1 | selected environment\n"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn custom_tool_unknown_returns_custom_output_error() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

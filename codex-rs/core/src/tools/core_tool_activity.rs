@@ -1,3 +1,4 @@
+use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::read_file_spec::READ_FILE_TOOL_NAME;
@@ -62,18 +63,14 @@ fn core_tool_activity_item(
     };
     let arguments_json = parse_arguments_json(arguments);
     let (kind, detail) = match invocation.tool_name.name.as_str() {
-        READ_FILE_TOOL_NAME => {
-            let cwd = invocation
-                .turn
-                .environments
-                .primary()
-                .and_then(|environment| environment.cwd().to_abs_path().ok())
-                .unwrap_or_else(|| invocation.turn.config.cwd.clone());
-            (
-                CoreToolActivityKind::File,
-                read_file_detail(&arguments_json, cwd.as_path()),
-            )
-        }
+        READ_FILE_TOOL_NAME => (
+            CoreToolActivityKind::File,
+            read_file_detail(
+                &arguments_json,
+                &invocation.step_context.environments,
+                invocation.turn.config.cwd.as_path(),
+            ),
+        ),
         GET_THREAD_INFO_TOOL_NAME => (
             CoreToolActivityKind::ThreadInfo,
             thread_info_detail(&arguments_json),
@@ -104,9 +101,29 @@ fn parse_arguments_json(arguments: &str) -> JsonValue {
     serde_json::from_str(arguments).unwrap_or_else(|_| JsonValue::String(arguments.to_string()))
 }
 
-fn read_file_detail(arguments: &JsonValue, cwd: &Path) -> String {
+fn read_file_detail(
+    arguments: &JsonValue,
+    environments: &TurnEnvironmentSnapshot,
+    fallback_cwd: &Path,
+) -> String {
     let path = string_arg(arguments, "path").unwrap_or("unknown");
-    display_file_arg(path, cwd)
+    let environment = string_arg(arguments, "environment_id").map_or_else(
+        || environments.primary(),
+        |environment_id| {
+            environments
+                .turn_environments
+                .iter()
+                .find(|environment| environment.environment_id == environment_id)
+        },
+    );
+    if let Some(resolved_path) =
+        environment.and_then(|environment| environment.cwd().join(path).ok())
+        && let Some(basename) = resolved_path.basename()
+    {
+        return basename;
+    }
+
+    display_file_arg(path, fallback_cwd)
 }
 
 fn thread_info_detail(arguments: &JsonValue) -> String {
@@ -170,3 +187,7 @@ fn short_display_path(path: &str) -> String {
         .map(str::to_string)
         .unwrap_or_else(|| trimmed.to_string())
 }
+
+#[cfg(test)]
+#[path = "core_tool_activity_tests.rs"]
+mod tests;

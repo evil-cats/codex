@@ -1,5 +1,7 @@
 //! App-level orchestration tests for the TUI.
 
+#[path = "tests/advanced_reasoning_tests.rs"]
+mod advanced_reasoning_tests;
 mod model_catalog;
 mod plugin_catalog;
 mod session_summary;
@@ -5790,7 +5792,11 @@ async fn fork_current_session_unloads_previous_thread_runtime() -> Result<()> {
         ))
         .await?;
         let resumed = app_server
-            .resume_thread(app.config.clone(), source_thread_id)
+            .resume_thread(
+                app.config.clone(),
+                source_thread_id,
+                app.resume_model_settings(),
+            )
             .await?;
         let previous_thread_id = resumed.session.thread_id;
         app.enqueue_primary_thread_session(resumed.session, resumed.turns)

@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-07-08
+updated: 2026-07-14
 source_scope: discussion-2026-07-03
 ---
 
@@ -91,7 +91,7 @@ Owner-файлы реализации:
 | `codex-rs/config/src/config_toml.rs` | Добавляет TOML config `[tools.read_file].content_max_tokens` |
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective config field, default `10_000` и resolver для лимита `read_file` |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
-| `codex-rs/core/tests/suite/tools.rs` | Integration coverage: tool доступен при local environment, отсутствует без environment и возвращает line metadata для UTF-8 fixture |
+| `codex-rs/core/tests/suite/tools.rs` | Интеграционное покрытие: tool доступен при local environment, отсутствует без environment, следует environment выбранного шага и возвращает line metadata для UTF-8 fixture |
 | `codex-rs/core/config.schema.json` | Regenerated schema для `[tools.read_file].content_max_tokens` |
 | `docs/fork/core-read-file-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 
@@ -385,6 +385,7 @@ Error: line 10 exceeds ReadFile content token limit
 | Tool description направляет агента к `read_file` вместо shell-команд чтения для выбранных файлов и диапазонов | `required` | spec tests |
 | `read_file` является environment-backed: скрыт без environment и получает `environment_id` при multiple environments | `required` | tool visibility tests |
 | Tool реально вызывается через mocked Responses flow и возвращает line metadata для UTF-8 fixture | `required` | integration test |
+| `read_file` разрешает `path` через environment выбранного шага без преобразования его `cwd` в путь локального хоста | `required` | integration test и общий remote-environment gate |
 | Prompt/system/developer instructions сверх description решаются после поведенческого тестирования | `deferred` | open question |
 
 ### Владелец исполняемой карты
@@ -431,6 +432,7 @@ Error: line 10 exceeds ReadFile content token limit
 | --- | --- | --- |
 | `rust-v0.142.5` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/config/mod.rs` вокруг `resolve_read_file_content_max_tokens` и upstream `resolve_orchestrator_feature_enabled`; снят конфликтный import в `codex-rs/core/src/config/config_tests.rs`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.143.0` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/tools/spec_plan_tests.rs`: ожидания видимости при нескольких окружениях сохраняют `read_file`, `view_image` и upstream `request_permissions`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
+| `rust-v0.144.4` one-card migration audit | `доработано` | `ReadFileHandler` переведен с устаревшего `turn.environments` на выбранный `step_context.environments`; `path` теперь разрешается через `PathUri` без преобразования `cwd` в путь локального хоста. Добавлен интеграционный тест выбора environment в `step_context`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |
@@ -510,10 +512,13 @@ Bazel lock updates не требовались. `codex-rs/core/BUILD.bazel` ис
 - `read_file` не заменяет поиск по репозиторию: tool description оставляет
   discovery за `rg`, `rg --files` и похожими командами.
 - Sandbox/path semantics реализованы через environment filesystem,
-  `FileSystemSandboxContext` и обычные permission checks. Integration coverage
-  проверяет чтение в local workspace с read-only permission profile; более
-  широкие границы доступа остаются ответственностью существующего filesystem
-  abstraction.
+  `FileSystemSandboxContext` и обычные permission checks. `ReadFileHandler`
+  выбирает environment из `ToolInvocation.step_context.environments` и
+  разрешает `path` через `PathUri`, не преобразуя `cwd` чужого environment в
+  путь локального хоста. Интеграционное покрытие проверяет чтение в local
+  workspace с read-only permission profile и чтение из environment выбранного
+  шага; более широкие границы доступа остаются ответственностью существующей
+  filesystem abstraction и общего remote-environment gate.
 - MVP намеренно ограничен обычными текстовыми UTF-8 файлами; расширение на другие
   форматы должно быть отдельным решением.
 - После поведенческого тестирования фичи нужно вернуться к вопросу, нужны ли

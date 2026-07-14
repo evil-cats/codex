@@ -1,6 +1,6 @@
 [package]
 name = "codex-tui"
-version = "0.144.1+hermione"
+version = "0.144.4+hermione"
 edition.workspace = true
 license.workspace = true
 autobins = false

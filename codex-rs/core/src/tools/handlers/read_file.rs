@@ -1,3 +1,11 @@
+//! Обработчик встроенного tool `read_file`.
+//!
+//! Он выбирает environment текущего шага, разрешает переданный `path` через
+//! `PathUri` выбранного environment и читает обычный текстовый UTF-8 файл через
+//! его filesystem с действующими sandbox-ограничениями. Формирование диапазона,
+//! metadata полноты и усечение по целым строкам остаются локальным контрактом
+//! этого обработчика.
+
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -12,7 +20,6 @@ use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_utils_output_truncation::approx_token_count;
-use codex_utils_path_uri::PathUri;
 use serde::Deserialize;
 
 pub struct ReadFileHandler {
@@ -76,7 +83,12 @@ impl ReadFileHandler {
         &self,
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        let ToolInvocation { turn, payload, .. } = invocation;
+        let ToolInvocation {
+            turn,
+            step_context,
+            payload,
+            ..
+        } = invocation;
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {
@@ -93,26 +105,26 @@ impl ReadFileHandler {
             ));
         }
         let Some(turn_environment) =
-            resolve_tool_environment(&turn.environments, args.environment_id.as_deref())?
+            resolve_tool_environment(&step_context.environments, args.environment_id.as_deref())?
         else {
             return Err(FunctionCallError::RespondToModel(
                 "read_file is unavailable in this session".to_string(),
             ));
         };
 
-        let cwd = turn_environment.cwd().to_abs_path().map_err(|err| {
+        let path_uri = turn_environment.cwd().join(&args.path).map_err(|err| {
             FunctionCallError::RespondToModel(format!(
-                "environment cwd `{}` is not native to the Codex host: {err}",
-                turn_environment.cwd()
+                "unable to resolve file path `{}` against environment cwd `{}`: {err}",
+                args.path,
+                turn_environment.cwd(),
             ))
         })?;
-        let abs_path = cwd.join(&args.path);
+        let model_visible_path = path_uri.inferred_native_path_string();
         let sandbox = turn.file_system_sandbox_context(
             /*additional_permissions*/ None,
             turn_environment.cwd(),
         );
         let fs = turn_environment.environment.get_filesystem();
-        let path_uri = PathUri::from_abs_path(&abs_path);
 
         let metadata = fs
             .get_metadata(&path_uri, Some(&sandbox))
@@ -120,14 +132,14 @@ impl ReadFileHandler {
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
                     "unable to locate file at `{}`: {error}",
-                    abs_path.display()
+                    model_visible_path
                 ))
             })?;
 
         if !metadata.is_file {
             return Err(FunctionCallError::RespondToModel(format!(
                 "read_file path `{}` is not a regular file",
-                abs_path.display()
+                model_visible_path
             )));
         }
 
@@ -137,7 +149,7 @@ impl ReadFileHandler {
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
                     "unable to read UTF-8 text file at `{}`: {error}",
-                    abs_path.display()
+                    model_visible_path
                 ))
             })?;
         let output = read_file_output(&args, &content, turn.config.read_file_content_max_tokens)?;

@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-07-08
+updated: 2026-07-14
 source_scope: working-tree
 ---
 
@@ -21,10 +21,11 @@ runtime-переменные окружения для CLI-команд, зап�
 
 `CODEX_AGENT` заполняется тем же именем агента, которое `get_thread_info`
 возвращает в поле `agent_name`. `CODEX_CALL_ID` совпадает с `call_id`, по
-которому в rollout связаны модельный `FunctionCall`, `ExecCommandBegin`,
-`ExecCommandEnd` и `FunctionCallOutput`. `CODEX_ROLLOUT` дает дочернему процессу
-путь к jsonl-файлу текущего thread, если этот путь удалось получить без
-блокировки запуска команды.
+которому в rollout связаны модельный `FunctionCall`, `ItemStarted` и
+`ItemCompleted` для `CommandExecutionItem`, производные legacy-события
+`ExecCommandBegin` и `ExecCommandEnd`, а также `FunctionCallOutput`.
+`CODEX_ROLLOUT` дает дочернему процессу путь к jsonl-файлу текущего thread, если
+этот путь удалось получить без блокировки запуска команды.
 
 | Поле | Значение |
 | --- | --- |
@@ -47,8 +48,9 @@ runtime-переменные окружения для CLI-команд, зап�
 - если команда запускается из tool invocation, дочерний процесс получает
   `CODEX_CALL_ID=<call_id этого invocation>`;
 - если пользовательская `/shell`-команда запускается вне модельного tool call,
-  дочерний процесс получает UUID `CODEX_CALL_ID`, который затем используется в
-  `ExecCommandBegin` и `ExecCommandEnd`;
+  дочерний процесс получает UUID `CODEX_CALL_ID`, который затем используется
+  как `CommandExecutionItem.id`; производные legacy-события
+  `ExecCommandBegin` и `ExecCommandEnd` сохраняют тот же id;
 - если текущий rollout удалось materialize/read, дочерний процесс получает
   `CODEX_ROLLOUT=<путь к jsonl>`;
 - если rollout materialize/read не удался, команда все равно запускается, а
@@ -124,7 +126,7 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что runtime-переменные вставляются после фильтров policy и перезаписывают родительское окружение |
 | `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command`, используя текущую `turn_context.config.permissions.shell_environment_policy` |
 | `codex-rs/core/src/tools/handlers/shell_tests.rs` | Проверяет expected env через `create_env_with_runtime(...)` |
-| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task, сохраняя upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
+| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task; использует тот же UUID как `CommandExecutionItem.id` и сохраняет upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает runtime-переменные после обертки shell snapshot |
 | `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после snapshot |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session, но не в `local_policy_env` |
@@ -165,7 +167,9 @@ Hermione workflow использует несколько агентов и suba
 
 - для обычного `shell_command` и unified `exec_command`: `ToolInvocation.call_id`;
 - для пользовательской `/shell`-команды: UUID, который генерируется перед
-  сборкой env и затем используется в `ExecCommandBegin`/`ExecCommandEnd`;
+  сборкой env и затем используется как `CommandExecutionItem.id` в
+  `ItemStarted`/`ItemCompleted`; производные legacy-события
+  `ExecCommandBegin`/`ExecCommandEnd` сохраняют тот же id;
 - для shell snapshots: live значение восстанавливается после `source`, если
   snapshot-файл перезаписал переменную.
 
@@ -318,8 +322,9 @@ rg "\"call_id\":\"$CODEX_CALL_ID\"" "$CODEX_ROLLOUT"
 ```
 
 Это находит логически связанные записи, а не конкретный номер строки. В одном
-rollout обычно есть несколько записей с тем же `call_id`: модельный вызов
-tool, `ExecCommandBegin`, `ExecCommandEnd` и output item.
+rollout обычно есть несколько записей с тем же `call_id`: модельный вызов tool,
+`ItemStarted`/`ItemCompleted` с `CommandExecutionItem`, производные
+`ExecCommandBegin`/`ExecCommandEnd` и output item.
 
 ### Отсутствующий rollout path не ломает команду
 
@@ -362,7 +367,9 @@ CODEX_THREAD_ID=thread-1
 
 - `ResponseItem::FunctionCall` уже содержит `call_id`;
 - `ToolInvocation` несет тот же `call_id` в tool handler;
-- `ExecCommandBegin` и `ExecCommandEnd` уже пишут тот же `call_id`;
+- `CommandExecutionItem.id` содержит тот же `call_id`, а
+  `EventMsg::as_legacy_events(...)` переносит его в `ExecCommandBegin` и
+  `ExecCommandEnd`;
 - output item тоже связан тем же `call_id`;
 - строка jsonl является физической позицией append-only файла, а `call_id`
   является логическим ключом команды.
@@ -415,8 +422,10 @@ rollout не удалось получить.
    старый доступ через `turn_context.shell_environment_policy`; использовать
    `turn_context.config.permissions.shell_environment_policy`.
 10. Для `/shell` генерировать UUID `call_id` до сборки env, а потом использовать
-     тот же id в `ExecCommandBegin`/`ExecCommandEnd`, сохраняя upstream-проверку
-     `turn_environment.cwd().to_abs_path()` перед подготовкой snapshot и env.
+    тот же id как `CommandExecutionItem.id` в `ItemStarted`/`ItemCompleted` и
+    производных legacy-событиях `ExecCommandBegin`/`ExecCommandEnd`, сохраняя
+    upstream-проверку `turn_environment.cwd().to_abs_path()` перед подготовкой
+    snapshot и env.
 11. Для unified exec не класть runtime-переменные в `local_policy_env`;
     добавлять их только в runtime env.
 12. Использовать `Session::hook_transcript_path()` для `CODEX_ROLLOUT`, чтобы
@@ -446,7 +455,9 @@ rollout не удалось получить.
 - `shell_command` передает в env имя агента, `ToolInvocation.call_id`,
   `Session.thread_id` и best-effort `Session::hook_transcript_path()`.
 - Пользовательская `/shell`-команда генерирует UUID `CODEX_CALL_ID` до сборки
-  env и использует тот же id в `ExecCommandBegin`/`ExecCommandEnd`.
+  env и использует тот же id как `CommandExecutionItem.id` в
+  `ItemStarted`/`ItemCompleted` и производных legacy-событиях
+  `ExecCommandBegin`/`ExecCommandEnd`.
 - Unified exec добавляет runtime-переменные поверх `local_policy_env`, чтобы
   exec-server overlay видел их как runtime-only изменение.
 - Обертка shell snapshot восстанавливает `CODEX_AGENT`, `CODEX_CALL_ID`,
@@ -609,6 +620,23 @@ rollout не удалось получить.
 
 Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
 запуске 2026-07-08 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
+
+Фактическая проверка 2026-07-14 после merge `rust-v0.144.4`:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/protocol/src/shell_environment.rs` и `codex-rs/core/src/exec_env.rs` | `RuntimeEnv` по-прежнему добавляет `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после shell env policy |
+| `codex-rs/core/src/tasks/user_shell.rs` | Fork-контракт runtime env совмещен с новым upstream-представлением жизненного цикла через `CommandExecutionItem`: UUID создается до сборки env, используется как `CODEX_CALL_ID` и `CommandExecutionItem.id`, а производные legacy-события сохраняют тот же id |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | `shell_command` сохраняет `ToolInvocation.call_id`, общий helper имени агента, best-effort `rollout_path` и актуальный `TurnEnvironment` |
+| `codex-rs/core/src/unified_exec/process_manager.rs` и `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Runtime-переменные идентичности остаются overlay поверх `local_policy_env`; тесты проверяют `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` в runtime-окружении exec-server |
+| `codex-rs/core/src/tools/runtimes/mod.rs` | Обертка shell snapshot восстанавливает полный набор runtime-переменных идентичности после `source` вместе с актуальным permission profile |
+
+Кодовых изменений по этой карточке после проверки 2026-07-14 не потребовалось.
+Карточка уточнена под новое upstream-представление жизненного цикла команд.
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-14 не выполнялись по skill-owned one-card правилу; общий
 агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски

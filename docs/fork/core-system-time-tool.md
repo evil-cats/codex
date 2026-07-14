@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-05
+updated: 2026-07-14
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -465,6 +465,18 @@ snapshot-поверхности, поэтому соответствующие g
 | `just test -p codex-core prompt_tools_are_consistent_across_requests` | `f-ms-dev` | пройдено, 1 test | Новый tool стабилен в списке prompt tools |
 | `just test -p codex-core` | `f-ms-dev` | скомпилировалось, затем завершилось ошибкой на 66 existing remote-infra/sandbox tests | Full suite был попробован, но не является сигналом regression этой доработки |
 | `just build-fast-release` | `f-ms-dev` | пройдено, `codex-cli 0.137.0+hermione` | Release-fast binary собирается с новым tool |
+
+### Миграция на `rust-v0.144.4`
+
+Первый проход теста на уровне карточки
+`prompt_tools_are_consistent_across_requests` завершился ошибкой после того, как
+upstream добавил `read_file` в базовый список инструментов при наличии среды
+выполнения. Оба запроса в этом тесте используют один `TestCodex` с одной средой
+выполнения, а `add_core_utility_tools(...)` регистрирует `ReadFileHandler` при
+`environment_mode.has_environment()`. Поэтому `read_file` должен стабильно
+присутствовать в обоих запросах; ожидаемый список синхронизирован с текущей
+регистрацией. Повторный проход проверки карточки остается за родительским агентом
+и на момент обновления карточки еще не подтвержден.
 
 Удаленная сборка выполнялась на `f-ms-dev` в
 `/home/slader/Projects/codex`. В этом workflow remote является только host
