@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-14
+updated: 2026-07-16
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -512,6 +512,25 @@ Release-fast artifact:
 
 Эта проверка подтверждает именно краткий default output. Она не проверяет все
 ветки `offset` и `full`; для них есть unit tests.
+
+### Миграция на `rust-v0.144.5`
+
+После merge `rust-v0.144.5` owner-файлы и runtime/tool-spec контракт
+`get_system_time` сохранились без изменений: handler и spec подключены через
+`handlers/mod.rs`, `SystemTimeHandler` остается в базовом наборе
+`add_core_utility_tools(...)`, а prompt-cache expectation содержит
+`get_system_time` вместе с актуальным `read_file`.
+
+В текущем upstream-коде также присутствует feature-gated tool
+`clock.curr_time`. Он не заменяет эту fork-доработку: feature
+`current_time_reminder` по умолчанию выключен, tool возвращает только UTC в
+фиксированном формате и не поддерживает контракт `format`/`offset`/`full`.
+Имена tools различаются, поэтому регистрационного конфликта нет.
+
+Миграционный проход ограничен source-level сверкой owner-файлов, runtime,
+unit-test и tool-spec контрактов. Targeted tests, форматирование, генераторы и
+другие project-level проверки подагент не запускал; они остаются за общим
+проверочным проходом родительского агента через skill-owned workflow.
 
 ### Известные падения и пропуски
 

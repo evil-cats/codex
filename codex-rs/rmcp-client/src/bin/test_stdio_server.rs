@@ -750,10 +750,13 @@ impl TestToolServer {
     }
 
     fn flaky_recovery_result() -> Result<CallToolResult, McpError> {
-        if write_state_file_once(
-            "MCP_TEST_TRANSPORT_CLOSE_ONCE_STATE_FILE",
-            "transport-closed",
-        )? {
+        let close_always = std::env::var_os("MCP_TEST_TRANSPORT_CLOSE_ALWAYS").is_some();
+        if close_always
+            || write_state_file_once(
+                "MCP_TEST_TRANSPORT_CLOSE_ONCE_STATE_FILE",
+                "transport-closed",
+            )?
+        {
             eprintln!("mcp flaky_recovery forced transport close");
             let _ = std::io::stderr().flush();
             std::process::exit(86);

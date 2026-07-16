@@ -1108,11 +1108,12 @@ impl RmcpClient {
                 }
                 self.emit_dead_process_diagnostic_if_pending(diagnostic_context.as_ref())
                     .await;
-                if let Some(snapshot) = self.current_stdio_snapshot().await {
+                let failed_snapshot = self.current_stdio_snapshot().await;
+                if let Some(snapshot) = &failed_snapshot {
                     self.emit_mcp_diagnostic(
                         diagnostic_context.as_ref(),
                         event,
-                        &snapshot,
+                        snapshot,
                         None,
                         None,
                         Some(error.to_string()),
@@ -1122,15 +1123,28 @@ impl RmcpClient {
                 self.reinitialize_after_transport_failure(&service, diagnostic_context.as_ref())
                     .await?;
                 let recovered_service = self.service().await?;
-                Self::run_service_operation_with_transient_retries(
+                let replay_result = Self::run_service_operation_with_transient_retries(
                     recovered_service,
                     label,
                     timeout,
                     self.elicitation_pause_state.clone(),
                     &operation,
                 )
-                .await
-                .map_err(Into::into)
+                .await;
+                if let Err(error) = &replay_result
+                    && let Some(snapshot) = self.current_stdio_snapshot().await
+                {
+                    self.emit_mcp_diagnostic(
+                        diagnostic_context.as_ref(),
+                        McpDiagnosticEvent::RecoveryFailed,
+                        &snapshot,
+                        failed_snapshot.map(|snapshot| snapshot.launch_id),
+                        Some(snapshot.launch_id.clone()),
+                        Some(error.to_string()),
+                    )
+                    .await;
+                }
+                replay_result.map_err(Into::into)
             }
         }
     }

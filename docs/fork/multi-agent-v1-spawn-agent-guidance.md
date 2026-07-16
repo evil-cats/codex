@@ -2,7 +2,7 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-10
+updated: 2026-07-16
 source_scope: discussion-2026-07-05..discussion-2026-07-10
 ---
 
@@ -259,6 +259,12 @@ upstream-блок с explicit-request guard и sidecar-work workflow. Прове
 ошибочно требовала восстановить policy-split. По решению пользователя
 `session-policy` не правится; legacy policy text удален из карточки, а V1
 `spawn_agent` prompt и тест синхронизированы с tool-owned guidance.
+
+При переносе на `rust-v0.144.5` V1 `spawn_agent` description, schema и тесты
+уже соответствовали tool-owned контракту карточки, поэтому кодовая правка не
+потребовалась. Поверхность V2, профильные policy-файлы, код и тесты не менялись.
+Команды уровня карточки и проекта в one-card проходе не запускались; они
+остаются для общего проверочного прохода родительского агента.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |

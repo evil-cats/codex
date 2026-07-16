@@ -2,7 +2,7 @@
 id: fork-mcp-stderr-thread-logs
 status: active
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-07-16
 source_scope: investigation-019f41cd-da28-7dc3-b2a5-9438bd0e8bdd
 ---
 
@@ -351,6 +351,21 @@ Card-level проверки запускает skill-owned command `fork tests`.
 | `.codex/skills/fork/scripts/fork tests --mode cards --card fork-mcp-stderr-thread-logs` | `passed` | Прошли `mcp stderr log attribution` и `rmcp stdio call chain` |
 | `.codex/skills/fork/scripts/fork build-fast` | `passed` | Release-fast binary собран и прошел metadata/version checks |
 | `.codex/skills/fork/scripts/fork install` | `passed` | Собранный binary установлен как `${HOME}/.local/bin/codex-hermione` и прошел metadata/version checks |
+| Проверка исходного кода после слияния на `hermione-0.144.5` | `passed` | Сохранены startup span с `thread_id`, явное инструментирование local stderr-reader, одинаковые структурированные поля local/executor stdio, передача `server_name` и регрессионный тест в `codex-state`; проверки уровня проекта оставлены общему проверочному проходу |
+
+### Миграция на `rust-v0.144.5`
+
+После слияния `rust-v0.144.5` контракт карточки сохранился без дополнительных
+кодовых правок. Проверены thread attribution, поля `server_name`, `program`,
+`stderr_line` и `error`, маршруты local/executor stdio, место вызова ресурсов и
+тесты очистки жизненного цикла.
+
+В `codex-rs/rmcp-client/src/rmcp_client.rs` уже находился отдельный
+diff диагностики восстановления MCP в области другой карточки. Он совместим с
+этой доработкой, использует общий `StdioServerDiagnosticState` и намеренно
+оставлен без изменений. Тесты уровня карточки, форматирование, сборка и другие
+проверки уровня проекта в one-card проходе не запускались; их результаты должен
+зафиксировать родительский общий проверочный проход.
 
 ### Известные падения и пропуски
 
@@ -365,10 +380,12 @@ Card-level проверки запускает skill-owned command `fork tests`.
 
 ## Runtime, сборка и установка
 
-В текущем проходе binary собран через `fork build-fast` из
+В проходе первоначальной реализации бинарный файл был собран через
+`fork build-fast` из
 `codex-rs/target/release-fast/codex` и установлен через `fork install` как
-`${HOME}/.local/bin/codex-hermione`. Build и install wrapper checks подтвердили
-metadata и version source, temporary и installed binaries.
+`${HOME}/.local/bin/codex-hermione`. Проверки оберток сборки и установки
+подтвердили метаданные и источник версии временного и установленного бинарных
+файлов.
 
 Для будущей реализации полезен runtime smoke на установленном fork-бинаре:
 

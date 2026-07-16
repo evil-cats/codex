@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-14
+updated: 2026-07-16
 source_scope: working-tree
 ---
 
@@ -586,13 +586,16 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork install` | `ok` | Установлен `/home/slader/.local/bin/codex-hermione` |
 | Миграционный проход `rust-v0.144.4`: environment-aware `read_file detail` | `resolved-current-pass` | Activity выбирает ту же step environment по `environment_id`, что и handler, и получает basename через ее `PathUri`; добавлен regression test с foreign Windows cwd |
 | Миграционный проход `rust-v0.144.4`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow форматирование, card-level tests, generators и сборка переданы parent-agent |
+| Миграционный проход `rust-v0.144.5`: статическая сверка owner-файлов | `preserved-current-pass` | Upstream diff `rust-v0.144.4..rust-v0.144.5` не затрагивает owner-файлы карточки; модель событий core activity, model-visible output, распространение через protocol/app-server/schema/analytics, TUI lifecycle/render/replay/transcript и заявленное тестовое и snapshot-покрытие сохранены без правок кода |
+| Миграционный проход `rust-v0.144.5`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow проверки уровня проекта, принятие snapshots, форматирование, генераторы и сборка не запускались; проверки карточки и общие gates переданы parent-agent |
 
 ### Известные падения и пропуски
 
 - До текущего миграционного прохода актуальных падений card-level checks,
   проверки карточек, форматирования и быстрой сборки не было.
-- Для точечного исправления `read_file detail` текущие проверки не запускались:
-  их выполняет parent-agent после объединения subagent-изменений.
+- В миграционном проходе `rust-v0.144.5` правки кода не потребовались, а
+  проверки уровня проекта не запускались по ограничению subagent one-card flow;
+  их выполняет parent-agent в общем проверочном проходе.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
   `CoreToolActivity` в app-server thread history, exhaustive match в
   `codex-analytics`, неверный TUI test filter и внешний `.snap.new` вместо
@@ -610,9 +613,11 @@ Runtime-проверка этой карточки должна подтверж
 в TUI snapshot coverage; ручная проверка установленного бинарника нужна перед
 установкой или release-fast переносом.
 
-В текущем проходе release-fast binary собран и проверен wrapper-ом
-`fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник установлен
-wrapper-ом `fork install` в `/home/slader/.local/bin/codex-hermione`.
+В последнем полном проверочном проходе release-fast binary был собран и проверен
+wrapper-ом `fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник был
+установлен wrapper-ом `fork install` в
+`/home/slader/.local/bin/codex-hermione`. Миграционный subagent-проход
+`rust-v0.144.5` эти gates не повторял.
 
 ## Риски и ограничения
 

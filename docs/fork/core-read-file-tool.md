@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-07-14
+updated: 2026-07-16
 source_scope: discussion-2026-07-03
 ---
 
@@ -433,6 +433,7 @@ Error: line 10 exceeds ReadFile content token limit
 | `rust-v0.142.5` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/config/mod.rs` вокруг `resolve_read_file_content_max_tokens` и upstream `resolve_orchestrator_feature_enabled`; снят конфликтный import в `codex-rs/core/src/config/config_tests.rs`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.143.0` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/tools/spec_plan_tests.rs`: ожидания видимости при нескольких окружениях сохраняют `read_file`, `view_image` и upstream `request_permissions`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.144.4` one-card migration audit | `доработано` | `ReadFileHandler` переведен с устаревшего `turn.environments` на выбранный `step_context.environments`; `path` теперь разрешается через `PathUri` без преобразования `cwd` в путь локального хоста. Добавлен интеграционный тест выбора environment в `step_context`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
+| `rust-v0.144.5` one-card migration audit | `без доработки` | Контракт `read_file`, owner-файлы, config/schema, регистрация, visibility и integration coverage сохранились после merge; card-scoped конфликтов нет. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |

@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-10
+updated: 2026-07-16
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -337,6 +337,17 @@ rows. Cursor movement внутри одной строки недостаточ�
 `savedPath?: AbsolutePathBuf` в `ThreadItem.ts`: после upstream-выноса оно живет
 в `ImageGenerationItem`.
 
+Заметка для переноса на `rust-v0.144.5`: между upstream-метками
+`rust-v0.144.4` и `rust-v0.144.5` owner-пути этой доработки не менялись.
+Проверка текущего `HEAD` подтвердила сохранение сквозного контракта:
+`view_image` возвращает модели `FunctionCallOutputContentItem::InputImage` и
+отдельно создаёт `ImageViewItem` с `preview_size`; protocol/app-server передают
+`ImagePreviewSize` и `previewSize`; TUI сохраняет доверенную границу
+`InsertLocalImage`, `HistoryCellDisplayItem::LocalImage`, `HyperlinkLine`, пути
+replay/reflow, вставку в терминальную историю, расчёт размера, Kitty virtual
+placement, регрессионные тесты и snapshot-артефакты. Правки кода, схем и
+snapshots для этой миграции не потребовались.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -490,7 +501,9 @@ Explorer нашёл эти имена только в docs, а не как те�
 миграции.
 
 В текущем запуске подагента проверки, сборка, генераторы, форматирование и
-markdownlint не запускались по ограничению задачи.
+markdownlint не запускались по ограничению задачи. Проверки уровня проекта из
+`fork-tests.v1`, gates генераторов и сборки, а также проверка pending snapshots
+переданы родительскому общему проверочному проходу.
 
 ## Ограничения
 

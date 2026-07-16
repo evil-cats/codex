@@ -357,6 +357,102 @@ async fn mcp_transport_closed_persists_diagnostic_and_retries_once() -> anyhow::
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 #[serial(mcp_rollout_diagnostics)]
+async fn mcp_transport_closed_replay_failure_is_not_retried_again() -> anyhow::Result<()> {
+    skip_if_wine_exec!(
+        Ok(()),
+        "requires a Windows test_stdio_server in the Wine-exec environment"
+    );
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let server_name = "rmcp_diag_replay_closed";
+    let call_id = "mcp-diagnostic-replay-closed";
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
+
+    let fixture = test_codex()
+        .with_config(move |config| {
+            insert_mcp_server(
+                config,
+                server_name,
+                stdio_transport(
+                    rmcp_test_server_bin,
+                    Some(HashMap::from([(
+                        "MCP_TEST_TRANSPORT_CLOSE_ALWAYS".to_string(),
+                        "1".to_string(),
+                    )])),
+                ),
+            );
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    core_test_support::wait_for_mcp_server(&fixture.codex, server_name).await?;
+
+    let namespace = format!("mcp__{server_name}");
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("resp-tool"),
+            responses::ev_function_call_with_namespace(call_id, &namespace, "flaky_recovery", "{}"),
+            responses::ev_completed("resp-tool"),
+        ]),
+    )
+    .await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_assistant_message("msg-final", "done"),
+            responses::ev_completed("resp-final"),
+        ]),
+    )
+    .await;
+
+    fixture
+        .codex
+        .submit(read_only_user_turn(
+            &fixture,
+            "call repeatedly failing recovery",
+        ))
+        .await?;
+
+    let end_event = wait_for_event(&fixture.codex, |ev| {
+        matches!(ev, EventMsg::McpToolCallEnd(_))
+    })
+    .await;
+    let EventMsg::McpToolCallEnd(end) = end_event else {
+        unreachable!("event guard guarantees McpToolCallEnd");
+    };
+    assert_eq!(end.call_id, call_id);
+    assert!(end.result.is_err(), "second transport close should escape");
+    wait_for_event(&fixture.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let diagnostics = read_mcp_diagnostics(&fixture).await?;
+    let recovery_failures = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.event == McpDiagnosticEvent::RecoveryFailed)
+        .collect::<Vec<_>>();
+    assert_eq!(recovery_failures.len(), 1);
+    let recovery_failure = recovery_failures[0];
+    assert_eq!(recovery_failure.call_id.as_deref(), Some(call_id));
+    assert_eq!(
+        recovery_failure.tool_name.as_deref(),
+        Some("flaky_recovery")
+    );
+    assert_eq!(recovery_failure.server_name, server_name);
+    assert!(recovery_failure.old_launch_id.is_some());
+    assert!(recovery_failure.new_launch_id.is_some());
+    assert!(
+        recovery_failure
+            .stderr_tail
+            .as_deref()
+            .is_some_and(|tail| tail.contains("mcp flaky_recovery forced transport close")),
+        "replay failure diagnostic should include bounded stderr tail: {recovery_failure:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[serial(mcp_rollout_diagnostics)]
 async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyhow::Result<()> {
     skip_if_wine_exec!(
         Ok(()),

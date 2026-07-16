@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-07-05
+updated: 2026-07-16
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -42,6 +42,7 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/tui/src/bottom_pane/title_setup.rs` | Добавляет terminal title item `SessionLabel` |
 | `codex-rs/tui/src/bottom_pane/status_surface_preview.rs` | Добавляет preview item `SessionLabel` |
 | `codex-rs/tui/src/chatwidget/status_surfaces.rs` | Рендерит label в preview и terminal title |
+| `codex-rs/tui/src/terminal_title.rs` | Санитизирует итоговый title и безопасно пишет или очищает OSC title |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
 | TUI snapshots | Обновляют popup со строкой `session-label` |
 
@@ -85,7 +86,16 @@ items вроде project name, current dir или run state не всегда п
     - если config value отсутствует, item omitted;
     - если value есть, оно truncate'ится через
       `ChatWidget::truncate_terminal_title_part(..., 24)`.
-11. Item должен быть доступен в terminal title selector snapshots.
+11. Итоговая строка terminal title перед OSC-записью проходит централизованную
+    санитизацию в `codex-rs/tui/src/terminal_title.rs`:
+    - управляющие символы и невидимые/bidi форматирующие codepoints удаляются;
+    - последовательности пробельных символов сворачиваются в один пробел;
+    - итог ограничивается 240 символами;
+    - OSC 0 завершается через `BEL`.
+12. Если настроенные items не дают видимого текста, ранее записанный Codex title
+    очищается; успешное значение кэшируется, чтобы не повторять одинаковые
+    OSC-записи.
+13. Item должен быть доступен в terminal title selector snapshots.
 
 ## Пошаговое воспроизведение
 
@@ -168,6 +178,29 @@ TerminalTitleItem::SessionLabel => {
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_mixed.snap`;
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`.
 
+### 7. Сохранить общий lifecycle и escaping terminal title
+
+`session-label` является текстом из config, то есть недоверенным вводом. Не
+добавлять для него отдельную OSC-запись или обход общего пути
+`set_terminal_title`.
+
+`ChatWidget::refresh_terminal_title_from_selections` должен:
+
+- пропускать отсутствующее значение `terminal_title_label` как недоступный
+  сегмент;
+- собирать доступные сегменты в настроенном порядке;
+- очищать ранее записанный Codex title, если список items пуст или итоговая
+  строка отсутствует;
+- передавать непустую строку в `set_terminal_title`;
+- кэшировать title только после результата `Applied`;
+- очищать ранее управляемый title при `NoVisibleContent`;
+- не выполнять повторную OSC-запись, если вычисленное значение не изменилось.
+
+Низкоуровневый `set_terminal_title` владеет санитизацией всей итоговой строки,
+включая значение `session-label`. Этот слой удаляет управляющие и
+невидимые/bidi форматирующие codepoints, нормализует пробельные символы,
+применяет общий лимит длины и кодирует OSC 0 с terminator `BEL`.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -184,6 +217,13 @@ TerminalTitleItem::SessionLabel => {
   runtime-рендеринге.
 - Если значение config отсутствует, сегмент не выводится; если значение есть, строка
   обрезается через `ChatWidget::truncate_terminal_title_part(..., 24)`.
+- Значение label из config не обходит общий безопасный путь terminal title:
+  итоговая строка санитизируется непосредственно перед OSC-записью.
+- Lifecycle terminal title сохраняет cache/clear contract:
+  - одинаковый title повторно не записывается;
+  - пустой настроенный список очищает ранее управляемый title;
+  - `NoVisibleContent` после санитизации также очищает ранее управляемый title;
+  - cache обновляется только после успешного результата `Applied`.
 - Тест `terminal_title_can_include_configured_session_label`:
   - создаёт `ChatWidget`;
   - ставит `chat.config.tui_terminal_title_label = Some("hermione")`;
@@ -196,6 +236,9 @@ TerminalTitleItem::SessionLabel => {
     ```
 
 - Snapshot-тесты показывают новый item `session-label` в selector.
+- Unit tests в `codex-rs/tui/src/terminal_title.rs` проверяют удаление
+  управляющих и невидимых/bidi codepoints, ограничение длины и OSC 0 с
+  terminator `BEL`.
 - Config-тесты обновлены с `terminal_title_label: None` в expected defaults.
 - `codex-rs/core/config.schema.json` содержит schema для
   `terminal_title_label` после обновления config types.
@@ -254,6 +297,10 @@ TerminalTitleItem::SessionLabel => {
   terminal title в `codex-tui`; текущая исполняемая карта сохраняет внутренний argv
   `["just", "test", "-p", "codex-tui", "terminal_title"]` в
   `fork-tests.v1`.
+- После merge `rust-v0.144.5` статическая сверка подтвердила, что этот test
+  target включает проверку контракта настроенного session label и
+  низкоуровневые unit tests санитизации и кодирования OSC в
+  `terminal_title.rs`.
 - Зафиксированное ожидаемое runtime-значение для настроенного session label:
 
   ```text
@@ -282,6 +329,9 @@ TerminalTitleItem::SessionLabel => {
   Будущие переносы должны проверять оба слоя.
 - В исходной карточке не было зафиксированных активных красных результатов для
   terminal title tests, config tests, генерации schema или snapshot review.
+- В one-card проходе после merge `rust-v0.144.5` project-level проверки не
+  запускались по контракту подагента; их должен выполнить общий проверочный
+  проход через skill-owned `fork tests` и при необходимости `fork generators`.
 
 ## Ограничения
 
@@ -291,6 +341,9 @@ TerminalTitleItem::SessionLabel => {
   включает item через `tui.terminal_title`.
 - Не путать `terminal_title_label` с thread title или session id: это статичный
   profile/session label.
+- Не считать ограничение label до 24 символов достаточной защитой OSC: escaping
+  и удаление управляющих/bidi символов принадлежат общему
+  `terminal_title::set_terminal_title`.
 
 ## Риски
 
@@ -299,6 +352,11 @@ TerminalTitleItem::SessionLabel => {
 - Selector snapshots легко устаревают, потому что добавление item меняет список
   в нескольких popup variants.
 - Long labels должны truncate'иться, иначе terminal title становится шумным.
+- Значение label из config может содержать OSC terminators, управляющие или
+  bidi codepoints; перенос не должен обходить централизованную санитизацию
+  `terminal_title.rs`.
+- Изменение clear/cache lifecycle может оставить stale title или вызвать
+  повторные OSC-записи, даже если сам `SessionLabel` продолжает компилироваться.
 
 ## Проверка покрытия
 
@@ -308,6 +366,8 @@ TerminalTitleItem::SessionLabel => {
 | Добавить item `session-label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
 | Прокинуть значение в effective `Config` | перенесено в карточку | `Итоговый контракт`, `Проверки`, `Риски` |
 | Проверить рендеринг `hermione`, `project`, `Ready` | перенесено в карточку | `Проверки` |
+| Сохранить общий escaping значения label из config перед OSC | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Ограничения` |
+| Сохранить clear/cache lifecycle terminal title | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Риски` |
 | Сохранить владельца `fork tests` и блок `fork-tests.v1` | перенесено в карточку | `Проверки` |
 | Сохранить исторические команды и результаты проверок | перенесено в карточку | `Проверки` |
 | Зафиксировать migration gotcha из `0.137.0` | перенесено в карточку | `Пошаговое воспроизведение`, `Проверки`, `Риски` |

@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: active
 created: 2026-07-09
-updated: 2026-07-14
+updated: 2026-07-16
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -311,8 +311,8 @@ runtime evidence, а не пользовательским событием по
 данными для `fork tests`, а не пользовательским runbook прямого запуска.
 
 Первый шаг исполняемой карты собирает тестовый бинарник `test_stdio_server` из
-пакета `codex-rmcp-client`. Это обязательное предусловие для двух последующих
-тестов `codex-core`: запуск с фильтром пакета `codex-core` не собирает бинарник
+пакета `codex-rmcp-client`. Это обязательное предусловие для последующих тестов
+`codex-core`: запуск с фильтром пакета `codex-core` не собирает бинарник
 другого пакета, а `cargo_bin("test_stdio_server")` ожидает резервный путь
 `codex-rs/target/debug/test_stdio_server`, если Cargo не передал
 `CARGO_BIN_EXE_test_stdio_server`.
@@ -352,6 +352,16 @@ runtime evidence, а не пользовательским событием по
         "-p",
         "codex-core",
         "mcp_transport_closed_persists_diagnostic_and_retries_once"
+      ]
+    },
+    {
+      "purpose": "mcp transport replay failure stops after one retry",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "mcp_transport_closed_replay_failure_is_not_retried_again"
       ]
     },
     {
@@ -405,6 +415,7 @@ runtime evidence, а не пользовательским событием по
 | `fork build-fast` | `ok` | `release-fast` build прошел после обновления exhaustive matches |
 | `git diff --check` | `ok` | Whitespace diff check прошел |
 | `fork install` | `ok` | Установлен release-fast fork-бинарник |
+| Source audit после merge `rust-v0.144.5` | `needs-checks` | Persistence/replay/recovery contracts сохранились; добавлено отсутствовавшее failure-path покрытие повторного `TransportClosed`, общий проверочный проход не запускался подагентом |
 
 ### Известные падения и пропуски
 
@@ -416,6 +427,11 @@ runtime evidence, а не пользовательским событием по
   по резервному пути. Исполняемая карта теперь готовит тестовый бинарник
   отдельным шагом с остановкой при ошибке перед тестами `codex-core`; проверку
   уровня карточки нужно повторить в общем проверочном проходе.
+- После merge `rust-v0.144.5` source audit подтвердил сохранность persisted
+  `McpDiagnostic`, исключения из model replay, one-shot recovery и lazy recovery
+  после `process_exited`. Обнаруженное отсутствие обязательного теста повторного
+  `TransportClosed` устранено; обновлённую карту проверок нужно выполнить в общем
+  проверочном проходе.
 - Текущая установленная версия может продолжать терять stderr в SQLite
   retention; эта карточка не исправляет уже произошедшие rollouts.
 - Если future implementation решит хранить полный stderr artifact рядом с
@@ -432,7 +448,8 @@ Card-level integration coverage проверяет:
 - MCP fixture пишет stderr и закрывает stdio transport во время `tools/call`;
 - rollout сессии получает `McpDiagnostic` с `transport_closed` и stderr tail;
 - recovery поднимает новый transport;
-- исходный idempotent MCP call повторяется один раз;
+- исходный idempotent MCP call повторяется не более одного раза, а повторный
+  `TransportClosed` сохраняет `recovery_failed` и возвращается наружу;
 - отдельный сценарий завершает MCP process в idle-состоянии и подтверждает, что
   следующий MCP call восстанавливает transport до send;
 - следующий resume не добавляет diagnostic item в model history.

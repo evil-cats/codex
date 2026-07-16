@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-07-05
+updated: 2026-07-16
 source_scope: discussion-2026-06-21
 ---
 
@@ -522,6 +522,25 @@ wrappers.
 | Код, schema и тесты для доработки были отмечены как реализованные в рабочем дереве | Статус сохранен в top-level секции `## Проверка покрытия` |
 | Внутренние `just` argv уже были перечислены в карточке | Они оставлены только внутри блока `fork-tests.v1` как данные для `fork tests`, а не вынесены в runbook |
 | Запуск проверок принадлежит общему fork workflow, а не этой карточке | Явно сохранено в подразделе `Дополнительные gates` |
+
+### Перенос на `rust-v0.144.5`
+
+После merge `rust-v0.144.5` выполнена статическая сверка owner-файлов карточки:
+
+- effective inline limit по-прежнему ограничивается config value, меньшим
+  `request.max_output_tokens` и token budget текущей model truncation policy;
+- immediate-finished branch сохраняет exact retained `raw_output` bytes в
+  sanitised Codex-owned path, а running/polling branch остается вне MVP;
+- `response_text()` остается чистым formatter-ом и различает saved spill,
+  bounded save failure и обычный `Output:` без spill;
+- `SandboxDenied` по-прежнему возвращается с `output_spill: None`;
+- config/default/schema, spill helper, formatting, immediate-finished spill и
+  sandbox-denial tests остаются в owner-файлах и соответствуют блоку
+  `fork-tests.v1`.
+
+Card-scoped правки кода после этого merge не потребовались. Проверки уровня
+проекта в one-card проходе не запускались; они остаются задачей общего
+проверочного прохода через skill-owned `fork` workflow.
 
 ### Известные падения и пропуски
 

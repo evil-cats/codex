@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-07-08
+updated: 2026-07-16
 source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
@@ -211,6 +211,14 @@ runbook для прямого запуска `cargo` или `just`.
     executable map содержит `core config` и `memories extension`;
   - `fork cards validate`: `OK`;
   - `fork tests --mode cards --card docs/fork/memory-read-template-path.md`: `OK`.
+- Миграция на `0.144.5` после merge `rust-v0.144.5`:
+  - ручная card-scoped сверка config types, defaults, conversion, schema,
+    extension config, embedded prompt и regression tests: `OK`;
+  - `read_template_path` в `codex-rs` отсутствует, встроенный `read_path.md`
+    сохраняет безопасный ad-hoc путь обновления памяти и ограничения записи;
+  - code-scoped правки не потребовались;
+  - project-level gates оставлены общему проверочному проходу по правилам
+    one-card миграции.
 
 ### Известные падения и пропуски
 

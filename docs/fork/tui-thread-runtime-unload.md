@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-07-14
+updated: 2026-07-16
 source_scope: discussion-2026-07-09-tui-mcp-runtime-leak
 ---
 
@@ -337,6 +337,7 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 | Реализация `thread/unload` | `done` | Добавлен v2 method, handler, README и schema/TS artifacts |
 | Реализация TUI runtime unload | `done` | `/resume`, `/clear`, новая сессия, `/fork`, shutdown-first exit и side discard переведены на `thread/unload` |
 | Перенос на `rust-v0.144.4` | `done` | В `/fork` сохранены выгрузка предыдущего runtime после успешного перехода и добавленная в upstream передача текущих `model` и `model_reasoning_effort`; тест карточки переведен на явный `ResumeModelSettings` |
+| Перенос на `rust-v0.144.5` | `done` | После merge сохранены API app-server и путь teardown, переходы жизненного цикла TUI для `/resume`, `/clear`, новой сессии, `/fork`, shutdown-first exit и side close, а также все пять целей тестов из `fork-tests.v1`; правки к коду не потребовались, проверки уровня проекта оставлены общему проходу |
 | `.codex/skills/fork/scripts/fork generators` | `ok` | Config schema и app-server schema artifacts синхронизированы |
 | `.codex/skills/fork/scripts/fork format --fix` | `ok` | Rust/doc formatting wrapper применен после правок |
 | `.codex/skills/fork/scripts/fork format --check` | `ok` | Форматирование проверено после реализации |
