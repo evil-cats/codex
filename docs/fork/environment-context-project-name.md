@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-07-08
+updated: 2026-07-18
 source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 ---
 
@@ -480,6 +480,21 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 - Если `WorldStateSection::render_diff(...)` начнет исключать неизменившиеся
   значения turn context, нужно отдельно проверить, должен ли `project_name`
   оставаться в теле обновления.
+
+## Аудит миграции `rust-v0.144.6`
+
+Проверка после слияния `rust-v0.144.6` не потребовала изменений Rust-кода:
+
+| Область | Результат |
+| --- | --- |
+| Вычисление project name | сохранено: берется имя последнего компонента первого `effective_workspace_roots`, причем `project_name` и filesystem используют один снимок roots |
+| Видимый модели контракт | сохранено: `project_name` участвует в полном render, snapshot и diff и выводится как `<project_name>` перед `current_date` |
+| Экранирование и резервное значение | сохранено: значение проходит через `push_xml_escaped_text`; для пути без последнего компонента используется полный путь через `to_string_lossy()` |
+| Регрессионное покрытие | сохранены `serialize_environment_context_with_project_name`, `turn_context_item_project_name_uses_workspace_root_name` и `diff_environment_context_includes_changed_project_name` |
+
+Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
+Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
+проход.
 
 ## Проверка покрытия
 

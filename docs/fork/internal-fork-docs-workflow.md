@@ -2,7 +2,7 @@
 id: fork-internal-docs-workflow
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.141.0..hermione-0.141.0
 ---
 
@@ -14,7 +14,7 @@ source_scope: rust-v0.141.0..hermione-0.141.0
 документацию Hermione fork внутри `docs/`, не превращая ее в пользовательскую
 документацию upstream Codex.
 
-В текущем checkout после слияния `rust-v0.144.5` обязательные каталоги
+В текущем checkout после слияния `rust-v0.144.6` обязательные каталоги
 `docs/architecture`, `docs/plans`, `docs/follow-ups` и `docs/backlog` не
 восстанавливаются. Они остаются историческим контекстом раннего workflow, но не
 являются требованием к текущему checkout. Текущие handoff-документы fork
@@ -194,7 +194,7 @@ config:
 
 Инвентаризация в режиме чтения для исторических docs-каталогов нашла
 существующие lint issues в committed fork docs. В текущей миграции на
-`rust-v0.144.5` эти пути могут отсутствовать; не восстанавливай их только ради
+`rust-v0.144.6` эти пути могут отсутствовать; не восстанавливай их только ради
 этой карточки. Заметки ниже - контекст для будущей очистки, если эти каталоги
 снова появятся или будут проверяться по старой истории:
 
@@ -340,6 +340,25 @@ workflow-контракт, а не runtime, API, schema, config, TUI или prot
 - `git diff --check rust-v0.137.0..HEAD -- docs` был частью исторической
   inventory для области `docs/`.
 
+#### Аудит после слияния `rust-v0.144.6`
+
+Аудит в режиме чтения от 2026-07-18 подтвердил:
+
+- `AGENTS.md` сохраняет разрешение на fork-specific внутренние документы и
+  запрет на широкую пользовательскую документацию upstream;
+- `docs/.markdownlint-cli2.yaml` и
+  `docs/table-rendering-long-links-test.md` остаются на месте;
+- `git diff --name-status rust-v0.144.5..rust-v0.144.6` не показывает изменений
+  в файлах-владельцах этой карточки и исполняемых файлах project skill `fork`;
+- retired legacy scripts под `scripts/fork-migration/` не отслеживаются, а
+  `fork check-source-coverage`, `fork cards validate` и
+  `fork tests --mode list` остаются командами skill-owned CLI;
+- `fork cards validate` по-прежнему допускает документированный
+  `manual-required` вместо блока `fork-tests.v1`, поэтому отдельная проверка
+  уровня этой документационной карточки не требуется;
+- проектные gates, тесты, генераторы и markdownlint в one-card проходе не
+  запускались; их результат этот аудит не утверждает.
+
 Сохраненные исторические команды для воспроизведения прежней inventory или
 cleanup-проверки, а не нормативный runbook текущей миграции:
 
@@ -359,7 +378,7 @@ git diff --check
 - Исторические lint issues перечислены в разделе `Исторические lint-заметки`:
   `MD038/no-space-in-code`, `MD056/table-column-count` и unused reference
   definitions в legacy docs-каталогах.
-- В текущей миграции на `rust-v0.144.5` legacy paths могут отсутствовать; не
+- В текущей миграции на `rust-v0.144.6` legacy paths могут отсутствовать; не
   восстанавливай `docs/architecture`, `docs/plans`, `docs/follow-ups` или
   `docs/backlog` только ради этой карточки.
 - Простой markdownlint-вызов с config может проверить ноль файлов; для реальной

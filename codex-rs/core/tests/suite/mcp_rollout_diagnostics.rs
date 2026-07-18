@@ -431,6 +431,14 @@ async fn mcp_transport_closed_replay_failure_is_not_retried_again() -> anyhow::R
         .filter(|diagnostic| diagnostic.event == McpDiagnosticEvent::RecoveryFailed)
         .collect::<Vec<_>>();
     assert_eq!(recovery_failures.len(), 1);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.event == McpDiagnosticEvent::RecoveryStarted)
+            .count(),
+        1,
+        "replay failure must not start a second recovery loop"
+    );
     let recovery_failure = recovery_failures[0];
     assert_eq!(recovery_failure.call_id.as_deref(), Some(call_id));
     assert_eq!(

@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
@@ -361,6 +361,32 @@ Skill-owned workflow сохраняет разделение владельце�
 родительский проход через `fork build-fast`, а установку при необходимости —
 через `fork install`.
 
+## Migration check: `0.144.6`
+
+Во время повторной проверки одной карточки при переносе на `rust-v0.144.6` в
+текущей рабочей копии подтверждены кодовые якоря `[profile.release-fast]`,
+`inherits = "release"`, `lto = "thin"`, `codegen-units = 32`,
+`debug = "none"`, `strip = "symbols"` и внутренний target
+`build-fast-release`, который собирает пакет `codex-cli` с профилем Cargo
+`release-fast`.
+
+Связанные якоря ремонта миграции также сохранены: итоговый
+`Config.tui_terminal_title_label` заполняется из
+`cfg.tui.terminal_title_label`, `HistoryCellDisplayItem::Line` несёт
+`HyperlinkLine`, преобразование `Line<'static>` создаёт
+`HyperlinkLine::new(...)`, а `insert_history_lines_with_wrap_policy` переводит
+исходные `Line` в `Line<'static>` через `line_to_static` перед вызовом
+`plain_hyperlink_lines(...)`. Режимы отображения истории пользователя сохраняют
+очистку текста через `sanitize_user_text(...)`, а `HistoryRenderMode::Rich`
+продолжает возвращать `HistoryCellDisplayItem`, включая `LocalImage`.
+
+Кодовые правки для этой карточки не потребовались. В Git-состоянии проверенных
+файлов-владельцев карточки не обнаружены неразрешённые конфликты или конфликтные
+маркеры. Сборка, тесты, генераторы, форматирование и markdownlint в этом проходе
+по одной карточке не запускались; артефакт
+`codex-rs/target/release-fast/codex` и его stripped-состояние должен подтвердить
+общий родительский проход.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -406,6 +432,8 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Migration `0.144.1` | локально подтверждены якоря профиля, target `build-fast-release`, восстановление effective config и конвертации TUI history; конфликт в `messages.rs` разрешён с сохранением upstream-очистки и fork-поддержки элементов `LocalImage` | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем one-card проходе |
 | Migration `0.144.4` | локально подтверждены якоря профиля, target `build-fast-release`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; кодовые правки не потребовались | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
 | Migration `0.144.5` | локально подтверждены якоря профиля, target `build-fast-release`, владение workflow сборки и установки, версии workspace `0.144.5` и `codex-cli` `0.144.5+hermione`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; кодовые правки не потребовались | сборка, установка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
+| Migration `0.144.6` | локально подтверждены якоря профиля, target `build-fast-release`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; в Git-состоянии проверенных файлов-владельцев нет неразрешённых конфликтов или конфликтных маркеров; кодовые правки не потребовались | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
+| Общий build gate migration `0.144.6` | `passed`: собран `codex-rs/target/release-fast/codex`; отдельная проверка показала ELF x86-64 stripped и `codex-cli 0.144.6+hermione` | SHA-256 `07dfa949a0d78f485186c06fc1dc7024beddf471522a7f41891c2097ba626880`; размер `358455432` байта |
 
 ### Известные падения и пропуски
 
@@ -459,3 +487,4 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Проверить перенос profile на `0.144.1` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.144.1`", "Проверки" |
 | Проверить перенос profile на `0.144.4` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.144.4`", "Проверки" |
 | Проверить перенос profile на `0.144.5` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт и метаданные версии, `fork install` — установленный исполняемый файл при необходимости | "Migration check: `0.144.5`", "Проверки" |
+| Проверить перенос profile на `0.144.6` | перенесено; общий родительский проход должен подтвердить stripped-артефакт | "Migration check: `0.144.6`", "Проверки" |

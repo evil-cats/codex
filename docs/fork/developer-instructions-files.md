@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -19,7 +19,7 @@ developer instructions в отдельных Markdown-файлах и подкл
 | --- | --- |
 | Статус | `active` |
 | Основной commit | `d976b54ed Support developer instructions files` |
-| Текущая база проверки | `rust-v0.144.5`, ветка `hermione-0.144.5` |
+| Текущая база проверки | `rust-v0.144.6`, ветка `hermione-0.144.6` |
 | Config key | `developer_instructions_files` |
 | Тип | `Vec<AbsolutePathBuf>` |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
@@ -49,6 +49,10 @@ Inline `developer_instructions` неудобен для больших profile-d
 | `codex-rs/core/src/config/mod.rs` | Читает файлы и собирает effective `developer_instructions` |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет parsing, append order, empty warnings и missing-file error |
 | `codex-rs/core/config.schema.json` | Экспортирует config key в schema |
+| `codex-rs/core/src/session/mod.rs` | Добавляет итоговое значение в агрегированное сообщение с ролью `developer` |
+| `codex-rs/core/src/context_manager/updates.rs` | Преобразует developer sections в model-visible `ResponseItem` |
+| `codex-rs/core/tests/suite/client.rs` | Проверяет наличие `Config.developer_instructions` в developer message запроса |
+| `codex-rs/file-system/src/lib.rs` | Предоставляет чтение UTF-8 файла; жёсткий предел для fork сейчас отсутствует |
 
 ## Итоговый контракт
 
@@ -87,6 +91,9 @@ Inline `developer_instructions` неудобен для больших profile-d
 
 8. Если inline instructions пустые и все files пустые или список пуст,
    effective `Config.developer_instructions` остаётся `None`.
+9. Итоговое `Config.developer_instructions` передаётся в `TurnContext` и при
+   построении начального контекста становится секцией model-visible сообщения с
+   ролью `developer`.
 
 ## Пошаговое воспроизведение
 
@@ -196,6 +203,22 @@ paths и default `[]`.
   - `developer_instructions_override_skips_files` проверяет, что runtime override
     `developer_instructions` не читает файлы из config и возвращает
     переданное override-значение как итоговые developer instructions.
+- Model-visible контракт:
+  - `includes_developer_instructions_message_in_request` проверяет, что уже
+    собранное `Config.developer_instructions` присутствует в developer message
+    исходящего запроса;
+  - `developer_instructions_files_are_loaded_into_developer_message_in_order`
+    создаёт `config.toml` и два реальных Markdown-файла в тестовом home, загружает
+    Codex обычным путём загрузки config и проверяет точный объединённый текст в
+    исходящем developer message.
+- Ограничение размера:
+  - `ExecutorFileSystem::read_file_text` читает файл целиком;
+  - сборка `developer_instructions` и `build_developer_update_item` не применяют
+    жёсткий предел для fork;
+  - это существующий общий вопрос `session/context aggregation`, а не регрессия
+    слияния `rust-v0.144.6` и не блокирующее условие текущей карточки;
+  - локальная ошибка или усечение недопустимы без общей политики, потому что
+    могут потерять profile-defining rules.
 
 ## Проверки
 
@@ -218,6 +241,25 @@ paths и default `[]`.
   возвращает переданное override-значение;
 - schema artifact показывает `developer_instructions_files` как array со
   значениями paths и default `[]`.
+- итоговое `Config.developer_instructions` попадает в model-visible сообщение с
+  ролью `developer`;
+- `developer_instructions_files_are_loaded_into_developer_message_in_order`
+  проверяет сквозной путь от реальных файлов в test home до точного текста
+  исходящего developer message.
+
+### Открытый вопрос вне области карточки
+
+- Owner scope: `session/context aggregation`.
+- `codex-rs/core/src/session/mod.rs` агрегирует developer instructions вместе с
+  permissions, collaboration, skills и другими sections в один model-visible
+  item.
+- Проверенный родительским проходом профиль Hermione занимает около 51 KB ещё
+  до добавления остальных секций агрегированного developer item.
+- Общий жёсткий предел и политика превышения должны проектироваться для всего
+  агрегированного item, а не локально для `developer_instructions_files`.
+- Локальная ошибка или усечение в этой карточке могли бы сломать действующие
+  большие профили и молча потерять profile-defining rules, поэтому вопрос
+  оставлен открытым и не блокирует миграцию `rust-v0.144.6`.
 
 ### Владелец исполняемой карты
 
@@ -289,6 +331,18 @@ paths и default `[]`.
 `fix` по ограничению подагентского запуска. Реализация в owner-файлах уже
 сохраняет контракт карточки; кодовых правок не потребовалось.
 
+В миграционном проходе 2026-07-18 для `rust-v0.144.6` карточка сверена с текущей
+рабочей копией без запуска сборки, тестов, генераторов, форматирования или
+`fix` по ограничению подагентского запуска. Upstream diff
+`rust-v0.144.5..rust-v0.144.6` не изменил owner-файлы карточки. Парсинг,
+нормализация путей, порядок секций, warning/error, runtime override, schema и
+передача итогового значения в developer message сохранились. Аудит выявил два
+вопроса. Относящийся к карточке пробел регрессионного покрытия закрыт тестом
+`developer_instructions_files_are_loaded_into_developer_message_in_order`.
+Отсутствие общего жёсткого предела переклассифицировано в open question с owner
+scope `session/context aggregation`: это существующий сквозной контракт, а не
+регрессия слияния `rust-v0.144.6`.
+
 Старый текст карточки называл прямые команды `just write-config-schema` и
 `just build-fast-release` как маршрут повторения на `f-ms-dev` при разрешении
 пользователя. После перехода на skill-owned workflow они сохранены только как
@@ -304,6 +358,11 @@ paths и default `[]`.
 - Известных зафиксированных падений для этой карточки нет; оставшийся риск -
   schema artifact может устареть, если после изменения `ConfigToml` не пройти
   `fork generators`.
+- Общий жёсткий предел отсутствует при сборке агрегированного model-visible
+  developer item. Это open question владельца `session/context aggregation`, а
+  не пропуск текущей миграции в области карточки.
+- Новый сквозной тест добавлен, но не запускался по ограничению подагентского
+  прохода.
 
 ## Ограничения
 
@@ -326,6 +385,11 @@ paths и default `[]`.
   пересогласовать.
 - Если schema не обновить, поле может работать в runtime, но быть невидимым
   для config tooling.
+- Без жёсткого предела один файл или сумма inline/file sections может создать
+  model-visible item больше допустимой границы.
+- Молчаливое усечение для profile-defining rules недопустимо; политику ошибки,
+  разбиения или другой bounded representation нужно согласовать в owner scope
+  `session/context aggregation`.
 
 ## Проверка покрытия
 
@@ -337,3 +401,6 @@ paths и default `[]`.
 | Empty file как warning | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
 | Missing file как error | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
 | Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения", "Ожидаемое покрытие diff" |
+| Передать итоговое значение в developer message | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
+| Ограничить размер агрегированного model-visible item | оставлено как open question | "Открытый вопрос вне области карточки", "Известные падения и пропуски", "Риски" |
+| Покрыть путь files -> исходящий developer message одним регрессионным тестом | перенесено | `developer_instructions_files_are_loaded_into_developer_message_in_order`, "Ожидаемое покрытие diff" |

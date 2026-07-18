@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: discussion-2026-06-21
 ---
 
@@ -537,6 +537,41 @@ wrappers.
 - config/default/schema, spill helper, formatting, immediate-finished spill и
   sandbox-denial tests остаются в owner-файлах и соответствуют блоку
   `fork-tests.v1`.
+
+Card-scoped правки кода после этого merge не потребовались. Проверки уровня
+проекта в one-card проходе не запускались; они остаются задачей общего
+проверочного прохода через skill-owned `fork` workflow.
+
+### Перенос на `rust-v0.144.6`
+
+После merge `rust-v0.144.6` выполнена статическая сверка owner-файлов карточки.
+Разность upstream `rust-v0.144.5..rust-v0.144.6` не затронула реализацию,
+config, schema или тесты spill-файлов.
+
+- Эффективный inline-лимит по-прежнему является минимумом значения config,
+  меньшего `request.max_output_tokens` и токенного бюджета текущей политики
+  усечения модели.
+- Spill выполняется только для завершившегося initial `exec_command`, у которого
+  нет активного `session_id` и есть финальный `exit_code`. Это включает быстро
+  завершившийся вызов с `tty = true`; активный PTY и последующие `write_stdin`
+  остаются вне spill lifecycle.
+- Абсолютный путь по-прежнему строится под
+  `<codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log` только из
+  sanitized ids. Файл создается один раз с `create_new`; автоматическая очистка
+  для него не вводилась, поэтому артефакт остается доступным после tool response
+  и resume, пока сохраняется `codex_home`.
+- На Unix spill-файл открывается с правами `0o600`; создание родительской
+  директории и файла происходит в принадлежащем Codex `codex_home`, а не внутри
+  workspace под sandbox.
+  `SandboxDenied` по-прежнему возвращает `output_spill: None` и не создает
+  артефакт.
+- Видимые модели metadata сохраняют `Original token count`, эффективный
+  inline-лимит, сохраненный путь или ограниченное сообщение об ошибке записи и
+  `Output excerpt:`. `response_text()` остается без файловых побочных эффектов.
+- Покрытие config/default/schema, helper для эффективного лимита, sanitized path
+  и exact bytes, форматирования успешной и неудачной записи,
+  immediate-finished integration spill, sandbox denial и long-running/polling
+  остается в owner-файлах и соответствует неизмененному блоку `fork-tests.v1`.
 
 Card-scoped правки кода после этого merge не потребовались. Проверки уровня
 проекта в one-card проходе не запускались; они остаются задачей общего

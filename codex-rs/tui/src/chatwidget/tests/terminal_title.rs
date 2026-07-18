@@ -30,6 +30,40 @@ async fn terminal_title_can_include_configured_session_label() {
 }
 
 #[tokio::test]
+async fn terminal_title_omits_absent_session_label_and_truncates_configured_value() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    cache_no_project_root(&mut chat);
+    chat.config.tui_terminal_title = Some(vec![
+        "session-label".to_string(),
+        "project-name".to_string(),
+    ]);
+
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, Some("project".to_string()));
+
+    chat.config.tui_terminal_title_label = Some("abcdefghijklmnopqrstuvwxyz1234".to_string());
+    chat.refresh_terminal_title();
+    assert_eq!(
+        chat.last_terminal_title,
+        Some("abcdefghijklmnopqrstu... | project".to_string())
+    );
+}
+
+#[tokio::test]
+async fn empty_terminal_title_selection_clears_cached_title() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    cache_no_project_root(&mut chat);
+    chat.config.tui_terminal_title = Some(vec!["project-name".to_string()]);
+
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, Some("project".to_string()));
+
+    chat.config.tui_terminal_title = Some(Vec::new());
+    chat.refresh_terminal_title();
+    assert_eq!(chat.last_terminal_title, None);
+}
+
+#[tokio::test]
 async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     cache_no_project_root(&mut chat);

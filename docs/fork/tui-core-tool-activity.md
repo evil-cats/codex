@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: working-tree
 ---
 
@@ -588,12 +588,14 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Миграционный проход `rust-v0.144.4`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow форматирование, card-level tests, generators и сборка переданы parent-agent |
 | Миграционный проход `rust-v0.144.5`: статическая сверка owner-файлов | `preserved-current-pass` | Upstream diff `rust-v0.144.4..rust-v0.144.5` не затрагивает owner-файлы карточки; модель событий core activity, model-visible output, распространение через protocol/app-server/schema/analytics, TUI lifecycle/render/replay/transcript и заявленное тестовое и snapshot-покрытие сохранены без правок кода |
 | Миграционный проход `rust-v0.144.5`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow проверки уровня проекта, принятие snapshots, форматирование, генераторы и сборка не запускались; проверки карточки и общие gates переданы parent-agent |
+| Миграционный проход `rust-v0.144.6`: статическая сверка owner-файлов | `preserved-current-pass` | Upstream diff `rust-v0.144.5..rust-v0.144.6` не затрагивает owner-файлы карточки; после merge сохранены begin/end lifecycle core activity, model-visible `FunctionCallOutput`, protocol/app-server item и history replay, analytics ignore, TUI live/replay lifecycle, grouping/rendering/transcript и заявленное test/snapshot coverage |
+| Миграционный проход `rust-v0.144.6`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow tests, build, generators, format/fix, markdownlint и snapshot acceptance не запускались; card-level проверки и общие gates переданы parent-agent |
 
 ### Известные падения и пропуски
 
 - До текущего миграционного прохода актуальных падений card-level checks,
   проверки карточек, форматирования и быстрой сборки не было.
-- В миграционном проходе `rust-v0.144.5` правки кода не потребовались, а
+- В миграционном проходе `rust-v0.144.6` правки кода не потребовались, а
   проверки уровня проекта не запускались по ограничению subagent one-card flow;
   их выполняет parent-agent в общем проверочном проходе.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
@@ -617,7 +619,7 @@ Runtime-проверка этой карточки должна подтверж
 wrapper-ом `fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник был
 установлен wrapper-ом `fork install` в
 `/home/slader/.local/bin/codex-hermione`. Миграционный subagent-проход
-`rust-v0.144.5` эти gates не повторял.
+`rust-v0.144.6` эти gates не повторял.
 
 ## Риски и ограничения
 

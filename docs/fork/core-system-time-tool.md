@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -531,6 +531,34 @@ Release-fast artifact:
 unit-test и tool-spec контрактов. Targeted tests, форматирование, генераторы и
 другие project-level проверки подагент не запускал; они остаются за общим
 проверочным проходом родительского агента через skill-owned workflow.
+
+### Миграция на `rust-v0.144.6`
+
+После merge `rust-v0.144.6` owner-файлы и контракт `get_system_time` сохранились
+без изменений. Handler и spec по-прежнему подключены через `handlers/mod.rs`,
+`SystemTimeHandler` без feature gate входит в базовый набор
+`add_core_utility_tools(...)`, а prompt-cache expectation содержит
+`get_system_time`.
+
+Runtime-контракт также не изменился: `local` использует `chrono::Local::now()`,
+`utc` и fixed offset используют `Utc::now()`, а полный ответ строится из одного
+sampled instant. На всех поддерживаемых платформах выбор host-local offset
+остается ответственностью `chrono`; UTC и fixed offset не зависят от локальной
+timezone host.
+
+Соседний upstream tool `clock.curr_time` по-прежнему не заменяет
+`get_system_time`: он регистрируется только при включенной feature
+`current_time_reminder`, которая по умолчанию выключена, возвращает только UTC
+в фиксированном формате и не поддерживает параметры `format`, `offset` и
+`full`. Имена tools различаются, поэтому регистрационного конфликта нет.
+
+Прямой scoped diff `rust-v0.144.5..rust-v0.144.6` не показал изменений в
+соседних поверхностях регистрации, prompt-cache expectation, реализации
+`clock.curr_time` и default feature state. Миграционный аудит ограничен
+source-level сверкой owner-файлов, runtime, platform behavior, unit-test и
+tool-spec контрактов. Targeted tests, форматирование, генераторы и другие
+project-level проверки подагент не запускал; они остаются за общим проверочным
+проходом родительского агента через skill-owned workflow.
 
 ### Известные падения и пропуски
 

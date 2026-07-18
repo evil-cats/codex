@@ -2,7 +2,7 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: discussion-2026-07-05..discussion-2026-07-10
 ---
 
@@ -216,6 +216,7 @@ that can run independently alongside useful local work
 | `{agent_role_usage_hint}` не возвращается как отдельный authorization guard | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
 | V1 `spawn_agent` не возвращает `### Delegation workflow` и sidecar-work guidance | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
 | V1 `spawn_agent` сохраняет task message shape, read-only findings, coding worker subtasks, direct fork workspace edits, disjoint write scopes, agent roles и wait/close hint | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
+| V1 сохраняет legacy `fork_context`, а V2 отдельно использует `fork_turns`, канонические вложенные имена задач и разрешает подагентам запускать собственных подагентов | `required` | `spawn_agent_tool_v1_keeps_legacy_fork_context_field`, `spawn_agent_tool_v2_requires_task_name_and_lists_visible_models` |
 | `usage_hint_text` override продолжает заменять дефолтный usage hint | `required` | `spawn_agent_tool_v1_usage_hint_text_replaces_default_guidance` |
 
 ### Владелец исполняемой карты
@@ -231,7 +232,7 @@ runbook прямого запуска.
   "tests": [
     {
       "purpose": "multi agent v1 spawn agent guidance",
-      "argv": ["just", "test", "-p", "codex-core", "spawn_agent_tool_v1"]
+      "argv": ["just", "test", "-p", "codex-core", "spawn_agent_tool_"]
     }
   ]
 }
@@ -265,6 +266,22 @@ upstream-блок с explicit-request guard и sidecar-work workflow. Прове
 потребовалась. Поверхность V2, профильные policy-файлы, код и тесты не менялись.
 Команды уровня карточки и проекта в one-card проходе не запускались; они
 остаются для общего проверочного прохода родительского агента.
+
+При переносе на `rust-v0.144.6` изменения в upstream между
+`rust-v0.144.5..rust-v0.144.6` не затронули owner-файлы этой карточки.
+После слияния V1 description сохранил согласованный tool-owned guidance, а
+schema V1 по-прежнему использует legacy-поле `fork_context`: `true` наследует
+текущую историю thread, `false` или отсутствие поля передаёт только начальный
+prompt. Граница с V2 не размыта: только V2 использует обязательный `task_name`,
+поле `fork_turns` со значениями `none`, `all` или положительным числом последних
+ходов, канонические вложенные имена задач и явный model-visible текст о
+возможности подагента запускать собственных подагентов. Тесты усилены точными
+проверками model-visible описаний `fork_context` и `fork_turns`, а также полной
+V2-инструкции о вложенности. Фильтр тестов карточки расширен с
+`spawn_agent_tool_v1` до `spawn_agent_tool_`, чтобы общий проход проверял эту
+V1/V2 границу. Runtime-код
+не менялся; команды уровня карточки и проекта в one-card проходе не запускались
+и остаются для общего проверочного прохода родительского агента.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |

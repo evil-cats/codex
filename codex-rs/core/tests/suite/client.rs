@@ -2936,6 +2936,69 @@ async fn includes_developer_instructions_message_in_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn developer_instructions_files_are_loaded_into_developer_message_in_order() {
+    skip_if_no_network!();
+    let server = MockServer::start().await;
+
+    let resp_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let mut builder = test_codex()
+        .with_auth(CodexAuth::from_api_key("Test API Key"))
+        .with_pre_build_hook(|home| {
+            std::fs::write(
+                home.join("config.toml"),
+                r#"
+developer_instructions = "Inline instructions."
+developer_instructions_files = ["./developer-a.md", "./developer-b.md"]
+"#,
+            )
+            .expect("write config");
+            std::fs::write(home.join("developer-a.md"), "\nFirst file.\n")
+                .expect("write first developer instructions file");
+            std::fs::write(home.join("developer-b.md"), "Second file.\n\n")
+                .expect("write second developer instructions file");
+        });
+    let codex = builder
+        .build(&server)
+        .await
+        .expect("create new conversation")
+        .codex;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = resp_mock.single_request();
+    let request_body = request.body_json();
+    let expected = "Inline instructions.\n\nFirst file.\n\nSecond file.";
+    let matching_developer_sections = request_body["input"]
+        .as_array()
+        .expect("input array")
+        .iter()
+        .filter(|item| item.get("role").and_then(|role| role.as_str()) == Some("developer"))
+        .flat_map(message_input_texts)
+        .filter(|text| *text == expected)
+        .count();
+
+    assert_eq!(matching_developer_sections, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn azure_responses_request_includes_store_and_reasoning_ids() {
     skip_if_no_network!();
 

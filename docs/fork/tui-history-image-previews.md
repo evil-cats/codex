@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -348,6 +348,26 @@ replay/reflow, вставку в терминальную историю, рас
 placement, регрессионные тесты и snapshot-артефакты. Правки кода, схем и
 snapshots для этой миграции не потребовались.
 
+Заметка для переноса на `rust-v0.144.6`: между upstream-метками
+`rust-v0.144.5` и `rust-v0.144.6` owner-пути этой доработки также не менялись.
+Проверка текущего `HEAD` подтвердила тот же сквозной контракт без правок кода,
+схем и snapshots:
+
+- `view_image` разрешает путь относительно `cwd` выбранного окружения, проверяет
+  доступ через его filesystem с sandbox context и принимает только обычный файл;
+- TUI получает локальный путь только через структурированные `ImageView` /
+  `ImageGeneration.saved_path`, повторно требует локальный обычный файл и
+  успешное декодирование, а путь чужой платформы оставляет текстовым fallback;
+- `ImagePreviewSize` проходит через core item, legacy event, app-server v2,
+  сгенерированные TypeScript/JSON и TUI replay без потери `preview_size`;
+- `HistoryCellDisplayItem::LocalImage` сохраняется в Rich history и путях
+  initial replay, thread-switch replay, overlay defer и resize reflow, а terminal
+  payload создаётся только на границе `prepare_history_insert_items`;
+- число столбцов ограничено доступной шириной терминала и снизу значением `1`,
+  а настройки строк имеют тип `u16` и ограничение снизу значением `1`;
+  отдельного верхнего runtime-ограничения для `small_rows`, `normal_rows` и
+  `large_rows` нет.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -389,6 +409,12 @@ snapshots для этой миграции не потребовались.
 Snapshot-подтверждение:
 
 - `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
+
+Этот snapshot подтверждает текстовый fallback для `ImageGeneration` без
+`saved_path`; terminal bitmap marker намеренно не входит в ratatui snapshot.
+Форма marker и его отсутствие в Raw mode проверяются обычными assertions
+`user_history_cell_emits_local_image_items_for_terminal_history` и
+`local_image_history_cell_emits_image_item_in_rich_mode_only`.
 
 ### Владелец исполняемой карты
 
@@ -515,6 +541,9 @@ markdownlint не запускались по ограничению задач�
 - `tmux` and `zellij` currently work only through fallback under current
   `detect_pet_image_support` policy.
 - Extreme narrow terminal geometry can make preview not fit.
+- Настройки строк ограничены типом `u16` и нижним значением `1`, но не имеют
+  отдельного верхнего runtime-ограничения; чрезмерные значения могут сделать
+  подготовку preview дорогой до применения ограничения ширины терминала.
 - Do not expose numeric `preview_rows` to the model-visible `view_image` API.
 - Do not parse local image paths from arbitrary Markdown/plain text as trusted
   sources.

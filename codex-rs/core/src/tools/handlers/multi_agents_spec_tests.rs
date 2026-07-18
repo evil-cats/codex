@@ -79,7 +79,12 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         .as_ref()
         .expect("spawn_agent should use object params");
     assert!(description.contains("Spawns an agent to work on the specified task."));
-    assert!(description.contains("The spawned agent will have the same tools as you"));
+    assert!(description.contains(
+        "If your current task is `/root/task1` and you spawn_agent with task_name \"task_3\" the agent will have canonical task name `/root/task1/task_3`."
+    ));
+    assert!(description.contains(
+        "The spawned agent will have the same tools as you and the ability to spawn its own subagents."
+    ));
     assert!(!description.contains("max_concurrent_threads_per_session"));
     assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
     assert!(
@@ -99,6 +104,14 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         Some(true)
     );
     assert!(properties.contains_key("fork_turns"));
+    assert_eq!(
+        properties
+            .get("fork_turns")
+            .and_then(|schema| schema.description.as_deref()),
+        Some(
+            "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
+        )
+    );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
@@ -155,6 +168,14 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         .expect("spawn_agent should use object params");
 
     assert!(properties.contains_key("fork_context"));
+    assert_eq!(
+        properties
+            .get("fork_context")
+            .and_then(|schema| schema.description.as_deref()),
+        Some(
+            "True forks the current thread history into the new agent; false or omitted starts with only the initial prompt."
+        )
+    );
     assert!(!properties.contains_key("fork_turns"));
     assert_eq!(
         properties

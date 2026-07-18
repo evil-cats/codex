@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -44,6 +44,7 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/tui/src/chatwidget/status_surfaces.rs` | Рендерит label в preview и terminal title |
 | `codex-rs/tui/src/terminal_title.rs` | Санитизирует итоговый title и безопасно пишет или очищает OSC title |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
+| `codex-rs/tui/src/app.rs` | Очищает управляемый Codex title при завершении `App`; предыдущий title терминала не восстанавливается |
 | TUI snapshots | Обновляют popup со строкой `session-label` |
 
 ## Итоговый контракт
@@ -96,6 +97,11 @@ items вроде project name, current dir или run state не всегда п
     очищается; успешное значение кэшируется, чтобы не повторять одинаковые
     OSC-записи.
 13. Item должен быть доступен в terminal title selector snapshots.
+14. Низкоуровневые set/clear операции пишут OSC только когда `stdout` является
+    terminal; Windows использует ANSI-реализацию `SetWindowTitle`.
+15. При завершении `App::drop` очищает последний управляемый Codex title.
+    Предыдущий title shell/terminal не читается и не восстанавливается, потому
+    что переносимого механизма для этого нет.
 
 ## Пошаговое воспроизведение
 
@@ -232,13 +238,22 @@ TerminalTitleItem::SessionLabel => {
   - ожидает:
 
     ```text
-    hermione | project | Ready
-    ```
+     hermione | project | Ready
+     ```
 
+- Тест `terminal_title_omits_absent_session_label_and_truncates_configured_value`
+  проверяет, что отсутствующий label пропускается, а настроенное значение
+  ограничивается 24 символами.
+- Тест `empty_terminal_title_selection_clears_cached_title` проверяет очистку
+  кэша ранее управляемого title при пустом списке configured items.
 - Snapshot-тесты показывают новый item `session-label` в selector.
 - Unit tests в `codex-rs/tui/src/terminal_title.rs` проверяют удаление
   управляющих и невидимых/bidi codepoints, ограничение длины и OSC 0 с
   terminator `BEL`.
+- `set_terminal_title` и `clear_terminal_title` проверяют terminal support через
+  `stdout().is_terminal()`; `SetWindowTitle` объявляет ANSI support на Windows.
+- `App::drop` вызывает `clear_managed_terminal_title`; lifecycle намеренно
+  очищает управляемый title, но не пытается восстановить предыдущий.
 - Config-тесты обновлены с `terminal_title_label: None` в expected defaults.
 - `codex-rs/core/config.schema.json` содержит schema для
   `terminal_title_label` после обновления config types.
@@ -301,6 +316,11 @@ TerminalTitleItem::SessionLabel => {
   target включает проверку контракта настроенного session label и
   низкоуровневые unit tests санитизации и кодирования OSC в
   `terminal_title.rs`.
+- После merge `rust-v0.144.6` статическая сверка подтвердила сохранность config
+  plumbing, derivation и truncation `session-label`, общего безопасного OSC
+  path, terminal support, cache/clear lifecycle, очистки на `App::drop` и пяти
+  selector snapshots. Upstream diff `rust-v0.144.5..rust-v0.144.6` не меняет
+  owner-файлы этой карточки.
 - Зафиксированное ожидаемое runtime-значение для настроенного session label:
 
   ```text
@@ -332,6 +352,9 @@ TerminalTitleItem::SessionLabel => {
 - В one-card проходе после merge `rust-v0.144.5` project-level проверки не
   запускались по контракту подагента; их должен выполнить общий проверочный
   проход через skill-owned `fork tests` и при необходимости `fork generators`.
+- В one-card проходе после merge `rust-v0.144.6` tests, build, generators,
+  format, fix и markdownlint не запускались по явному ограничению задачи; их
+  должен выполнить общий проверочный проход.
 
 ## Ограничения
 
@@ -368,6 +391,7 @@ TerminalTitleItem::SessionLabel => {
 | Проверить рендеринг `hermione`, `project`, `Ready` | перенесено в карточку | `Проверки` |
 | Сохранить общий escaping значения label из config перед OSC | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Ограничения` |
 | Сохранить clear/cache lifecycle terminal title | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Риски` |
+| Сохранить terminal support и очистку при завершении `App` без ложного обещания restore | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Проверки`, `Исторические результаты` |
 | Сохранить владельца `fork tests` и блок `fork-tests.v1` | перенесено в карточку | `Проверки` |
 | Сохранить исторические команды и результаты проверок | перенесено в карточку | `Проверки` |
 | Зафиксировать migration gotcha из `0.137.0` | перенесено в карточку | `Пошаговое воспроизведение`, `Проверки`, `Риски` |

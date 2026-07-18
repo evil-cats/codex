@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
@@ -161,6 +161,13 @@ Hermione-профиль должен получать инструкции чт�
     `only when explicitly asked by the user`.
   - embedded-template test проверяет, что unknown placeholder в embedded-шаблоне
     падает при lazy parse.
+  - `build_memory_tool_developer_instructions_bounds_memory_summary` проверяет,
+    что превышение токенного лимита заменяет середину summary маркером
+    `tokens truncated`, сохраняя ограниченные prefix и suffix во фрагменте
+    `DeveloperPolicy`.
+  - `build_memory_tool_developer_instructions_skips_unusable_summary` проверяет
+    отсутствие prompt при отсутствующем, пустом после trim и невалидном UTF-8
+    `memory_summary.md`.
 - `codex-rs/ext/memories/src/tests.rs`:
   - extension tests создают `MemoriesExtensionConfig` без удаленного поля;
   - prompt contribution по-прежнему добавляет developer-policy fragment.
@@ -219,6 +226,18 @@ runbook для прямого запуска `cargo` или `just`.
   - code-scoped правки не потребовались;
   - project-level gates оставлены общему проверочному проходу по правилам
     one-card миграции.
+- Миграция на `0.144.6` после merge `rust-v0.144.6`:
+  - ручная сверка в пределах карточки точного пути embedded-шаблона, типов
+    конфигурации, JSON schema, добавления фрагмента `DeveloperPolicy` расширением,
+    встроенной policy обновления памяти, токенного лимита, поведения при ошибках
+    и регрессионных тестов: `OK`;
+  - рабочий код и embedded `read_path.md` сохранили итоговый контракт без
+    дополнительных правок;
+  - в `prompts_tests.rs` добавлено регрессионное покрытие ограничения summary по
+    токенам и отказа от prompt при отсутствующем, пустом или невалидном UTF-8
+    summary;
+  - общепроектные gates оставлены общему проверочному проходу по правилам
+    миграции одной карточки.
 
 ### Известные падения и пропуски
 

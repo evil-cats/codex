@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-07-14
+updated: 2026-07-18
 source_scope: working-tree
 ---
 
@@ -637,6 +637,23 @@ rollout не удалось получить.
 
 Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
 запуске 2026-07-14 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
+
+Фактическая проверка 2026-07-18 после слияния `rust-v0.144.6`:
+
+| Область | Результат |
+| --- | --- |
+| Изменения upstream `rust-v0.144.4..rust-v0.144.6` | Файлы из карты ответственности карточки не менялись; дополнительных конфликтов и адаптации к новому upstream не потребовалось |
+| `codex-rs/protocol/src/shell_environment.rs` и `codex-rs/core/src/exec_env.rs` | `RuntimeEnv` сохраняет полный набор runtime-переменных идентичности и добавляет их после shell env policy |
+| `codex-rs/core/src/agent/agent_name.rs` и `codex-rs/core/src/tools/handlers/thread_info.rs` | `CODEX_AGENT` и `get_thread_info.agent_name` по-прежнему используют общий helper имени агента |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` и `codex-rs/core/src/tasks/user_shell.rs` | Инструмент `shell_command` и пользовательская `/shell`-команда сохраняют контракт `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID`; UUID `/shell` остается идентификатором `CommandExecutionItem` |
+| `codex-rs/core/src/unified_exec/process_manager.rs` и `codex-rs/core/src/tools/runtimes/mod.rs` | Unified exec сохраняет runtime-слой поверх `local_policy_env`, а обертка snapshot восстанавливает runtime-переменные после `source` |
+| Тестовое покрытие карточки | Сохранились тесты shell env policy, helper имени агента, `shell_command`, восстановления snapshot и unified exec overlay; блок `fork-tests.v1` остается актуальным |
+
+Кодовых изменений по этой карточке после проверки 2026-07-18 не потребовалось.
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-18 не выполнялись по skill-owned one-card правилу; общий
 агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски

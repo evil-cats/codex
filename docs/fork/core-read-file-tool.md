@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: discussion-2026-07-03
 ---
 
@@ -380,7 +380,7 @@ Error: line 10 exceeds ReadFile content token limit
 | Пустой файл возвращает `total=0`, `requested=empty`, `returned=empty`, `complete=yes` | `required` | `read_file` runtime tests |
 | Невалидные диапазоны дают понятные ошибки | `required` | `read_file` runtime tests |
 | Config default равен `10_000`, key равен `[tools.read_file].content_max_tokens`, нулевой лимит отклоняется | `required` | config tests |
-| Binary, non-UTF-8 и неподдерживаемые файлы дают понятную ошибку | `required` | `read_file` runtime tests |
+| Binary, non-UTF-8 и неподдерживаемые файлы дают понятную ошибку | `required` | `read_file` runtime и integration tests |
 | Output остается текстовым и содержит согласованный header | `required` | runtime и integration tests |
 | Tool description направляет агента к `read_file` вместо shell-команд чтения для выбранных файлов и диапазонов | `required` | spec tests |
 | `read_file` является environment-backed: скрыт без environment и получает `environment_id` при multiple environments | `required` | tool visibility tests |
@@ -434,6 +434,7 @@ Error: line 10 exceeds ReadFile content token limit
 | `rust-v0.143.0` one-card migration audit | `доработано` | Разрешен конфликт слияния в `codex-rs/core/src/tools/spec_plan_tests.rs`: ожидания видимости при нескольких окружениях сохраняют `read_file`, `view_image` и upstream `request_permissions`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.144.4` one-card migration audit | `доработано` | `ReadFileHandler` переведен с устаревшего `turn.environments` на выбранный `step_context.environments`; `path` теперь разрешается через `PathUri` без преобразования `cwd` в путь локального хоста. Добавлен интеграционный тест выбора environment в `step_context`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.144.5` one-card migration audit | `без доработки` | Контракт `read_file`, owner-файлы, config/schema, регистрация, visibility и integration coverage сохранились после merge; card-scoped конфликтов нет. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
+| `rust-v0.144.6` one-card migration audit | `доработано` | Контракт `read_file`, owner-файлы, config/schema, регистрация, visibility и integration coverage сохранились после merge; card-scoped конфликтов нет. Добавлен integration regression test фактических handler error branches: понятный отказ для non-UTF-8 файла и directory/non-regular path. Test target в `fork-tests.v1` не изменился и включает новый тест по фильтру `read_file`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |

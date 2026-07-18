@@ -243,6 +243,74 @@ async fn read_file_tool_routes_to_selected_step_environment() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_tool_rejects_non_utf8_and_non_file_paths() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let fixture = test_codex().build(&server).await?;
+
+    let non_utf8_path = fixture.workspace_path("read-file-binary.bin");
+    fs::write(&non_utf8_path, [0xff, 0xfe, 0xfd]).context("write non-UTF-8 read_file fixture")?;
+    let directory_path = fixture.workspace_path("read-file-directory");
+    fs::create_dir_all(&directory_path).context("create read_file directory fixture")?;
+
+    let non_utf8_call_id = "read-file-non-utf8";
+    let directory_call_id = "read-file-directory";
+    let non_utf8_args = json!({ "path": "read-file-binary.bin" });
+    let directory_args = json!({ "path": "read-file-directory" });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(
+                    non_utf8_call_id,
+                    "read_file",
+                    &serde_json::to_string(&non_utf8_args)?,
+                ),
+                ev_function_call(
+                    directory_call_id,
+                    "read_file",
+                    &serde_json::to_string(&directory_args)?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    fixture
+        .submit_turn_with_permission_profile(
+            "try to read the invalid fixtures",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+
+    let non_utf8_output = mock
+        .function_call_output_text(non_utf8_call_id)
+        .context("non-UTF-8 read_file output present")?;
+    assert!(
+        non_utf8_output.contains("unable to read UTF-8 text file at"),
+        "unexpected non-UTF-8 read_file output: {non_utf8_output}"
+    );
+
+    let directory_output = mock
+        .function_call_output_text(directory_call_id)
+        .context("directory read_file output present")?;
+    assert!(
+        directory_output.contains("is not a regular file"),
+        "unexpected directory read_file output: {directory_output}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn custom_tool_unknown_returns_custom_output_error() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

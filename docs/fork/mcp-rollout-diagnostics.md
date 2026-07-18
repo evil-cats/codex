@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: active
 created: 2026-07-09
-updated: 2026-07-16
+updated: 2026-07-18
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -203,8 +203,10 @@ diagnostics связывают `process_exited`, `transport_closed` если о�
 
 Поскольку MCP-вызовы считаются идемпотентными, retry допускается и для
 `tools/call`, а не только для `tools/list` или resource reads. Бесконечный retry
-запрещен: один сбой восстановления или повтора должен вернуться наружу как
-tool error с diagnostic item в rollout.
+запрещен: если повтор исходной operation после успешного recovery снова
+завершается `TransportClosed`, Codex записывает ровно один
+`McpDiagnosticEvent::RecoveryFailed`, возвращает tool error наружу и не запускает
+вторую recovery loop.
 
 ### Model-visible поведение
 
@@ -299,7 +301,7 @@ runtime evidence, а не пользовательским событием по
 | `TransportClosed` persist-ит diagnostic item с `thread_id`, `server_name`, `call_id`, `launch_id` и stderr tail | `required` | core/rmcp integration test |
 | Closed transport вызывает reinitialize и one-shot retry для idempotent `tools/call` | `required` | rmcp-client или core suite test |
 | `process_exited` помечает launch dead, а следующий MCP-вызов выполняет recovery до send | `required` | rmcp-client или core suite lifecycle test |
-| Retry не становится бесконечным при повторном `TransportClosed` | `required` | failure-path test |
+| Повторный `TransportClosed` после replay записывает ровно один `RecoveryFailed` и не запускает вторую recovery loop | `required` | failure-path test с проверкой количества `RecoveryFailed` и `RecoveryStarted` |
 | Bounded stderr tail flush-ит partial line при process close | `required` | rmcp-client unit/integration test |
 | Process liveness не является единственным recovery условием | `required` для review | source audit recovery path |
 | MCP stderr diagnostics не становятся `ResponseItem`/tool output | `required` | reconstruction and output tests |
@@ -416,6 +418,7 @@ runtime evidence, а не пользовательским событием по
 | `git diff --check` | `ok` | Whitespace diff check прошел |
 | `fork install` | `ok` | Установлен release-fast fork-бинарник |
 | Source audit после merge `rust-v0.144.5` | `needs-checks` | Persistence/replay/recovery contracts сохранились; добавлено отсутствовавшее failure-path покрытие повторного `TransportClosed`, общий проверочный проход не запускался подагентом |
+| Source audit после merge `rust-v0.144.6` | `needs-checks` | Diagnostic schema, launch IDs, bounded stderr tail, rollout persistence, reconstruction filtering и one-shot recovery сохранились; failure-path test усилен проверкой ровно одного `RecoveryStarted`, общий проверочный проход не запускался подагентом |
 
 ### Известные падения и пропуски
 
@@ -431,6 +434,12 @@ runtime evidence, а не пользовательским событием по
   `McpDiagnostic`, исключения из model replay, one-shot recovery и lazy recovery
   после `process_exited`. Обнаруженное отсутствие обязательного теста повторного
   `TransportClosed` устранено; обновлённую карту проверок нужно выполнить в общем
+  проверочном проходе.
+- После merge `rust-v0.144.6` source audit подтвердил сохранность diagnostic
+  schema, launch IDs, bounded stderr tail, rollout persistence и recovery/replay
+  path. Failure-path test теперь отдельно доказывает, что повторный
+  `TransportClosed` после replay создаёт ровно один `RecoveryFailed` и не
+  запускает вторую recovery loop; карту проверок нужно выполнить в общем
   проверочном проходе.
 - Текущая установленная версия может продолжать терять stderr в SQLite
   retention; эта карточка не исправляет уже произошедшие rollouts.
@@ -485,6 +494,7 @@ Runtime smoke-проверка на установленном fork-бинаре
 | Хранить bounded stderr tail, а не весь поток | `реализовано` | `codex-rs/rmcp-client/src/stdio_diagnostics.rs` |
 | MCP-вызовы считаются идемпотентными | `реализовано` | One-shot retry в `RmcpClient` |
 | При closed transport нужен reinitialize и one-shot retry | `реализовано` | `mcp_transport_closed_persists_diagnostic_and_retries_once` |
+| Повторный `TransportClosed` после replay записывает ровно один `RecoveryFailed` и не запускает вторую recovery loop | `реализовано` | `mcp_transport_closed_replay_failure_is_not_retried_again` проверяет ровно один `RecoveryFailed` и один `RecoveryStarted` |
 | Потеря child process делает launch непригодным и восстанавливается на следующем вызове | `реализовано` | `mcp_process_exit_marks_launch_dead_and_recovers_on_next_call` |
 | Child process liveness полезен, но недостаточен | `реализовано` | Dead-launch signal ведёт в recovery до следующего operation |
 | Новая карточка не дублирует `mcp-stderr-thread-logs.md` | `перенесено в карточку` | "Обзор", "Карта файлов" |
