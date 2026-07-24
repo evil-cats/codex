@@ -1423,6 +1423,7 @@ mod unit_tests {
 # This is a field recognized by config.toml that is an AbsolutePathBuf in
 # the ConfigToml struct.
 model_instructions_file = "./some_file.md"
+model_instructions_files = ["./model_a.md", "./model_b.md"]
 developer_instructions_files = ["./developer_a.md", "./developer_b.md"]
 
 # This is a field recognized by config.toml.
@@ -1443,6 +1444,23 @@ foo = "xyzzy"
                     .to_string_lossy()
                     .to_string(),
             ),
+        );
+        expected_toml_value.insert(
+            "model_instructions_files".to_string(),
+            TomlValue::Array(vec![
+                TomlValue::String(
+                    AbsolutePathBuf::resolve_path_against_base("./model_a.md", base_dir)
+                        .as_path()
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                TomlValue::String(
+                    AbsolutePathBuf::resolve_path_against_base("./model_b.md", base_dir)
+                        .as_path()
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+            ]),
         );
         expected_toml_value.insert(
             "developer_instructions_files".to_string(),
@@ -1467,6 +1485,42 @@ foo = "xyzzy"
         );
         expected_toml_value.insert("foo".to_string(), TomlValue::String("xyzzy".to_string()));
         assert_eq!(normalized_toml_value, TomlValue::Table(expected_toml_value));
+        Ok(())
+    }
+
+    #[test]
+    fn model_instructions_files_resolve_relative_to_config_directory() -> anyhow::Result<()> {
+        let tmp = tempdir()?;
+        let base_dir = tmp.path();
+        let config =
+            toml::from_str(r#"model_instructions_files = ["./base.md", "./workflow.md"]"#)?;
+
+        let resolved = resolve_relative_paths_in_config_toml(config, base_dir)?;
+        let files = resolved
+            .get("model_instructions_files")
+            .and_then(TomlValue::as_array)
+            .expect("model instructions files should remain an array");
+        let expected = vec![
+            AbsolutePathBuf::resolve_path_against_base("./base.md", base_dir)
+                .as_path()
+                .to_string_lossy()
+                .to_string(),
+            AbsolutePathBuf::resolve_path_against_base("./workflow.md", base_dir)
+                .as_path()
+                .to_string_lossy()
+                .to_string(),
+        ];
+        let actual = files
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("model instructions path should remain a string")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
         Ok(())
     }
 

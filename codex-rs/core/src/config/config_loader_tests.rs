@@ -2680,6 +2680,47 @@ async fn cli_override_model_instructions_file_sets_base_instructions() -> std::i
 }
 
 #[tokio::test]
+async fn cli_override_model_instructions_files_sets_base_instructions() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "").await?;
+
+    let cwd = tmp.path().join("work");
+    tokio::fs::create_dir_all(&cwd).await?;
+
+    let first_path = tmp.path().join("base.md");
+    let second_path = tmp.path().join("workflow.md");
+    tokio::fs::write(&first_path, "\nBase instructions.\n").await?;
+    tokio::fs::write(&second_path, "Workflow instructions.\n\n").await?;
+
+    let cli_overrides = vec![(
+        "model_instructions_files".to_string(),
+        TomlValue::Array(vec![
+            TomlValue::String(first_path.to_string_lossy().to_string()),
+            TomlValue::String(second_path.to_string_lossy().to_string()),
+        ]),
+    )];
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home)
+        .cli_overrides(cli_overrides)
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(cwd),
+            ..ConfigOverrides::default()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("Base instructions.\n\nWorkflow instructions.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn inline_instructions_set_base_instructions() -> std::io::Result<()> {
     let tmp = tempdir()?;
     let codex_home = tmp.path().join("home");

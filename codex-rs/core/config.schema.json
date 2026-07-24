@@ -777,6 +777,14 @@
           ],
           "description": "Optional path to a file containing model instructions."
         },
+        "model_instructions_files": {
+          "default": [],
+          "description": "Markdown-файлы, объединяемые по порядку в инструкции модели.",
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          },
+          "type": "array"
+        },
         "model_provider": {
           "description": "The key in the `model_providers` map identifying the [`ModelProviderInfo`] to use.",
           "type": "string"
@@ -5448,6 +5456,14 @@
         }
       ],
       "description": "Optional path to a file containing model instructions that will override the built-in instructions for the selected model. Users are STRONGLY DISCOURAGED from using this field, as deviating from the instructions sanctioned by Codex will likely degrade model performance."
+    },
+    "model_instructions_files": {
+      "default": [],
+      "description": "Markdown-файлы, объединяемые по порядку для замены встроенных инструкций модели. Поле нельзя использовать вместе с `model_instructions_file`.",
+      "items": {
+        "$ref": "#/definitions/AbsolutePathBuf"
+      },
+      "type": "array"
     },
     "model_provider": {
       "description": "Provider to use from the model_providers map.",

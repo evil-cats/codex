@@ -346,6 +346,27 @@ developer_instructions_files = ["{}", "{}"]
     );
 }
 
+#[test]
+fn model_instructions_files_parse_from_toml() {
+    let first_path = test_absolute_path("/tmp/model-a.md");
+    let second_path = test_absolute_path("/tmp/model-b.md");
+    let config_toml = format!(
+        r#"
+model_instructions_files = ["{}", "{}"]
+"#,
+        first_path.display(),
+        second_path.display()
+    );
+
+    let config = toml::from_str::<ConfigToml>(&config_toml)
+        .expect("model instructions files should deserialize");
+
+    assert_eq!(
+        config.model_instructions_files,
+        vec![first_path, second_path]
+    );
+}
+
 #[tokio::test]
 async fn developer_instructions_files_are_appended_in_order() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -465,6 +486,161 @@ async fn developer_instructions_override_skips_files() -> std::io::Result<()> {
             .all(|warning| !warning.contains("developer instructions file")),
         "{:?}",
         config.startup_warnings
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_instructions_files_are_joined_in_order() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let first_path = codex_home.path().join("model-a.md");
+    let second_path = codex_home.path().join("model-b.md");
+    tokio::fs::write(&first_path, "\nFirst model instructions.\n").await?;
+    tokio::fs::write(&second_path, "Second model instructions.\n\n").await?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_files: vec![first_path.abs(), second_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("First model instructions.\n\nSecond model instructions.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn empty_model_instructions_files_preserve_inline_instructions() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            instructions: Some("Inline model instructions.".to_string()),
+            model_instructions_files: Vec::new(),
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("Inline model instructions.")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_instructions_files_conflict_with_model_instructions_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let single_path = codex_home.path().join("single.md");
+    let listed_path = codex_home.path().join("listed.md");
+
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_file: Some(single_path.abs()),
+            model_instructions_files: vec![listed_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await;
+
+    let err = result.expect_err("model instructions file settings should conflict");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(
+        err.to_string(),
+        "`model_instructions_file` and `model_instructions_files` cannot both be set"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_instructions_files_reject_empty_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let empty_path = codex_home.path().join("empty.md");
+    tokio::fs::write(&empty_path, "\n\n").await?;
+
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_files: vec![empty_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await;
+
+    let err = result.expect_err("empty model instructions file should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(
+        err.to_string(),
+        format!("model instructions file is empty: {}", empty_path.display())
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_instructions_files_reject_missing_file() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let missing_path = codex_home.path().join("missing.md");
+
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_files: vec![missing_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await;
+
+    let err = result.expect_err("missing model instructions file should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        err.to_string().contains(&format!(
+            "failed to read model instructions file {}:",
+            missing_path.display()
+        )),
+        "{err}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn base_instructions_override_skips_model_instructions_files() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let missing_path = codex_home.path().join("missing.md");
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_files: vec![missing_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides {
+            base_instructions: Some("Runtime model instructions.".to_string()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.base_instructions.as_deref(),
+        Some("Runtime model instructions.")
     );
 
     Ok(())

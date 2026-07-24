@@ -3228,6 +3228,63 @@ developer_instructions_files = ["./developer-a.md", "./developer-b.md"]
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn model_instructions_files_are_loaded_into_request_in_order() {
+    skip_if_no_network!();
+    let server = MockServer::start().await;
+
+    let resp_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let mut builder = test_codex()
+        .with_auth(CodexAuth::from_api_key("Test API Key"))
+        .with_pre_build_hook(|home| {
+            std::fs::write(
+                home.join("config.toml"),
+                r#"
+model_instructions_files = ["./model-a.md", "./model-b.md"]
+"#,
+            )
+            .expect("write config");
+            std::fs::write(home.join("model-a.md"), "\nFirst model file.\n")
+                .expect("write first model instructions file");
+            std::fs::write(home.join("model-b.md"), "Second model file.\n\n")
+                .expect("write second model instructions file");
+        });
+    let codex = builder
+        .build(&server)
+        .await
+        .expect("create new conversation")
+        .codex;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = resp_mock.single_request();
+    assert_eq!(
+        request
+            .body_json()
+            .get("instructions")
+            .and_then(serde_json::Value::as_str),
+        Some("First model file.\n\nSecond model file.")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn azure_responses_request_includes_store_and_prefixed_item_ids() {
     skip_if_no_network!();
 

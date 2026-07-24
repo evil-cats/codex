@@ -244,6 +244,11 @@ pub struct ConfigToml {
     /// sanctioned by Codex will likely degrade model performance.
     pub model_instructions_file: Option<AbsolutePathBuf>,
 
+    /// Markdown-файлы, объединяемые по порядку для замены встроенных инструкций
+    /// модели. Поле нельзя использовать вместе с `model_instructions_file`.
+    #[serde(default)]
+    pub model_instructions_files: Vec<AbsolutePathBuf>,
+
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
 

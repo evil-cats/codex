@@ -3768,16 +3768,35 @@ impl Config {
             }
         });
 
-        // Load base instructions override from a file if specified. If the
-        // path is relative, resolve it against the effective cwd so the
-        // behaviour matches other path-like config values.
-        let model_instructions_path = cfg.model_instructions_file.as_ref();
-        let file_base_instructions = Self::try_read_non_empty_file(
-            fs,
-            model_instructions_path,
-            "model instructions file",
-        )
-        .await?;
+        if cfg.model_instructions_file.is_some() && !cfg.model_instructions_files.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "`model_instructions_file` and `model_instructions_files` cannot both be set",
+            ));
+        }
+
+        let file_base_instructions = if base_instructions.is_none() {
+            if cfg.model_instructions_files.is_empty() {
+                Self::try_read_non_empty_file(
+                    fs,
+                    cfg.model_instructions_file.as_ref(),
+                    "model instructions file",
+                )
+                .await?
+            } else {
+                let mut sections = Vec::with_capacity(cfg.model_instructions_files.len());
+                for path in &cfg.model_instructions_files {
+                    let section =
+                        Self::try_read_non_empty_file(fs, Some(path), "model instructions file")
+                            .await?
+                            .expect("a provided model instructions path must produce a section");
+                    sections.push(section);
+                }
+                Some(sections.join("\n\n"))
+            }
+        } else {
+            None
+        };
         let base_instructions = base_instructions
             .or(file_base_instructions)
             .or(cfg.instructions.clone());
