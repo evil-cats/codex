@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: discussion-2026-06-21
 ---
 
@@ -239,6 +239,10 @@ effective_inline_limit =
 - текст команды не попадает в имя файла;
 - содержимое файла равно `ExecCommandToolOutput.raw_output` для этого tool
   response;
+- если upstream-коллектор вывода отбросил середину из-за capture cap,
+  `raw_output` и spill-файл содержат одинаковые head/tail bytes с каноническим
+  marker-ом `... <bytes> bytes omitted ...`; spill не восстанавливает уже
+  отброшенные коллектором bytes;
 - запись файла выполняется один раз до render model-visible response;
 - `response_text()` не выполняет filesystem side effects;
 - файл является Codex-owned runtime artifact, а не пользовательским файлом в
@@ -576,6 +580,36 @@ config, schema или тесты spill-файлов.
 Card-scoped правки кода после этого merge не потребовались. Проверки уровня
 проекта в one-card проходе не запускались; они остаются задачей общего
 проверочного прохода через skill-owned `fork` workflow.
+
+### Перенос на `rust-v0.145.0`
+
+После merge `rust-v0.145.0` upstream-контракт unified exec стал отдельно
+передавать `original_token_count` и `output_omitted_bytes`, вычисленные до
+добавления marker-а пропущенных bytes. Это пересеклось с fork spill-контрактом
+при построении `Config`, в ветке immediate-finished, обработке `SandboxDenied`
+и тестах видимого модели форматирования.
+
+- В `process_manager.rs` upstream `original_token_count`, вычисленный из
+  `collected_output.total_bytes()`, используется и для порога spill, и для
+  метаданных ответа. Повторный подсчет по тексту с уже вставленным marker-ом не
+  выполняется.
+- Spill-файл по-прежнему содержит exact `ExecCommandToolOutput.raw_output`.
+  После upstream-перехода на ограниченный head/tail-коллектор это означает exact
+  retained bytes вместе с `... <bytes> bytes omitted ...`, если середина была
+  отброшена коллектором; `output_omitted_bytes` сохраняется для последующего
+  видимого модели форматирования.
+- Ветка `SandboxDenied` использует upstream `original_token_count`, когда он
+  доступен, сохраняет `output_omitted_bytes`, формирует требуемые fork-поля
+  `chunk_id` и `raw_output`, но оставляет `output_spill: None`.
+- При построении `Config` сохранены оба независимых поля:
+  `exec_inline_output_max_tokens` fork-а и upstream `agents_enabled`.
+- Тесты форматирования spill сохранены вместе с upstream-проверкой метаданных
+  пропущенного вывода; все конструкции `ExecCommandToolOutput` явно задают и
+  `output_omitted_bytes`, и `output_spill`.
+
+Конфликты в области карточки разрешены в owner-файлах. Проверки уровня проекта в
+one-card проходе не запускались; они остаются задачей общего проверочного
+прохода через skill-owned `fork` workflow.
 
 ### Известные падения и пропуски
 

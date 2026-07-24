@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: working-tree
 ---
 
@@ -590,14 +590,23 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Миграционный проход `rust-v0.144.5`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow проверки уровня проекта, принятие snapshots, форматирование, генераторы и сборка не запускались; проверки карточки и общие gates переданы parent-agent |
 | Миграционный проход `rust-v0.144.6`: статическая сверка owner-файлов | `preserved-current-pass` | Upstream diff `rust-v0.144.5..rust-v0.144.6` не затрагивает owner-файлы карточки; после merge сохранены begin/end lifecycle core activity, model-visible `FunctionCallOutput`, protocol/app-server item и history replay, analytics ignore, TUI live/replay lifecycle, grouping/rendering/transcript и заявленное test/snapshot coverage |
 | Миграционный проход `rust-v0.144.6`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow tests, build, generators, format/fix, markdownlint и snapshot acceptance не запускались; card-level проверки и общие gates переданы parent-agent |
+| Миграционный проход `rust-v0.145.0`: жизненный цикл exec и рендеринг | `resolved-current-pass` | В `exec_cell/model.rs` сохранён жизненный цикл core `File` по `CoreToolActivityStatus` поверх нового upstream `LiveCommandOutput`: обычный вызов exec считается активным до появления `duration`, а элемент core activity — пока имеет `InProgress`; в `exec_cell/render.rs` группировка `File` перенесена на новый механизм рендеринга с заимствованными срезами без клонирования command output |
+| Миграционный проход `rust-v0.145.0`: сохранённая история thread | `resolved-current-pass` | В `thread_transcript.rs` сохранён отдельный renderer `CoreToolActivity` и одновременно принят новый upstream-интерфейс построения transcript с `split_reasoning_summary_parts` и `InlineVisualizationContext` |
+| Миграционный проход `rust-v0.145.0`: статическая сверка остального контракта | `preserved-current-pass` | Сохранены `TurnItem::CoreToolActivity` и его enum, события начала и завершения вокруг маршрутизации tool, привязанное к environment вычисление `read_file detail`, преобразование app-server v2 и replay, явное исключение из analytics, маршрутизация live/replay в TUI, тесты группировки, snapshots и ограниченная по размеру сводка `/agent` |
+| Миграционный проход `rust-v0.145.0`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow тесты, сборка, генераторы, форматирование, markdownlint, `fork tests --mode list` и принятие snapshots не запускались; проверки карточки и общие gate-проверки переданы parent-agent |
 
 ### Известные падения и пропуски
 
-- До текущего миграционного прохода актуальных падений card-level checks,
+- До миграционного прохода `rust-v0.145.0` актуальных падений проверок карточки,
   проверки карточек, форматирования и быстрой сборки не было.
-- В миграционном проходе `rust-v0.144.6` правки кода не потребовались, а
-  проверки уровня проекта не запускались по ограничению subagent one-card flow;
-  их выполняет parent-agent в общем проверочном проходе.
+- В миграционном проходе `rust-v0.145.0` проверки уровня проекта не запускались
+  по ограничению subagent one-card flow; их выполняет parent-agent в общем
+  проверочном проходе.
+- На момент subagent-прохода в общих owner-файлах
+  `chatwidget/tool_lifecycle.rs`, `history_cell/mod.rs` и сгенерированном
+  `ThreadItem.ts` оставались конфликты других областей. Участки
+  `CoreToolActivity` в них были сохранены, а чужие конфликты намеренно не
+  разрешались этой карточкой.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
   `CoreToolActivity` в app-server thread history, exhaustive match в
   `codex-analytics`, неверный TUI test filter и внешний `.snap.new` вместо
@@ -619,7 +628,7 @@ Runtime-проверка этой карточки должна подтверж
 wrapper-ом `fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник был
 установлен wrapper-ом `fork install` в
 `/home/slader/.local/bin/codex-hermione`. Миграционный subagent-проход
-`rust-v0.144.6` эти gates не повторял.
+`rust-v0.145.0` эти gates не повторял.
 
 ## Риски и ограничения
 

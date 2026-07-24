@@ -120,10 +120,8 @@ impl ReadFileHandler {
             ))
         })?;
         let model_visible_path = path_uri.inferred_native_path_string();
-        let sandbox = turn.file_system_sandbox_context(
-            /*additional_permissions*/ None,
-            turn_environment.cwd(),
-        );
+        let sandbox = turn
+            .file_system_sandbox_context(/*additional_permissions*/ None, turn_environment);
         let fs = turn_environment.environment.get_filesystem();
 
         let metadata = fs

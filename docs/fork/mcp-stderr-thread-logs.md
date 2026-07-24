@@ -2,7 +2,7 @@
 id: fork-mcp-stderr-thread-logs
 status: active
 created: 2026-07-09
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: investigation-019f41cd-da28-7dc3-b2a5-9438bd0e8bdd
 ---
 
@@ -92,7 +92,7 @@ subagent может иметь собственный MCP child process и со�
 | `codex-rs/rmcp-client/tests/foreign_stdio_cwd.rs` | Обновляет direct stdio-client test call site после добавления `server_name` |
 | `codex-rs/rmcp-client/tests/process_group_cleanup.rs` | Обновляет local stdio integration test call sites после добавления `server_name` |
 | `codex-rs/rmcp-client/tests/resources.rs` | Обновляет resource integration test call site после добавления `server_name` |
-| `codex-rs/codex-mcp/src/rmcp_client.rs` | Знает `server_name`, создает stdio client и передает `server_name` в rmcp-client |
+| `codex-rs/codex-mcp/src/rmcp_client.rs` | Знает `server_name`, создает stdio client, передает `server_name` в rmcp-client и сохраняет startup span для фонового повторного подключения Codex Apps |
 | `codex-rs/codex-mcp/src/connection_manager.rs` | Создает per-server startup futures и background startup summary; смысловой owner span propagation, кодовых правок не потребовал |
 | `codex-rs/core/src/session/session.rs` | Знает concrete `thread_id` во время session init; `session_init.mcp_manager_init` теперь несет `thread_id` |
 | `codex-rs/state/src/log_db.rs` | Log DB tracing layer: добавлен regression test для spawned stderr event с `thread_id` и structured fields |
@@ -254,6 +254,14 @@ output или TUI history. Цель - локальные logs/feedback diagnosti
    допустимый fallback - маленький Codex-owned context struct выше transport
    слоя, но не ad hoc параметр в каждом низкоуровневом вызове.
 
+6. Фоновое повторное подключение Codex Apps использует исходный startup span.
+
+   `CodexAppsStartupReconnect` принадлежит тому же `AsyncManagedClient` и не
+   создает новую Codex-сессию. Поэтому он сохраняет `tracing::Span::current()`
+   во время первоначального startup и instrument-ирует этим span свою
+   `tokio::spawn`. Новый stdio child получает `thread_id` исходной сессии, а не
+   случайный scope запроса, который обнаружил недоступность клиента.
+
 Отклоненные альтернативы:
 
 | Альтернатива | Почему отклонена |
@@ -271,7 +279,9 @@ output или TUI history. Цель - локальные logs/feedback diagnosti
    не дублировать новый параметр.
 2. Проверить startup span chain: `Session::new`, `McpConnectionManager::new`,
    `AsyncManagedClient::new`, `ManagedClientStartup::start` и per-server spawned
-   tasks должны сохранять scope с `thread_id`.
+   tasks должны сохранять scope с `thread_id`. Фоновое повторное подключение
+   Codex Apps должно использовать исходный startup span, а не текущий scope
+   вызывающего tool-list запроса.
 3. В local stdio launcher instrument-ировать detached stderr-reader текущим
    span before spawn.
 4. Перевести local stderr events на stable message plus structured fields.
@@ -291,6 +301,7 @@ output или TUI history. Цель - локальные logs/feedback diagnosti
 | --- | --- | --- |
 | Local MCP stderr event сохраняется с `thread_id` сессии | `required` | `spawned_mcp_stderr_event_keeps_thread_id_and_fields` |
 | Startup stderr до первого tool call получает `thread_id` | `required` | `session_init.mcp_manager_init` содержит `thread_id`; regression проверяет spawned task span attribution |
+| Фоновое повторное подключение Codex Apps сохраняет исходный `thread_id` | `required` | Source audit `CodexAppsStartupReconnect::reconnect_in_background`: сохраненный `startup_span` instrument-ирует spawned task; существующий lifecycle test компилирует и выполняет этот route |
 | `server_name` присутствует в searchable log body/fields | `required` | `spawned_mcp_stderr_event_keeps_thread_id_and_fields`; compile coverage stdio call chain |
 | Stderr payload логируется отдельным field | `required` | `spawned_mcp_stderr_event_keeps_thread_id_and_fields` проверяет `stderr_line` |
 | Error reading stderr pipe сохраняет `server_name`, `program`, `error` | `required` | Source audit `stdio_server_launcher.rs`; отдельного fault-injection test пока нет |
@@ -320,6 +331,16 @@ Card-level проверки запускает skill-owned command `fork tests`.
     {
       "purpose": "rmcp stdio call chain",
       "argv": ["just", "test", "-p", "codex-rmcp-client", "resources"]
+    },
+    {
+      "purpose": "Codex Apps startup reconnect lifecycle",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-mcp",
+        "list_all_tools_reconnects_failed_codex_apps_startup_and_reuses_client"
+      ]
     }
   ]
 }
@@ -353,6 +374,7 @@ Card-level проверки запускает skill-owned command `fork tests`.
 | `.codex/skills/fork/scripts/fork install` | `passed` | Собранный binary установлен как `${HOME}/.local/bin/codex-hermione` и прошел metadata/version checks |
 | Проверка исходного кода после слияния на `hermione-0.144.5` | `passed` | Сохранены startup span с `thread_id`, явное инструментирование local stderr-reader, одинаковые структурированные поля local/executor stdio, передача `server_name` и регрессионный тест в `codex-state`; проверки уровня проекта оставлены общему проверочному проходу |
 | Проверка исходного кода после слияния на `hermione-0.144.6` | `passed` | Сохранены привязка к thread, структурированные события local/executor, передача `server_name`, ограниченное диагностическое состояние и тесты; исполняемая карта не изменилась, проверки уровня проекта оставлены общему проверочному проходу |
+| Проверка исходного кода после слияния на `hermione-0.145.0` | `passed` | Сохранены span запуска с `thread_id`, инструментирование локального reader stderr, одинаковые поля local/executor stderr и регрессионный тест; для нового фонового повторного подключения Codex Apps добавлено сохранение исходного startup span, проверки уровня проекта оставлены общему проходу |
 
 ### Миграция на `rust-v0.144.5`
 
@@ -410,6 +432,42 @@ diff диагностики восстановления MCP в области �
 завершившийся соседним слоем восстановления. Менять эту семантику в карточке
 привязки thread logs нельзя без отдельного решения по контракту восстановления.
 
+### Миграция на `rust-v0.145.0`
+
+После слияния `rust-v0.145.0` контракт stderr-логов с привязкой к thread
+сохранен с одной адаптацией нового фонового повторного подключения Codex Apps:
+
+- `session_init.mcp_manager_init` по-прежнему содержит конкретный `thread_id`, а
+  созданный в `AsyncManagedClient::new(...)` future запуска сохраняет текущий
+  span через `.in_current_span()`;
+- локальный reader stderr явно захватывает `tracing::Span::current()` и
+  запускает отделенную задачу с этим span; обычные строки и ошибки чтения
+  сохраняют стабильные сообщения и поля `server_name`, `program`, `stderr_line`
+  или `error`;
+- transport через executor передает `server_name` и `program_name` в
+  `ExecutorProcessTransport`, отделяет stderr от stdout-протокола, восстанавливает
+  пропущенные фрагменты output по номеру последовательности и сохраняет ту же
+  форму структурированного события stderr;
+- `StdioServerCommand`, `RmcpClient::new_stdio_client(...)` и
+  `make_rmcp_client(...)` продолжают передавать `server_name` без вывода имени из
+  пути к command;
+- новое фоновое повторное подключение для Codex Apps изначально создавало startup
+  future внутри отдельной `tokio::spawn` без исходного session scope. Теперь
+  `CodexAppsStartupReconnect` сохраняет startup span при создании и instrument-ирует
+  им фоновую задачу. Повторный запуск stdio поэтому наследует тот же `thread_id`,
+  что и исходный `AsyncManagedClient`;
+- соседний sink rollout-диагностики продолжает писать ограниченный
+  `McpDiagnosticItem` через существующий `McpDiagnosticContext` и не добавляет
+  stderr в model context, tool output или TUI history;
+- регрессионное покрытие
+  `spawned_mcp_stderr_event_keeps_thread_id_and_fields` сохранено, а в блок
+  `fork-tests.v1` добавлен существующий тест lifecycle фонового повторного
+  подключения Codex Apps.
+
+Тесты, форматирование, сборка, генераторы и другие проверки уровня проекта в
+one-card проходе не запускались; их должен выполнить родительский общий
+проверочный проход.
+
 ### Известные падения и пропуски
 
 - `Transport closed` остается отдельной runtime-проблемой. Эта карточка только
@@ -418,8 +476,6 @@ diff диагностики восстановления MCP в области �
   подтвержденное поведение `LogDbLayer::try_send`. Если новый тест станет
   flaky под нагрузкой, нужно либо flush/контролировать очередь, либо отдельно
   улучшать observability dropped logs.
-- Background reconnect для Codex Apps MCP может требовать отдельной проверки
-  span preservation, потому что reconnect запускается из background task.
 
 ## Runtime, сборка и установка
 
@@ -476,5 +532,3 @@ diff диагностики восстановления MCP в области �
 
 - Нужно ли добавлять отдельный counter/warn для dropped log entries в
   `LogDbLayer::try_send`, или оставить это отдельной observability карточкой?
-- Должен ли background reconnect сохранять исходный thread attribution или
-  получать новый current thread context при каждом reconnect?

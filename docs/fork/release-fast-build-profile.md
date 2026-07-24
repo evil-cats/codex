@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
@@ -387,6 +387,28 @@ Skill-owned workflow сохраняет разделение владельце�
 `codex-rs/target/release-fast/codex` и его stripped-состояние должен подтвердить
 общий родительский проход.
 
+## Migration check: `0.145.0`
+
+Во время проверки одной карточки при переносе на `rust-v0.145.0` в текущей
+рабочей копии подтверждены кодовые якоря `[profile.release-fast]`,
+`inherits = "release"`, `lto = "thin"`, `codegen-units = 32`,
+`debug = "none"`, `strip = "symbols"` и внутренний target
+`build-fast-release`, который собирает package `codex-cli` с Cargo profile
+`release-fast`.
+
+Версия workspace установлена в `0.145.0`, а package `codex-cli` — в
+`0.145.0+hermione`. Запись `codex-cli` в текущем `Cargo.lock` содержит ту же
+fork-version. Сам профиль не добавляет зависимостей и не требует отдельной
+правки lockfile.
+
+В `Cargo.lock` остаются общие merge-конфликты вокруг других fork-пакетов;
+они не принадлежат контракту `release-fast` и в этом one-card проходе не
+разрешались. Сборка, тесты, генераторы, форматирование и markdownlint не
+запускались; итоговую согласованность lockfile, stripped-артефакт
+`codex-rs/target/release-fast/codex` и версию бинарника должен подтвердить
+общий родительский проход через `fork build-fast` после разрешения всех
+Cargo-конфликтов.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -434,6 +456,7 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Migration `0.144.5` | локально подтверждены якоря профиля, target `build-fast-release`, владение workflow сборки и установки, версии workspace `0.144.5` и `codex-cli` `0.144.5+hermione`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; кодовые правки не потребовались | сборка, установка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
 | Migration `0.144.6` | локально подтверждены якоря профиля, target `build-fast-release`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; в Git-состоянии проверенных файлов-владельцев нет неразрешённых конфликтов или конфликтных маркеров; кодовые правки не потребовались | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
 | Общий build gate migration `0.144.6` | `passed`: собран `codex-rs/target/release-fast/codex`; отдельная проверка показала ELF x86-64 stripped и `codex-cli 0.144.6+hermione` | SHA-256 `07dfa949a0d78f485186c06fc1dc7024beddf471522a7f41891c2097ba626880`; размер `358455432` байта |
+| Migration `0.145.0` | локально подтверждены якоря профиля, target `build-fast-release`, версии workspace `0.145.0`, package и lock-записи `codex-cli` `0.145.0+hermione`; кодовые правки не потребовались | общие конфликты `Cargo.lock` принадлежат другим fork-пакетам; сборка и прочие project-level gates в one-card проходе не запускались |
 
 ### Известные падения и пропуски
 
@@ -488,3 +511,4 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Проверить перенос profile на `0.144.4` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт | "Migration check: `0.144.4`", "Проверки" |
 | Проверить перенос profile на `0.144.5` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт и метаданные версии, `fork install` — установленный исполняемый файл при необходимости | "Migration check: `0.144.5`", "Проверки" |
 | Проверить перенос profile на `0.144.6` | перенесено; общий родительский проход должен подтвердить stripped-артефакт | "Migration check: `0.144.6`", "Проверки" |
+| Проверить перенос profile на `0.145.0` | перенесено; после разрешения общих Cargo-конфликтов родительский проход должен подтвердить согласованность lockfile, stripped-артефакт и версию бинарника | "Migration check: `0.145.0`", "Проверки" |

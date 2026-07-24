@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: discussion-2026-07-03
 ---
 
@@ -435,6 +435,7 @@ Error: line 10 exceeds ReadFile content token limit
 | `rust-v0.144.4` one-card migration audit | `доработано` | `ReadFileHandler` переведен с устаревшего `turn.environments` на выбранный `step_context.environments`; `path` теперь разрешается через `PathUri` без преобразования `cwd` в путь локального хоста. Добавлен интеграционный тест выбора environment в `step_context`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.144.5` one-card migration audit | `без доработки` | Контракт `read_file`, owner-файлы, config/schema, регистрация, visibility и integration coverage сохранились после merge; card-scoped конфликтов нет. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.144.6` one-card migration audit | `доработано` | Контракт `read_file`, owner-файлы, config/schema, регистрация, visibility и integration coverage сохранились после merge; card-scoped конфликтов нет. Добавлен integration regression test фактических handler error branches: понятный отказ для non-UTF-8 файла и directory/non-regular path. Test target в `fork-tests.v1` не изменился и включает новый тест по фильтру `read_file`. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
+| `rust-v0.145.0` one-card migration audit | `без доработки` | Полный контракт `read_file`, owner-файлы, config/schema, регистрация, environment-backed visibility и integration coverage сохранились после merge. Конфликты в `codex-rs/core/src/config/mod.rs` и `codex-rs/core/src/tools/spec_plan.rs` не затрагивают card-owned участки и оставлены родительскому агенту. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
 | `just write-config-schema` | `passed` | Обновил `codex-rs/core/config.schema.json` |

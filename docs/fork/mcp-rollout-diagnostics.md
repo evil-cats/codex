@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: active
 created: 2026-07-09
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -82,6 +82,7 @@ SQLite log DB сохранила строку tool-call error, но в этом 
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Явно игнорировать `McpDiagnostic` при восстановлении model history и world-state replay |
 | `codex-rs/core/src/mcp_tool_call.rs` | Связать `call_id`, `thread_id`, `turn_id`, `server_name`, `tool_name` и diagnostic persistence для tool-call failure |
 | `codex-rs/codex-mcp/src/connection_manager.rs` | Сохранить server-level context и не терять `server_name` при маршрутизации `call_tool` |
+| `codex-rs/codex-mcp/src/rmcp_client.rs` | Передать session-owned `McpDiagnosticContext` в создаваемый `RmcpClient` при локальном и executor-backed stdio launch |
 | `codex-rs/rmcp-client/src/rmcp_client.rs` | Обнаруживать closed transport или непригодный launch, reinitialize через `transport_recipe`, retry operation один раз и эмитить recovery diagnostics |
 | `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Накапливать bounded stderr tail per stdio launch, связывать его с `launch_id` и передавать lifecycle signal о завершении процесса |
 | `codex-rs/rmcp-client/src/executor_process_transport.rs` | Для executor stdio использовать lifecycle events `Exited`/`Closed`/`Failed` и stderr chunks как источник diagnostics и dead-launch signal |
@@ -419,6 +420,7 @@ runtime evidence, а не пользовательским событием по
 | `fork install` | `ok` | Установлен release-fast fork-бинарник |
 | Source audit после merge `rust-v0.144.5` | `needs-checks` | Persistence/replay/recovery contracts сохранились; добавлено отсутствовавшее failure-path покрытие повторного `TransportClosed`, общий проверочный проход не запускался подагентом |
 | Source audit после merge `rust-v0.144.6` | `needs-checks` | Diagnostic schema, launch IDs, bounded stderr tail, rollout persistence, reconstruction filtering и one-shot recovery сохранились; failure-path test усилен проверкой ровно одного `RecoveryStarted`, общий проверочный проход не запускался подагентом |
+| Source audit после merge `rust-v0.145.0` | `needs-checks` | Контракт диагностики сохранён вместе с upstream-тайм-аутом запуска, обязательным распространением ошибки OAuth refresh и ограничением строки executor stderr; общий проверочный проход не запускался подагентом |
 
 ### Известные падения и пропуски
 
@@ -441,6 +443,11 @@ runtime evidence, а не пользовательским событием по
   `TransportClosed` после replay создаёт ровно один `RecoveryFailed` и не
   запускает вторую recovery loop; карту проверок нужно выполнить в общем
   проверочном проходе.
+- После merge `rust-v0.145.0` source audit подтвердил сохранность контракта
+  диагностики. При разрешении конфликтов сохранены новый upstream-тайм-аут
+  запуска, обязательное распространение ошибки OAuth refresh и ограничение
+  размера строки executor stderr; карту проверок нужно выполнить в общем
+  проходе.
 - Текущая установленная версия может продолжать терять stderr в SQLite
   retention; эта карточка не исправляет уже произошедшие rollouts.
 - Если future implementation решит хранить полный stderr artifact рядом с

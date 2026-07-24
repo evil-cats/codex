@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 ---
 
@@ -18,7 +18,7 @@ source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 | Статус | `active` |
 | Пользовательская цель | Показывать в `environment_context` тот же смысловой `project-name`, который уже можно отображать в `status_line` |
 | Видимый модели тег | `<project_name>...</project_name>` |
-| Источник значения | первый путь из `Config::effective_workspace_roots()` |
+| Источник значения | первый workspace root основного окружения из `TurnEnvironmentSnapshot::primary()` |
 | Формат значения | имя последнего компонента первого workspace root, с резервом в виде полного пути |
 | Основной файл | `codex-rs/core/src/context/world_state/environment.rs` |
 | Вспомогательный файл | `codex-rs/core/src/context/environment_context.rs` |
@@ -85,12 +85,12 @@ TUI уже умеет показывать `project-name` в поверхнос�
 5. Тег называется `project_name`, а не `project-name`, потому что соседние
    структурированные поля в `environment_context` уже используют snake_case:
    `current_date`, `workspace_roots`.
-6. Для живого `TurnContext` значение берется из первого элемента
-   `Config::effective_workspace_roots()`. Для обычного запуска в этом checkout
+6. Для живого `TurnContext` значение берется из первого workspace root основного
+   окружения в `TurnEnvironmentSnapshot`. Для обычного запуска в этом checkout
    это дает `codex`; для тестового root `/repo` дает `repo`.
 7. `EnvironmentsState::from_turn_context_with_environments(...)` вычисляет
-   `workspace_roots` один раз и использует один и тот же снимок roots для
-   `project_name` и `FileSystemContext`.
+   `workspace_roots` один раз через `environments.primary()` и использует один и
+   тот же срез roots для `project_name` и `FileSystemContext`.
 8. Для текущего diff по world-state значение сохраняется в `EnvironmentsSnapshot`.
    Для совместимого восстановления из `TurnContextItem` отдельное protocol-поле
    не добавляется: значение реконструируется из `workspace_roots`; если старый
@@ -122,16 +122,18 @@ TUI уже умеет показывать `project-name` в поверхнос�
 
 ## Архитектурное решение
 
-### Почему источник - `effective_workspace_roots`
+### Почему источник - основное `TurnEnvironment`
 
 `status_line` визуально показывает project name через TUI-поверхности статуса, но
 эта логика находится выше `codex-core`. Привязывать `environment_context` к TUI
 нельзя: core используется не только в terminal UI, а видимый модели context
 должен собираться в одном месте независимо от интерфейса.
 
-`Config::effective_workspace_roots()` уже является источником уровня core для
-рабочих корней. Он используется рядом для `FileSystemContext`, поэтому тот же
-вектор корней подходит как источник имени проекта.
+Начиная с `rust-v0.145.0`, живые рабочие корни принадлежат объектам
+`TurnEnvironment`, выбранным для хода. `TurnEnvironmentSnapshot::primary()` дает
+основное готовое окружение, а его `TurnEnvironment::workspace_roots()` уже
+используется рядом для `FileSystemContext`, поэтому тот же срез корней подходит
+как источник имени проекта.
 
 ### Почему берется первый workspace root
 
@@ -173,12 +175,10 @@ project_name: Option<String>,
 Добавить helper в `world_state/environment.rs`:
 
 ```rust
-fn project_name_from_workspace_roots(workspace_roots: &[AbsolutePathBuf]) -> Option<String> {
+fn project_name_from_workspace_roots(workspace_roots: &[PathUri]) -> Option<String> {
     workspace_roots.first().map(|root| {
-        root.as_path()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().into_owned())
+        root.basename()
+            .unwrap_or_else(|| root.inferred_native_path_string())
     })
 }
 ```
@@ -191,29 +191,36 @@ fn project_name_from_workspace_roots(workspace_roots: &[AbsolutePathBuf]) -> Opt
 
 ### 3. Обновить создание из живого `TurnContext`
 
-В `EnvironmentsState::from_turn_context_with_environments(...)` сначала сохранить
-`effective_workspace_roots` в локальную переменную:
+В `EnvironmentsState::from_turn_context_with_environments(...)` получить roots
+основного готового окружения:
 
 ```rust
-let workspace_roots = turn_context.config.effective_workspace_roots();
+let workspace_roots = environments
+    .primary()
+    .map(TurnEnvironment::workspace_roots)
+    .unwrap_or_default();
 ```
 
 Затем выставить:
 
 ```rust
-project_name: project_name_from_workspace_roots(&workspace_roots),
+project_name: project_name_from_workspace_roots(workspace_roots),
 ```
 
 Тот же `workspace_roots` передать в `FileSystemContext::from_permission_profile`.
-Это важно: `project_name` и `filesystem` должны строиться из одного снимка roots,
-а не вызывать `effective_workspace_roots()` повторно.
+Это важно: `project_name` и `filesystem` должны строиться из одного снимка roots
+основного окружения.
 
 ### 4. Обновить восстановление из `TurnContextItem`
 
-В `EnvironmentsState::from_turn_context_item(...)` вычислить roots один раз:
+В `EnvironmentsState::from_turn_context_item(...)` восстановить roots и один раз
+преобразовать прежние `AbsolutePathBuf` в текущий тип `PathUri`:
 
 ```rust
-let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item);
+let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item)
+    .iter()
+    .map(PathUri::from_abs_path)
+    .collect::<Vec<_>>();
 ```
 
 Использовать этот же вектор для:
@@ -232,7 +239,7 @@ filesystem: Some(FileSystemContext::from_permission_profile(
 ```
 
 Так `project_name` и `filesystem` остаются согласованными при replay старых и
-новых rollouts.
+новых rollouts, несмотря на переход живого environment-контекста на `PathUri`.
 
 ### 5. Обновить snapshot и diff
 
@@ -469,9 +476,9 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 
 ## Риски
 
-- Если будущий рефакторинг изменит `Config::effective_workspace_roots()`, нужно
-  проверить, что `project_name` и `filesystem.workspace_roots` по-прежнему
-  строятся из одного снимка roots.
+- Если будущий рефакторинг изменит выбор основного `TurnEnvironment` или
+  `TurnEnvironment::workspace_roots()`, нужно проверить, что `project_name` и
+  `filesystem.workspace_roots` по-прежнему строятся из одного снимка roots.
 - Если будет добавлен явный `project_name` в protocol, нужно решить приоритет:
   сохраненное явное значение или значение, вычисленное из roots. В текущей
   версии такого поля нет.
@@ -496,13 +503,32 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
 проход.
 
+## Аудит миграции `rust-v0.145.0`
+
+Upstream перенес владение живыми workspace roots из `Config` в объекты
+`TurnEnvironment`, выбранные для хода, и изменил тип roots для рендеринга с
+`AbsolutePathBuf` на `PathUri`. При разрешении конфликта контракт перенесён на
+новую архитектуру:
+
+| Область | Результат |
+| --- | --- |
+| Источник живого project name | первый workspace root из `TurnEnvironmentSnapshot::primary()` |
+| Согласованность с filesystem | `project_name` и `FileSystemContext` используют один срез `TurnEnvironment::workspace_roots()` |
+| Совместимое восстановление | roots из `TurnContextItem` преобразуются в `PathUri` один раз перед вычислением `project_name` и filesystem |
+| Формат и diff | сохранены `<project_name>`, XML escaping, snapshot и сравнение при `render_diff(...)` |
+| Регрессионное покрытие | сохранены три обязательных теста и блок `fork-tests.v1` |
+
+Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
+Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
+проход.
+
 ## Проверка покрытия
 
 | Требование | Статус | Где покрыто |
 | --- | --- | --- |
 | Добавить видимый модели project name | перенесено | `EnvironmentsState.project_name` и `RenderedEnvironments::body(...)` |
-| Использовать тот же смысл, что `status_line` `project-name` | перенесено | имя последнего компонента первого effective workspace root |
-| Не связывать core с TUI | перенесено | источник `Config::effective_workspace_roots()` |
+| Использовать тот же смысл, что `status_line` `project-name` | перенесено | имя последнего компонента первого workspace root основного `TurnEnvironment` |
+| Не связывать core с TUI | перенесено | источник `TurnEnvironmentSnapshot::primary()` |
 | Не расширять protocol без нужды | перенесено | восстановление из `TurnContextItem.workspace_roots` |
 | Сохранять XML escaping | перенесено | `push_optional_element`, `push_xml_escaped_text` и test с `repo & docs` |
 | Проверить workspace root вместо `cwd` | перенесено | `turn_context_item_project_name_uses_workspace_root_name` |

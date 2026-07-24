@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -367,6 +367,31 @@ snapshots для этой миграции не потребовались.
   а настройки строк имеют тип `u16` и ограничение снизу значением `1`;
   отдельного верхнего runtime-ограничения для `small_rows`, `normal_rows` и
   `large_rows` нет.
+
+Заметка для переноса на `rust-v0.145.0`: upstream изменил replay/reflow и
+сгенерированную форму `ThreadItem`, поэтому перенос потребовал адаптации, а не
+простого сохранения прежних конфликтных сторон:
+
+- `InitialHistoryReplayBuffer` и terminal insertion продолжают хранить
+  `HistoryCellDisplayItem` / `HistoryInsertItem`, чтобы `LocalImage` переживал
+  initial replay, thread-switch replay и resize reflow; при этом новая
+  upstream-ветвь `render_from_transcript_tail || overlay.is_some()` сохраняется
+  и планирует немедленный source-backed reflow;
+- `finish_required_stream_reflow` очищает `retained_items`, а не устаревшие
+  `retained_lines`, перед отложенным воспроизведением хвоста transcript;
+- новые upstream-тесты capped replay в `app/tests.rs` используют
+  `buffer_initial_history_replay_display_items`, `retained_items` и
+  `ReflowRenderResult.items`; сам файл остаётся неразрешённым из-за чужих
+  конфликтов в других участках;
+- обычные строки по-прежнему проходят как `HyperlinkLine`, а изображения — как
+  отдельный `HistoryInsertItem::Image`; новые upstream-изменения wrapping не
+  возвращают terminal history к line-only контракту;
+- сгенерированный `ThreadItem.ts` сохраняет новую upstream-форму
+  `{ "type": "sleep" } & SleepItem` и одновременно fork-поле
+  `previewSize: ImagePreviewSize` в `imageView`;
+- конфликт `app/event_dispatch.rs`, относящийся к lifecycle runtime-потоков, не
+  является частью этой карточки и намеренно оставлен владельцу соответствующей
+  fork-доработки.
 
 ## Проверки
 

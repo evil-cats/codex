@@ -2,7 +2,7 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: discussion-2026-07-05..discussion-2026-07-10
 ---
 
@@ -282,6 +282,16 @@ V2-инструкции о вложенности. Фильтр тестов к�
 V1/V2 границу. Runtime-код
 не менялся; команды уровня карточки и проекта в one-card проходе не запускались
 и остаются для общего проверочного прохода родительского агента.
+
+При переносе на `rust-v0.145.0` upstream расширил `SpawnAgentToolOptions`
+полями видимости agent type, model overrides и версии multi-agent backend, а
+список model overrides начал фильтроваться по совместимости с V1/V2. Слитый V1
+description уже сохранил согласованный tool-owned guidance без upstream
+explicit-request guard и sidecar-work workflow. Два V1-теста адаптированы к
+новому options-контракту: они явно выбирают `MultiAgentVersion::V1`, а фикстура
+видимой модели помечена как совместимая с V1. V2 task-depth guidance и runtime
+API не менялись; команды уровня карточки и проекта в one-card проходе не
+запускались и остаются для общего проверочного прохода родительского агента.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |

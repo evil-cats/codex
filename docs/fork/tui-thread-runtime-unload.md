@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: discussion-2026-07-09-tui-mcp-runtime-leak
 ---
 
@@ -83,6 +83,7 @@ TUI переключается на другой primary thread
 | `codex-rs/tui/src/app/thread_routing.rs` | Разделены helpers для event subscription cleanup и runtime unload вместо обманчивого `shutdown_current_thread` |
 | `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle |
 | `codex-rs/tui/src/app/event_dispatch.rs` | `/fork` и shutdown-first exit переведены на runtime unload там, где live-runtime больше не нужен |
+| `codex-rs/tui/src/app/safety_buffering.rs` | Safety-buffering retry сначала прикрепляет forked thread, затем выгружает прежние tracked runtimes |
 | `codex-rs/tui/src/app/side.rs` | Side conversation close переведен на runtime unload, а не только interrupt plus unsubscribe |
 | `codex-rs/core/src/agent/control/legacy.rs` | Не менять без новой причины; `close_agent` уже является настоящим shutdown path |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
@@ -141,13 +142,15 @@ TUI должен использовать runtime unload, когда стары�
 | `/clear` | Старый primary runtime выгружается, новый clean thread стартует; старая история остается resumable |
 | Новая сессия / `NewSession` | Старый primary runtime выгружается перед или во время перехода на новый thread |
 | `/fork` с переходом на forked thread | Старый primary runtime выгружается после успешного attach forked runtime |
+| Prompt backtrack с переходом на forked thread | Старые tracked runtimes выгружаются только после успешного attach ветки для редактирования prompt |
+| Safety-buffering retry | Старые tracked runtimes выгружаются только после успешного attach retry thread |
 | Shutdown-first exit | TUI просит app-server закрыть current runtime, а не только отписаться от событий |
 
 Если новый thread не стартовал, resume/fork не удался или TUI не смог
 прикрепиться к новому thread, старый runtime не выгружается раньше времени. В
-реализации `/resume`, `/clear`, новая сессия и `/fork` сначала получают и
-прикрепляют новый runtime, а затем выгружают старые tracked runtimes, исключая
-новый thread id.
+реализации `/resume`, `/clear`, новая сессия, `/fork`, prompt backtrack и
+safety-buffering retry сначала получают и прикрепляют новый runtime, а затем
+выгружают старые tracked runtimes, исключая новый thread id.
 
 ### TUI side conversation
 
@@ -223,6 +226,9 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
    runtime unload для переходов active primary thread.
 6. Перевести `/resume`, `/clear`, новую сессию, `/fork`, shutdown-first exit и
    TUI side close на runtime unload, сохраняя UX восстановления после ошибки.
+   Отдельно проверить появившиеся в upstream переходы prompt backtrack и
+   safety-buffering retry: новый thread должен быть прикреплен до выгрузки старых
+   runtime.
 7. Не менять автоматическое `/agent` view switching без отдельного продуктового
    решения.
 8. Добавить app-server и TUI regression tests.
@@ -241,6 +247,7 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 | `/resume` на другой thread выгружает предыдущий primary runtime | `required` | TUI app lifecycle test |
 | `/clear` выгружает предыдущий primary runtime перед clean thread | `required` | TUI app lifecycle test |
 | `/fork` после перехода на forked thread выгружает old primary runtime | `required` | TUI app lifecycle test |
+| Prompt backtrack и safety-buffering retry не выгружают старый runtime до успешного attach | `required` | аудит TUI lifecycle и существующие regression tests успешного/ошибочного branch attach |
 | TUI side close/discard выгружает side runtime | `required` | TUI side conversation test |
 | Plain `thread/unsubscribe` сохраняет прежний контракт | `required` | существующие app-server unsubscribe tests |
 | Core `close_agent` не регрессирует | `required` | существующие agent control tests |
@@ -339,6 +346,7 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 | Перенос на `rust-v0.144.4` | `done` | В `/fork` сохранены выгрузка предыдущего runtime после успешного перехода и добавленная в upstream передача текущих `model` и `model_reasoning_effort`; тест карточки переведен на явный `ResumeModelSettings` |
 | Перенос на `rust-v0.144.5` | `done` | После merge сохранены API app-server и путь teardown, переходы жизненного цикла TUI для `/resume`, `/clear`, новой сессии, `/fork`, shutdown-first exit и side close, а также все пять целей тестов из `fork-tests.v1`; правки к коду не потребовались, проверки уровня проекта оставлены общему проходу |
 | Перенос на `rust-v0.144.6` | `done` | После merge сохранены non-destructive `thread/unload`, keyed serialization и защита от пересечения с pending unload, bounded shutdown с ошибкой без удаления loaded runtime, идемпотентный `notLoaded`, attach-before-unload переходы `/resume`, `/clear`, новой сессии и `/fork`, а также side close с сохранением локального state при ошибке; все пять целей `fork-tests.v1` и дополнительные regression tests ошибок и повторной выгрузки остаются в коде, проверки уровня проекта оставлены общему проходу |
+| Перенос на `rust-v0.145.0` | `done` | Сохранены non-destructive `thread/unload`, keyed serialization, pending-unload guards, bounded shutdown, идемпотентный `notLoaded` и повторный resume. Конфликты TUI разрешены с сохранением upstream backfill загруженных subagents после `/resume`; новые upstream-переходы prompt backtrack и safety-buffering retry переведены с unload-before-attach на attach-before-unload. Переходы `/resume`, `/clear`, новой сессии, `/fork`, shutdown-first exit и side close сохранены. Проверки уровня проекта оставлены общему проходу миграции. |
 | `.codex/skills/fork/scripts/fork generators` | `ok` | Config schema и app-server schema artifacts синхронизированы |
 | `.codex/skills/fork/scripts/fork format --fix` | `ok` | Rust/doc formatting wrapper применен после правок |
 | `.codex/skills/fork/scripts/fork format --check` | `ok` | Форматирование проверено после реализации |
@@ -387,6 +395,7 @@ skill-owned `fork install` в `${HOME}/.local/bin/codex-hermione`.
 | `/resume` должен закрывать старый live-runtime и MCP | `перенесено в карточку` | "TUI primary transitions", `fork-tests.v1` |
 | `/clear` и новая сессия имеют тот же lifecycle bug | `перенесено в карточку` | "Зачем это нужно", `fork-tests.v1` |
 | `/fork` после перехода на forked thread входит в scope | `перенесено в карточку` | "TUI primary transitions" |
+| Prompt backtrack и safety-buffering retry должны соблюдать attach-before-unload | `перенесено в карточку` | "TUI primary transitions", "Порядок повторения при переносе" |
 | TUI side close/discard тоже должен unload runtime | `перенесено в карточку` | "TUI side conversation", `fork-tests.v1` |
 | `thread/unsubscribe` не менять как публичный контракт | `перенесено в карточку` | "Почему не менять `thread/unsubscribe`" |
 | Core `close_agent` уже является настоящим shutdown path | `перенесено в карточку` | "Почему `close_agent` не главный источник" |

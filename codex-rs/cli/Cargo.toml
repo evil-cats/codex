@@ -1,6 +1,6 @@
 [package]
 name = "codex-cli"
-version = "0.144.6+hermione"
+version = "0.145.0+hermione"
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
@@ -104,3 +104,9 @@ predicates = { workspace = true }
 pretty_assertions = { workspace = true }
 sqlx = { workspace = true }
 wiremock = { workspace = true }
+zstd = { workspace = true }
+
+[package.metadata.cargo-shear]
+# These Rust sources are intentionally Bazel-only macrobenchmarks rather than
+# Cargo targets.
+ignored-paths = ["e2e_benches/*.rs"]

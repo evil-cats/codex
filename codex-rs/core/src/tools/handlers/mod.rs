@@ -1,5 +1,3 @@
-pub(crate) mod agent_jobs;
-pub(crate) mod agent_jobs_spec;
 pub(crate) mod apply_patch;
 pub(crate) mod apply_patch_spec;
 mod current_time;
@@ -171,8 +169,7 @@ fn resolve_tool_environment<'a>(
         || Ok(environments.primary()),
         |environment_id| {
             environments
-                .turn_environments
-                .iter()
+                .turn_environments()
                 .find(|environment| environment.environment_id == environment_id)
                 .map(Some)
                 .ok_or_else(|| {

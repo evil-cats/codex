@@ -6,6 +6,7 @@ use crate::context::environment_context::NetworkContext;
 use crate::context::environment_context::push_xml_escaped_text;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
@@ -32,23 +33,29 @@ impl EnvironmentsState {
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
     ) -> Self {
-        let workspace_roots = turn_context.config.effective_workspace_roots();
+        let workspace_roots = environments
+            .primary()
+            .map(TurnEnvironment::workspace_roots)
+            .unwrap_or_default();
         Self {
             environments: environment_states(environments),
-            project_name: project_name_from_workspace_roots(&workspace_roots),
+            project_name: project_name_from_workspace_roots(workspace_roots),
             current_date: turn_context.current_date.clone(),
             timezone: turn_context.timezone.clone(),
             network: network_from_turn_context(turn_context),
             filesystem: Some(FileSystemContext::from_permission_profile(
-                &turn_context.permission_profile,
-                &workspace_roots,
+                turn_context.config.permissions.permission_profile(),
+                workspace_roots,
             )),
             subagents: None,
         }
     }
 
     pub(crate) fn from_turn_context_item(turn_context_item: &TurnContextItem) -> Self {
-        let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item);
+        let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item)
+            .iter()
+            .map(PathUri::from_abs_path)
+            .collect::<Vec<_>>();
         Self {
             environments: [(
                 LOCAL_ENVIRONMENT_ID.to_string(),
@@ -357,8 +364,7 @@ enum EnvironmentStatus {
 
 fn environment_states(snapshot: &TurnEnvironmentSnapshot) -> BTreeMap<String, EnvironmentState> {
     let mut environments = snapshot
-        .turn_environments
-        .iter()
+        .turn_environments()
         .map(|environment| {
             (
                 environment.environment_id.clone(),
@@ -373,7 +379,7 @@ fn environment_states(snapshot: &TurnEnvironmentSnapshot) -> BTreeMap<String, En
             )
         })
         .collect::<BTreeMap<_, _>>();
-    for environment in &snapshot.starting {
+    for environment in snapshot.starting() {
         environments
             .entry(environment.selection.environment_id.clone())
             .or_insert_with(|| EnvironmentState {
@@ -442,12 +448,10 @@ fn workspace_roots_from_turn_context_item(
     vec![turn_context_item.cwd.clone()]
 }
 
-fn project_name_from_workspace_roots(workspace_roots: &[AbsolutePathBuf]) -> Option<String> {
+fn project_name_from_workspace_roots(workspace_roots: &[PathUri]) -> Option<String> {
     workspace_roots.first().map(|root| {
-        root.as_path()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().into_owned())
+        root.basename()
+            .unwrap_or_else(|| root.inferred_native_path_string())
     })
 }
 

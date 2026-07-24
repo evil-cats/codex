@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -559,6 +559,33 @@ source-level сверкой owner-файлов, runtime, platform behavior, unit
 tool-spec контрактов. Targeted tests, форматирование, генераторы и другие
 project-level проверки подагент не запускал; они остаются за общим проверочным
 проходом родительского агента через skill-owned workflow.
+
+### Миграция на `rust-v0.145.0`
+
+После merge `rust-v0.145.0` собственные handler/spec/test-файлы и runtime-
+контракт `get_system_time` сохранились без изменений. `handlers/mod.rs`
+по-прежнему подключает оба модуля и экспортирует `SystemTimeHandler`, а
+`add_core_utility_tools(...)` без feature gate добавляет handler сразу после
+`PlanHandler`. Prompt-cache expectation содержит `get_system_time`, и
+`codex-core` продолжает использовать `chrono` с feature `serde`.
+
+В `spec_plan.rs` остался merge-конфликт, относящийся к добавленному upstream
+Guardian early-return в `add_tool_sources(...)`. Строки импорта и регистрации
+`SystemTimeHandler` находятся вне конфликтного участка и сохранены. Подагент
+этой карточки не разрешал чужой конфликт и не добавлял `spec_plan.rs` в index;
+его разрешение остается за владельцем соответствующей карточки или
+родительским агентом.
+
+Соседний upstream tool `clock.curr_time` не заменяет `get_system_time`: он
+по-прежнему регистрируется только при включенной feature
+`current_time_reminder`, которая имеет `default_enabled: false`, и не реализует
+параметры `format`, `offset` и `full` этой fork-доработки.
+
+Миграционный аудит ограничен source-level сверкой owner-файлов, runtime,
+tool-spec, unit-test и prompt-cache контрактов. Targeted tests,
+форматирование, генераторы и другие project-level проверки подагент не
+запускал; они остаются за общим проверочным проходом родительского агента через
+skill-owned workflow.
 
 ### Известные падения и пропуски
 

@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: working-tree
 ---
 
@@ -654,6 +654,23 @@ rollout не удалось получить.
 
 Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
 запуске 2026-07-18 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
+
+Фактическая проверка 2026-07-21 после слияния `rust-v0.145.0`:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/protocol/src/shell_environment.rs` и `codex-rs/core/src/exec_env.rs` | Константы и `RuntimeEnv` сохраняют `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID`; runtime-значения по-прежнему добавляются после shell env policy |
+| `codex-rs/core/src/agent/agent_name.rs` и `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime env и `get_thread_info.agent_name` используют общий helper имени агента |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` и `codex-rs/core/src/tasks/user_shell.rs` | Shell tool передает `ToolInvocation.call_id`, а `/shell` создает UUID до сборки env и использует его как `CommandExecutionItem.id`; обе точки сохраняют best-effort `rollout_path` |
+| `codex-rs/core/src/unified_exec/process_manager.rs` и `codex-rs/core/src/tools/runtimes/mod.rs` | Unified exec сохраняет runtime overlay поверх `local_policy_env`, а snapshot wrapper восстанавливает полный набор runtime-переменных после `source` |
+| Незавершенный конфликт в `codex-rs/core/src/unified_exec/process_manager.rs` | Конфликт относится к обработке `output_spill`, не затрагивает card-owned env overlay и намеренно оставлен для другой карточки |
+| Тестовое покрытие карточки | Сохранились тесты protocol env policy, agent helper, shell tool, snapshot restore и unified exec overlay; исполняемая карта `fork-tests.v1` остается актуальной |
+
+Кодовых изменений по этой карточке после проверки 2026-07-21 не потребовалось.
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-21 не выполнялись по skill-owned one-card правилу; общий
 агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски

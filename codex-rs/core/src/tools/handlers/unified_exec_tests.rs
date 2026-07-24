@@ -301,6 +301,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_noninteractive_one_s
         process_id: None,
         exit_code: Some(0),
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("echo three".to_string()),
         output_spill: None,
     };
@@ -332,6 +333,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_interactive_completi
         process_id: None,
         exit_code: Some(0),
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("echo three".to_string()),
         output_spill: None,
     };
@@ -364,6 +366,7 @@ async fn exec_command_post_tool_use_payload_skips_running_sessions() {
         process_id: Some(45),
         exit_code: None,
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("echo three".to_string()),
         output_spill: None,
     };
@@ -391,6 +394,7 @@ async fn write_stdin_post_tool_use_payload_uses_original_exec_call_id_and_comman
         process_id: None,
         exit_code: Some(0),
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("sleep 1; echo finished".to_string()),
         output_spill: None,
     };
@@ -423,6 +427,7 @@ async fn write_stdin_post_tool_use_payload_keeps_parallel_session_metadata_separ
         process_id: None,
         exit_code: Some(0),
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("sleep 2; echo alpha".to_string()),
         output_spill: None,
     };
@@ -436,6 +441,7 @@ async fn write_stdin_post_tool_use_payload_keeps_parallel_session_metadata_separ
         process_id: None,
         exit_code: Some(0),
         original_token_count: None,
+        output_omitted_bytes: None,
         hook_command: Some("sleep 1; echo beta".to_string()),
         output_spill: None,
     };

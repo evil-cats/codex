@@ -5,9 +5,11 @@
 //! end events into the right cell, and it treats "call id not found" as a real signal (for
 //! example, an orphan end that should render as a separate history entry).
 
+use std::borrow::Cow;
 use std::time::Duration;
 use std::time::Instant;
 
+use super::live_output::LiveCommandOutput;
 use crate::history_cell::CoreToolActivityFileEntry;
 use crate::history_cell::display_file_activity_detail;
 use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
@@ -15,17 +17,55 @@ use codex_app_server_protocol::CoreToolActivityKind;
 use codex_app_server_protocol::CoreToolActivityStatus;
 use codex_app_server_protocol::ThreadItem;
 use codex_protocol::parse_command::ParsedCommand;
+use itertools::Either;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct CommandOutput {
     pub(crate) exit_code: i32,
-    /// The aggregated stderr + stdout interleaved.
-    pub(crate) aggregated_output: String,
-    /// The formatted output of the command, as seen by the model.
-    pub(crate) formatted_output: String,
+    /// The finalized, interleaved stderr and stdout that replaces any streamed preview.
+    aggregated_output: String,
+    /// The live preview while command-output deltas are still arriving.
+    live_output: Option<LiveCommandOutput>,
 }
 
-#[derive(Debug, Clone)]
+impl CommandOutput {
+    pub(crate) fn new(exit_code: i32, aggregated_output: String) -> Self {
+        Self {
+            exit_code,
+            aggregated_output,
+            live_output: None,
+        }
+    }
+
+    /// Returns the total number of logical lines and the number retained for rendering.
+    pub(super) fn line_counts(&self) -> (usize, usize) {
+        match self.live_output.as_ref() {
+            Some(output) => (output.total_lines(), output.retained_lines()),
+            None => {
+                let total = self.aggregated_output.lines().count();
+                (total, total)
+            }
+        }
+    }
+
+    /// Returns retained preview lines with reverse traversal for efficient tail rendering.
+    pub(super) fn lines(&self) -> impl DoubleEndedIterator<Item = Cow<'_, str>> {
+        match self.live_output.as_ref() {
+            Some(output) => Either::Left(output.lines()),
+            None => Either::Right(self.aggregated_output.lines().map(Cow::Borrowed)),
+        }
+    }
+
+    /// Returns lines for the expanded transcript, including any storage-level omission marker.
+    pub(super) fn transcript_lines(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        match self.live_output.as_ref() {
+            Some(output) => Either::Left(output.transcript_lines()),
+            None => Either::Right(self.aggregated_output.lines().map(Cow::Borrowed)),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct ExecCall {
     pub(crate) call_id: String,
     pub(crate) command: Vec<String>,
@@ -60,14 +100,14 @@ impl ExecCell {
         }
     }
 
-    pub(crate) fn with_added_call(
-        &self,
+    pub(crate) fn add_call(
+        &mut self,
         call_id: String,
         command: Vec<String>,
         parsed: Vec<ParsedCommand>,
         source: ExecCommandSource,
         interaction_input: Option<String>,
-    ) -> Option<Self> {
+    ) -> bool {
         let call = ExecCall {
             call_id,
             command,
@@ -80,12 +120,10 @@ impl ExecCell {
             core_file_activity: None,
         };
         if self.is_exploring_cell() && Self::is_exploring_call(&call) {
-            Some(Self {
-                calls: [self.calls.clone(), vec![call]].concat(),
-                animations_enabled: self.animations_enabled,
-            })
+            self.calls.push(call);
+            true
         } else {
-            None
+            false
         }
     }
 
@@ -178,18 +216,16 @@ impl ExecCell {
                     call.start_time = None;
                     call.duration = Some(elapsed);
                 }
-            } else if call.output.is_none() {
+            } else if call.duration.is_none() {
                 let elapsed = call
                     .start_time
                     .map(|st| st.elapsed())
                     .unwrap_or_else(|| Duration::from_millis(0));
                 call.start_time = None;
                 call.duration = Some(elapsed);
-                call.output = Some(CommandOutput {
-                    exit_code: 1,
-                    formatted_output: String::new(),
-                    aggregated_output: String::new(),
-                });
+                call.output
+                    .get_or_insert_with(CommandOutput::default)
+                    .exit_code = 1;
             }
         }
     }
@@ -230,7 +266,10 @@ impl ExecCell {
             return false;
         };
         let output = call.output.get_or_insert_with(CommandOutput::default);
-        output.aggregated_output.push_str(chunk);
+        output
+            .live_output
+            .get_or_insert_with(LiveCommandOutput::default)
+            .push_str(chunk);
         true
     }
 
@@ -309,7 +348,7 @@ impl ExecCall {
         if let Some(activity) = self.core_file_activity.as_ref() {
             matches!(activity.status, CoreToolActivityStatus::InProgress)
         } else {
-            self.output.is_none()
+            self.duration.is_none()
         }
     }
 

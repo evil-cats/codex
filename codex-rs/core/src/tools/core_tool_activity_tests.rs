@@ -2,6 +2,7 @@
 
 use super::read_file_detail;
 use crate::environment_selection::TurnEnvironmentSnapshot;
+use crate::environment_selection::TurnEnvironmentState;
 use crate::session::turn_context::TurnEnvironment;
 use codex_exec_server::Environment;
 use codex_utils_path_uri::PathUri;
@@ -14,21 +15,22 @@ use std::sync::Arc;
 async fn read_file_detail_uses_selected_environment_path_convention() {
     let environment = Arc::new(Environment::default_for_tests());
     let environments = TurnEnvironmentSnapshot {
-        turn_environments: vec![
-            TurnEnvironment::new(
+        environments: vec![
+            TurnEnvironmentState::Ready(TurnEnvironment::new(
                 "primary".to_string(),
                 Arc::clone(&environment),
                 PathUri::parse("file:///primary").expect("primary cwd URI"),
+                /*workspace_roots*/ Vec::new(),
                 /*shell*/ None,
-            ),
-            TurnEnvironment::new(
+            )),
+            TurnEnvironmentState::Ready(TurnEnvironment::new(
                 "remote".to_string(),
                 Arc::clone(&environment),
                 PathUri::parse("file:///C:/workspace").expect("foreign Windows cwd URI"),
+                /*workspace_roots*/ Vec::new(),
                 /*shell*/ None,
-            ),
+            )),
         ],
-        starting: Vec::new(),
     };
     let arguments = json!({
         "path": r"C:\workspace\src",

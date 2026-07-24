@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -321,6 +321,13 @@ TerminalTitleItem::SessionLabel => {
   path, terminal support, cache/clear lifecycle, очистки на `App::drop` и пяти
   selector snapshots. Upstream diff `rust-v0.144.5..rust-v0.144.6` не меняет
   owner-файлы этой карточки.
+- После merge `rust-v0.145.0` статическая сверка подтвердила сохранность обоих
+  config-слоёв, runtime-рендеринга и preview `session-label`, ограничения label
+  до 24 символов, общего безопасного OSC path, cache/clear lifecycle, очистки
+  на `App::drop` и пяти selector snapshots. Upstream diff
+  `rust-v0.144.6..rust-v0.145.0` меняет `config/src/types.rs`, config schema,
+  config tests, effective config и `tui/src/app.rs`, но merge сохранил контракт
+  карточки без конфликтов в её owner-файлах.
 - Зафиксированное ожидаемое runtime-значение для настроенного session label:
 
   ```text

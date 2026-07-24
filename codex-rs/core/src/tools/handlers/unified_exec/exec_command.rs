@@ -335,6 +335,7 @@ impl ExecCommandHandler {
                 process_id: None,
                 exit_code: None,
                 original_token_count: None,
+                output_omitted_bytes: None,
                 hook_command: None,
                 output_spill: None,
             }));
@@ -368,9 +369,15 @@ impl ExecCommandHandler {
             .await
         {
             Ok(response) => Ok(boxed_tool_output(response)),
-            Err(UnifiedExecError::SandboxDenied { output, .. }) => {
+            Err(UnifiedExecError::SandboxDenied {
+                output,
+                original_token_count,
+                output_omitted_bytes,
+                ..
+            }) => {
                 let output_text = output.aggregated_output.text;
-                let original_token_count = approx_token_count(&output_text);
+                let original_token_count =
+                    original_token_count.unwrap_or_else(|| approx_token_count(&output_text));
                 let chunk_id = generate_chunk_id();
                 let raw_output = output_text.into_bytes();
                 Ok(boxed_tool_output(ExecCommandToolOutput {
@@ -385,6 +392,7 @@ impl ExecCommandHandler {
                     process_id: None,
                     exit_code: Some(output.exit_code),
                     original_token_count: Some(original_token_count),
+                    output_omitted_bytes,
                     hook_command: Some(hook_command),
                     output_spill: None,
                 }))

@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-07-18
+updated: 2026-07-21
 source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
@@ -236,6 +236,18 @@ runbook для прямого запуска `cargo` или `just`.
   - в `prompts_tests.rs` добавлено регрессионное покрытие ограничения summary по
     токенам и отказа от prompt при отсутствующем, пустом или невалидном UTF-8
     summary;
+  - общепроектные gates оставлены общему проверочному проходу по правилам
+    миграции одной карточки.
+- Миграция на `0.145.0` после merge `rust-v0.145.0`:
+  - ручная сверка подтвердила прежний embedded template path и загрузку через
+    `include_str!`, placeholders `base_path` и `memory_summary`, токенное
+    ограничение summary и отказ от prompt для отсутствующего, пустого или
+    невалидного UTF-8 `memory_summary.md`;
+  - fork-шаблон сохраняет полный безопасный ad-hoc workflow вместо upstream
+    режима с единственной update note, а extension по-прежнему добавляет
+    результат как model-visible fragment в `PromptSlot::DeveloperPolicy`;
+  - `read_template_path` отсутствует в config types, schema, extension config,
+    runtime builder, тестах и README; code-scoped правки не потребовались;
   - общепроектные gates оставлены общему проверочному проходу по правилам
     миграции одной карточки.
 

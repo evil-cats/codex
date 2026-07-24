@@ -111,8 +111,7 @@ fn read_file_detail(
         || environments.primary(),
         |environment_id| {
             environments
-                .turn_environments
-                .iter()
+                .turn_environments()
                 .find(|environment| environment.environment_id == environment_id)
         },
     );
