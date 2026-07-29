@@ -1378,6 +1378,33 @@ def cmd_format(args: argparse.Namespace) -> int:
     return session.ok()
 
 
+def fix_argv(just: str, packages: list[str]) -> list[str]:
+    """Строит argv repo fix recipe для workspace или выбранных crates."""
+    argv = [just, "fix"]
+    for package in packages:
+        argv.extend(["-p", package])
+    return argv
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    """Запускает repo lint/fix recipe для workspace или выбранных crates."""
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
+    packages = args.package or []
+    mode = "workspace" if not packages else "packages"
+    session = LogSession(repo_root=repo_root, log_kind="fix", mode=mode)
+
+    just = session.check_command("just")
+    if not just:
+        return session.fail(label="require command: just")
+    if not session.check_command("cargo"):
+        return session.fail(label="require command: cargo")
+
+    result = session.run_step("rust lint fix", fix_argv(just, packages))
+    if result != 0:
+        return result
+    return session.ok()
+
+
 def cmd_generators(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     session = LogSession(repo_root=repo_root, log_kind="generator", mode="generators")
@@ -1645,6 +1672,16 @@ def build_parser() -> argparse.ArgumentParser:
     fmt.add_argument("--check", action="store_true")
     fmt.add_argument("--fix", action="store_true")
     fmt.set_defaults(func=cmd_format)
+
+    fix = sub.add_parser("fix")
+    fix.add_argument("--repo-root")
+    fix.add_argument(
+        "--package",
+        action="append",
+        metavar="CRATE",
+        help="Limit lint/fix to a crate; repeat for multiple crates.",
+    )
+    fix.set_defaults(func=cmd_fix)
 
     generators = sub.add_parser("generators")
     generators.add_argument("--repo-root")

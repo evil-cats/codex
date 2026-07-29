@@ -17,6 +17,8 @@ commands.
 .codex/skills/fork/scripts/fork preflight --version X.Y.Z
 .codex/skills/fork/scripts/fork format --check
 .codex/skills/fork/scripts/fork format --fix
+.codex/skills/fork/scripts/fork fix
+.codex/skills/fork/scripts/fork fix --package CRATE
 .codex/skills/fork/scripts/fork generators
 .codex/skills/fork/scripts/fork tests --mode list
 .codex/skills/fork/scripts/fork tests --mode list --card CARD_ID_OR_PATH
@@ -50,6 +52,10 @@ commands.
 или цель, используй `--source PATH` и `--target PATH`; это остается
 skill-owned установкой, а не ручным копированием бинарника.
 
+`fork fix` запускает repo lint/fix recipe для всего workspace. Повторяемый
+`--package CRATE` ограничивает запуск выбранными crates и передает каждую из них
+отдельным аргументом `-p`.
+
 `fork tests --mode list` и `fork tests --mode cards` принимают повторяемый
 `--card`. Значение может быть `id` карточки, путь `docs/fork/*.md`, имя файла
 или `id` без префикса `fork-`. Фильтр запускает или печатает только строки
@@ -72,6 +78,7 @@ command является workflow-командой; `just`/`cargo` argv внут
 | --- | --- | --- |
 | Форматирование после правок | `fork format --fix` | Запускает repo format recipe |
 | Проверка форматирования | `fork format --check` | Финальный check без правок |
+| Rust lint/fix | `fork fix [--package CRATE]` | Без `--package` обрабатывает workspace |
 | Артефакты config/app-server schema | `fork generators` | Обновляет schema artifacts |
 | Тесты карточки | `fork tests --mode cards --card CARD` | argv из блока `fork-tests.v1` |
 | Полный регрессионный проход | `fork tests --mode full` | Полный набор тестов и pending snapshots |
@@ -189,8 +196,9 @@ semantic audit.
 1. Запусти skill-owned проверки в текущем локальном source-of-truth checkout:
    `fork preflight`; если после правок нужно применить форматирование,
    `fork format --fix`, а для финальной проверки без изменений
-   `fork format --check`; если затронуты сгенерированные schema/API surfaces,
-   `fork generators`.
+   `fork format --check`; если для Rust-правок требуется lint/fix, используй
+   `fork fix` или `fork fix --package CRATE`; если затронуты сгенерированные
+   schema/API surfaces, `fork generators`.
 2. Если локальные генераторы создали новые файлы, добавь их в индекс через
    `git add <paths>` или хотя бы отметь через `git add -N <paths>`, иначе
    `git diff HEAD` и последующий review могут не увидеть их содержимое.
@@ -277,6 +285,7 @@ snapshot/schema/generator, условие пропуска проверки ли
 меняются из-за новой fork-карточки:
 
 - `fork format`;
+- `fork fix`;
 - `fork build-fast`;
 - `fork install`.
 
@@ -294,6 +303,7 @@ snapshot/schema/generator, условие пропуска проверки ли
 - `migration init/show/next/set-card-status/set-gate-status/validate/complete`;
 - `format --check`;
 - `format --fix`;
+- `fix [--package CRATE]`;
 - `preflight --skill-only`;
 - `preflight --version X.Y.Z`;
 - `generators`;
@@ -304,7 +314,8 @@ snapshot/schema/generator, условие пропуска проверки ли
 - `build-fast --version X.Y.Z`;
 - `install`.
 
-Heavy gates (`generators`, `tests --mode cards`, `tests --mode full`,
-`build-fast`) запускай только когда они нужны текущему этапу. `fork install`
-запускай только после явного решения установить собранный бинарник. Режим
-`tests --mode list` печатает исполняемую карту проверок без запуска тестов.
+Heavy or mutating gates (`fix`, `generators`, `tests --mode cards`,
+`tests --mode full`, `build-fast`) запускай только когда они нужны текущему
+этапу. `fork install` запускай только после явного решения установить собранный
+бинарник. Режим `tests --mode list` печатает исполняемую карту проверок без
+запуска тестов.

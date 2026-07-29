@@ -86,6 +86,48 @@ class InstallPathTests(unittest.TestCase):
         self.assertEqual(args.target, "/tmp/codex-hermione")
 
 
+class FixCommandTests(unittest.TestCase):
+    def test_fix_parser_accepts_repeated_packages(self) -> None:
+        parser = fork_cli.build_parser()
+        args = parser.parse_args(
+            [
+                "fix",
+                "--package",
+                "codex-core",
+                "--package",
+                "codex-goal-extension",
+            ]
+        )
+
+        self.assertEqual(args.command, "fix")
+        self.assertEqual(
+            args.package,
+            ["codex-core", "codex-goal-extension"],
+        )
+
+    def test_fix_argv_uses_workspace_by_default(self) -> None:
+        self.assertEqual(
+            fork_cli.fix_argv("/usr/bin/just", []),
+            ["/usr/bin/just", "fix"],
+        )
+
+    def test_fix_argv_forwards_each_package(self) -> None:
+        self.assertEqual(
+            fork_cli.fix_argv(
+                "/usr/bin/just",
+                ["codex-core", "codex-goal-extension"],
+            ),
+            [
+                "/usr/bin/just",
+                "fix",
+                "-p",
+                "codex-core",
+                "-p",
+                "codex-goal-extension",
+            ],
+        )
+
+
 class CardTestFilterTests(unittest.TestCase):
     def make_repo(self) -> Path:
         temp_dir = tempfile.TemporaryDirectory()
