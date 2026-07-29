@@ -1,4 +1,5 @@
 //! Восстанавливает точный active-goal context через extension-owned `WorldState`.
+//! Маркер очистки создаётся только после snapshot с доказанным состоянием `active`.
 
 use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionFuture;
@@ -65,7 +66,7 @@ where
     }
 }
 
-/// Формирует стабильную секцию, которая повторяется только при изменении active goal.
+/// Формирует стабильную секцию и очищает только доказанный предыдущий snapshot `active`.
 fn active_goal_world_state_section(
     active_goal: Option<&ThreadGoal>,
 ) -> WorldStateSectionContribution {
@@ -79,16 +80,19 @@ fn active_goal_world_state_section(
 
     let contribution =
         WorldStateSectionContribution::new(ACTIVE_GOAL_WORLD_STATE_ID, snapshot, move |previous| {
-            let previous_is_absent = matches!(&previous, PreviousWorldStateSection::Absent);
-            if let PreviousWorldStateSection::Known(previous) = &previous
-                && *previous == &expected_snapshot
-            {
-                return None;
-            }
+            let previous_was_active = match &previous {
+                PreviousWorldStateSection::Known(previous) if *previous == &expected_snapshot => {
+                    return None;
+                }
+                PreviousWorldStateSection::Known(previous) => {
+                    previous.get("state").and_then(serde_json::Value::as_str) == Some("active")
+                }
+                PreviousWorldStateSection::Absent | PreviousWorldStateSection::Unknown => false,
+            };
 
             let body = match body.as_deref() {
                 Some(body) => body,
-                None if previous_is_absent => return None,
+                None if !previous_was_active => return None,
                 None => NO_ACTIVE_GOAL_BODY,
             };
             Some(RenderedWorldStateFragment::new(

@@ -223,20 +223,23 @@ async fn call_tool_turn(
     prompt: &str,
 ) -> anyhow::Result<Value> {
     let namespace = format!("mcp__{server_name}");
+    let tool_response_id = format!("resp-tool-{call_id}");
     responses::mount_sse_once(
         server,
         responses::sse(vec![
-            responses::ev_response_created("resp-tool"),
+            responses::ev_response_created(&tool_response_id),
             responses::ev_function_call_with_namespace(call_id, &namespace, tool_name, "{}"),
-            responses::ev_completed("resp-tool"),
+            responses::ev_completed(&tool_response_id),
         ]),
     )
     .await;
+    let final_message_id = format!("msg-final-{call_id}");
+    let final_response_id = format!("resp-final-{call_id}");
     let final_mock = responses::mount_sse_once(
         server,
         responses::sse(vec![
-            responses::ev_assistant_message("msg-final", "done"),
-            responses::ev_completed("resp-final"),
+            responses::ev_assistant_message(&final_message_id, "done"),
+            responses::ev_completed(&final_response_id),
         ]),
     )
     .await;
@@ -470,6 +473,7 @@ async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyho
 
     let server = responses::start_mock_server().await;
     let server_name = "rmcp_diag_exit";
+    let schedule_call_id = "mcp-diagnostic-schedule-process-exit";
     let call_id = "mcp-diagnostic-process-exit";
     let state_file = unique_state_file("process-exit");
     let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
@@ -482,7 +486,7 @@ async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyho
                 stdio_transport(
                     rmcp_test_server_bin,
                     Some(HashMap::from([(
-                        "MCP_TEST_EXIT_AFTER_LIST_TOOLS_STATE_FILE".to_string(),
+                        "MCP_TEST_EXIT_AFTER_CALL_STATE_FILE".to_string(),
                         state_file,
                     )])),
                 ),
@@ -491,6 +495,17 @@ async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyho
         .build_with_auto_env(&server)
         .await?;
     core_test_support::wait_for_mcp_server(&fixture.codex, server_name).await?;
+
+    let scheduled = call_tool_turn(
+        &server,
+        &fixture,
+        server_name,
+        "flaky_recovery",
+        schedule_call_id,
+        "schedule process exit after this call",
+    )
+    .await?;
+    assert_eq!(scheduled, json!({ "result": "exit_scheduled" }));
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let output = call_tool_turn(
@@ -506,7 +521,10 @@ async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyho
 
     let diagnostics = read_mcp_diagnostics(&fixture).await?;
     let events = diagnostic_events(&diagnostics);
-    assert!(events.contains(&McpDiagnosticEvent::ProcessExited));
+    assert!(
+        events.contains(&McpDiagnosticEvent::ProcessExited),
+        "expected process exit diagnostic: {events:?}"
+    );
     assert!(events.contains(&McpDiagnosticEvent::RecoveryStarted));
     assert!(events.contains(&McpDiagnosticEvent::RecoverySucceeded));
     assert!(
@@ -526,7 +544,7 @@ async fn mcp_process_exit_marks_launch_dead_and_recovers_on_next_call() -> anyho
         process_exit
             .stderr_tail
             .as_deref()
-            .is_some_and(|tail| tail.contains("mcp test server scheduled process exit")),
+            .is_some_and(|tail| tail.contains("mcp flaky_recovery scheduled process exit")),
         "process exit diagnostic should include bounded stderr tail: {process_exit:?}"
     );
 

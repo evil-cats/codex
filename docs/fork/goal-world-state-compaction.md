@@ -14,10 +14,11 @@ source_scope: hermione-0.145.0..HEAD
 `objective` активной thread goal в model-visible context после local, remote и
 `TokenBudget` compaction.
 
-Доработка реализована и проверена в рабочей копии ветки
-`hermione-0.145.0`. Целевые тесты карточки прошли, бинарник профиля
-`release-fast` собран, его метаданные и версия проверены. Тот же бинарник
-установлен локально и на `f-ms-dev`.
+Доработка была реализована и проверена на `hermione-0.145.0`. При переносе на
+`hermione-0.146.0` обнаружены и исправлены два проявления регрессии для thread,
+в котором goal никогда не была активна: состояние `Unknown` после compaction и
+нормализованный `Known(inactive)` при обычном tool follow-up ошибочно
+рендерились как переход из active goal в inactive.
 
 До доработки goal продолжает существовать в `state_db.thread_goals`, но
 model-visible goal fragment является обычным contextual user fragment. Local и
@@ -30,15 +31,15 @@ remote compaction не сохраняют такой fragment дословно, 
 | --- | --- |
 | Статус карточки | `active`: доработка поддерживается в fork |
 | Статус реализации | `implemented` |
-| Проверочный статус | `verified` |
+| Проверочный статус | `verified` на `0.145.0`; целевые тесты `0.146.0` ожидают готовности общей migration map |
 | Пользовательская цель | Восстанавливать точную active goal перед первым sampling после compaction |
 | Источник истины | `state_db.thread_goals` |
 | Model-visible механизм | Extension-owned секция `WorldState` |
 | Внешние API и config | Без изменений |
-| Текущая база | `0.145.0`, ветка `hermione-0.145.0` |
-| Бинарник `release-fast` | Собран, метаданные и версия проверены |
-| Локальная установка | `/home/slader/.local/bin/codex-hermione`, проверена |
-| Установка на `f-ms-dev` | `/home/slader/.local/bin/codex-hermione`, проверена |
+| Текущая база | `0.146.0`, ветка `hermione-0.146.0` |
+| Бинарник `release-fast` | Для `0.145.0` собран, метаданные и версия проверены |
+| Локальная установка | Бинарник `0.145.0` в `/home/slader/.local/bin/codex-hermione`, проверен |
+| Установка на `f-ms-dev` | Бинарник `0.145.0` в `/home/slader/.local/bin/codex-hermione`, проверен |
 
 ## Зачем это нужно
 
@@ -67,7 +68,7 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/ext/goal/templates/goals/active_context.md` | Хранит objective и постоянные goal-инварианты |
 | `codex-rs/ext/goal/templates/goals/continuation.md` | Запускает автоматический continuation turn без дублирования objective |
 | `codex-rs/ext/goal/templates/goals/objective_updated.md` | Ссылается на обновлённый objective из `WorldState` |
-| `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет model-visible request после local и `TokenBudget` mid-turn compaction |
+| `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет model-visible request после обычного tool follow-up, local и `TokenBudget` mid-turn compaction |
 
 Намеренно не меняются:
 
@@ -119,8 +120,16 @@ Extension-owned section использует стабильный section ID и 
 - изменение objective или `token_budget` добавляет полный актуальный fragment;
 - переход из `Active` в другой status добавляет clearing fragment, запрещающий
   продолжать прежнюю goal как активную;
-- отсутствие goal при отсутствии предыдущего active snapshot ничего не
-  добавляет.
+- отсутствие goal при `PreviousWorldStateSection::Absent` или
+  `PreviousWorldStateSection::Unknown` ничего не добавляет;
+- отсутствие goal при `Known(inactive)` ничего не добавляет;
+- clearing fragment создаётся только для доказанного перехода
+  `Known(active) -> inactive`; `Unknown` не является доказательством прежней
+  active goal;
+- нормализация snapshot из `{"state":"inactive","body":null}` в
+  `{"state":"inactive"}` не превращает повторный model step в переход из active
+  goal: решение о clearing fragment опирается на доказанное значение `state`, а
+  не на полное равенство inactive snapshot.
 
 Динамические `tokens_used`, `time_used_seconds` и `remaining_tokens` не входят в
 snapshot. Их изменение не должно инвалидировать prompt cache на каждом model
@@ -137,7 +146,9 @@ step.
 - `TokenBudget` reset получает fragment через `start_new_context_window`;
 - если goal создана или изменена в model step, который сам вызвал compaction,
   следующий step заново строит `WorldState` перед sampling и добавляет свежий
-  fragment.
+  fragment;
+- thread, в котором goal никогда не создавалась, не получает
+  `<thread_goal_context>` после local или `TokenBudget` compaction.
 
 Первый post-compaction model request обязан содержать objective дословно после
 XML escaping, даже если compaction output намеренно не содержит goal.
@@ -235,6 +246,23 @@ prompt caching. Section snapshot должен подавлять неизмен�
   - новый context window не содержит старую conversation history;
   - первый request нового окна содержит точный active-goal context;
   - objective не зависит от summary, поскольку summary в этом режиме нет.
+- `never_active_goal_world_state_stays_absent_after_ordinary_tool_follow_up`:
+  - goal feature включён, но goal никогда не создаётся;
+  - первый model response вызывает `update_plan` без запуска compaction;
+  - второй sampling остаётся в исходном context window;
+  - нормализованный `Known(inactive)` не создаёт `<thread_goal_context>` или
+    маркер очистки.
+- `never_active_goal_world_state_stays_absent_after_mid_turn_local_compaction`:
+  - goal feature включён, но `create_goal` не вызывается;
+  - `update_plan` удерживает turn до следующего sampling;
+  - local compaction создаёт summary без goal;
+  - первый post-compaction request не содержит `<thread_goal_context>` или
+    маркер очистки.
+- `never_active_goal_world_state_stays_absent_after_mid_turn_token_budget_compaction`:
+  - goal feature включён, но goal никогда не создаётся;
+  - `TokenBudget` полностью заменяет context window;
+  - первый request нового окна не содержит `<thread_goal_context>` или маркер
+    очистки.
 - существующие tests `codex-goal-extension` продолжают подтверждать tool, status,
   budget и accounting contracts.
 
@@ -252,7 +280,7 @@ argv хранится как данные `fork-tests.v1`, а не как пол
       "argv": ["just", "test", "-p", "codex-goal-extension"]
     },
     {
-      "purpose": "active goal world state compaction",
+      "purpose": "active and never-active goal world state compaction",
       "argv": ["just", "test", "-p", "codex-app-server", "active_goal_world_state"]
     }
   ]
@@ -274,6 +302,39 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 ### Исторические результаты
 
 2026-07-29:
+
+#### Перенос на `0.146.0`
+
+- при переносе на `0.146.0` воспроизведена регрессия: для thread без когда-либо
+  созданной goal `active_goal_world_state_section(None)` получал
+  `PreviousWorldStateSection::Unknown` после compaction и ошибочно рендерил
+  `NO_ACTIVE_GOAL_BODY`, хотя прежняя active goal не была доказана;
+- исправление различает доказанный `Known(active)` и состояния `Absent`,
+  `Unknown`, `Known(inactive)` и `Known(unavailable)`; маркер очистки остаётся
+  только для перехода из доказанной active goal;
+- прямой test без compaction проверяет второй sampling после `update_plan`:
+  нормализация inactive snapshot из `{"state":"inactive","body":null}` в
+  `{"state":"inactive"}` не должна создавать goal fragment;
+- отдельные интеграционные регрессионные тесты проверяют local summary
+  compaction и `TokenBudget` reset без когда-либо созданной goal;
+- первый запуск
+  `fork tests --mode cards --card fork-goal-world-state-compaction --version
+  0.146.0` остановлен до компиляции общей проверкой `migration map ready`, поскольку
+  соседние карточки ещё имеют незавершённые статусы;
+- `fork format --fix` и финальный `fork format --check` дошли до formatter
+  репозитория и остановились на чужих неразрешённых конфликтах слияния вне
+  файлов карточки;
+- `fork cards validate` — успешно, проверено 25 карточек, ошибок нет;
+- `fork tests --mode list --card fork-goal-world-state-compaction` — успешно,
+  обнаружены обе команды `fork-tests.v1`, включая новые never-active tests по
+  фильтру `active_goal_world_state`;
+- при переносе на `0.146.0` upstream заменил тестовую конфигурацию app-server
+  `write_mock_responses_config_toml` на `MockResponsesConfig` и добавил
+  `build_initialized_with_timeout`; оба регрессионных теста карточки переведены
+  на новый API без изменения проверяемого контракта compaction, целевые тесты
+  оставлены общему проверочному проходу родительского агента;
+
+#### Исходная реализация и проверка на `0.145.0`
 
 - первый запуск тестов карточки остановился при компиляции
   `codex-goal-extension`:
@@ -307,8 +368,13 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 
 ### Известные падения и пропуски
 
-- Известных воспроизводимых падений целевых tests после исправления регистрации
-  contributor нет.
+- На незавершённой migration map `0.146.0` тесты уровня карточки блокируются до
+  компиляции общей проверкой `migration map ready`, пока соседние карточки имеют
+  незавершённые статусы. Родительский агент должен повторить запуск после
+  завершения прохода по карточкам.
+- Общая проверка formatter блокируется чужими неразрешёнными конфликтами
+  слияния. Родительский агент должен повторить форматирование после их
+  устранения.
 - Remote compaction не получает отдельный goal-specific test: общий
   initial-context path совпадает с уже используемым extension-owned
   `WorldState`, а отдельные local и `TokenBudget` tests различают summary и
@@ -334,7 +400,8 @@ argv хранится как данные `fork-tests.v1`, а не как пол
   не подменяет неизвестное состояние clearing fragment: она логируется и
   создаёт состояние `unavailable`, которое запрещает считать старый
   `<thread_goal_context>` актуальным. После восстановления чтения section
-  переходит либо к свежей active goal, либо к явному clearing fragment.
+  переходит к свежей active goal либо к inactive snapshot без маркера очистки:
+  `Known(unavailable)` не доказывает, что goal прежде была active.
 - Только status `Active` создаёт active-goal section. `BudgetLimited`,
   `UsageLimited`, `Paused`, `Blocked` и `Complete` не должны продолжаться как
   активная goal.
@@ -366,6 +433,8 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 | Continuation prompt не дублирует objective | перенесено в карточку |
 | Goal, созданная в compaction-triggering step, видна следующему sampling | перенесено в карточку |
 | Неактивный status очищает прежний active-goal context | перенесено в карточку |
+| Нормализованный `Known(inactive)` не создаёт маркер очистки при обычном tool follow-up | перенесено в карточку и покрыто прямым integration test |
+| Никогда не активная goal не создаёт маркер очистки после compaction | перенесено в карточку и покрыто local/`TokenBudget` tests |
 | API, config и schema остаются неизменными | перенесено в карточку |
 | Проверки local summary и `TokenBudget` reset | перенесено в карточку |
 | Remote-specific regression test | не применимо: общий initial-context path; условие пересмотра зафиксировано |

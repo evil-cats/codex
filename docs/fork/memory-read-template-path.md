@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: rust-v0.142.5..hermione-0.142.5
 ---
 
@@ -250,6 +250,23 @@ runbook для прямого запуска `cargo` или `just`.
     runtime builder, тестах и README; code-scoped правки не потребовались;
   - общепроектные gates оставлены общему проверочному проходу по правилам
     миграции одной карточки.
+- Миграция на `0.146.0` после merge `rust-v0.146.0`:
+  - аудит исходников `rust-v0.145.0..rust-v0.146.0` подтвердил, что upstream не
+    менял `read_path.md`, `prompts.rs`, `prompts_tests.rs`, `extension.rs` и
+    `codex-rs/memories/README.md`; в `codex-rs/ext/memories/src/tests.rs`
+    добавлена только завершающая запятая без изменения поведения;
+  - общие изменения config-архитектуры не затронули секции памяти
+    `MemoriesToml`, `MemoriesConfig`, JSON-схему и регрессионный TOML-тест;
+    `read_template_path` по-прежнему отсутствует;
+  - текущая реализация совпадает с `hermione-0.145.0` для `read_path.md`,
+    `prompts.rs`, `prompts_tests.rs`, `extension.rs` и README, поэтому правки
+    кода не потребовались;
+  - `fork tests --mode list --card docs/fork/memory-read-template-path.md`: `OK`,
+    исполняемая карта содержит `core config` и `memories extension`;
+  - `fork tests --mode cards --card docs/fork/memory-read-template-path.md --version 0.146.0`:
+    остановлен gate `migration map ready`, потому что эта
+    карточка остается `inProgress`, а семь соседних карточек — `pending`;
+    внутренние целевые тесты не запускались.
 
 ### Известные падения и пропуски
 

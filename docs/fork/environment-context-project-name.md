@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 ---
 
@@ -517,6 +517,25 @@ Upstream перенес владение живыми workspace roots из `Conf
 | Совместимое восстановление | roots из `TurnContextItem` преобразуются в `PathUri` один раз перед вычислением `project_name` и filesystem |
 | Формат и diff | сохранены `<project_name>`, XML escaping, snapshot и сравнение при `render_diff(...)` |
 | Регрессионное покрытие | сохранены три обязательных теста и блок `fork-tests.v1` |
+
+Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
+Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
+проход.
+
+## Аудит миграции `rust-v0.146.0`
+
+Проверка после слияния `rust-v0.146.0` не потребовала изменений Rust-кода:
+
+| Область | Результат |
+| --- | --- |
+| Источник project name | сохранён: используется первый workspace root из основного `TurnEnvironment` |
+| Согласованность с filesystem | `project_name` и `FileSystemContext` по-прежнему строятся из одного снимка roots |
+| Формат и восстановление | сохранены `<project_name>`, XML escaping, replay, snapshot и diff |
+| Регрессионное покрытие | сохранены три обязательных теста и блок `fork-tests.v1` |
+
+Добавленное upstream поле `missing_path_behavior: None` в тестовой функции
+`workspace_write_permission_profile_with_private_denials()` относится к форме
+`FileSystemSandboxEntry` и не меняет контракт `project_name`.
 
 Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
 Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный

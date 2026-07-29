@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: active
 created: 2026-07-09
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -81,6 +81,9 @@ SQLite log DB сохранила строку tool-call error, но в этом 
 | `codex-rs/protocol/src/protocol.rs` | Добавить `RolloutItem::McpDiagnostic` и типы `McpDiagnosticItem`/`McpDiagnosticEvent` |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Явно игнорировать `McpDiagnostic` при восстановлении model history и world-state replay |
 | `codex-rs/core/src/mcp_tool_call.rs` | Связать `call_id`, `thread_id`, `turn_id`, `server_name`, `tool_name` и diagnostic persistence для tool-call failure |
+| `codex-rs/core/src/session/mcp_runtime.rs` | Передать session-owned `McpDiagnosticContext` в публикуемый MCP runtime |
+| `codex-rs/codex-mcp/src/runtime.rs` | Сохранить diagnostic context при замене runtime и полном пересоздании соединений |
+| `codex-rs/codex-mcp/src/binding.rs` | Передать operation-owned `McpOperationDiagnosticContext` через новый `PreparedMcpCall` path |
 | `codex-rs/codex-mcp/src/connection_manager.rs` | Сохранить server-level context и не терять `server_name` при маршрутизации `call_tool` |
 | `codex-rs/codex-mcp/src/rmcp_client.rs` | Передать session-owned `McpDiagnosticContext` в создаваемый `RmcpClient` при локальном и executor-backed stdio launch |
 | `codex-rs/rmcp-client/src/rmcp_client.rs` | Обнаруживать closed transport или непригодный launch, reinitialize через `transport_recipe`, retry operation один раз и эмитить recovery diagnostics |
@@ -421,6 +424,11 @@ runtime evidence, а не пользовательским событием по
 | Source audit после merge `rust-v0.144.5` | `needs-checks` | Persistence/replay/recovery contracts сохранились; добавлено отсутствовавшее failure-path покрытие повторного `TransportClosed`, общий проверочный проход не запускался подагентом |
 | Source audit после merge `rust-v0.144.6` | `needs-checks` | Diagnostic schema, launch IDs, bounded stderr tail, rollout persistence, reconstruction filtering и one-shot recovery сохранились; failure-path test усилен проверкой ровно одного `RecoveryStarted`, общий проверочный проход не запускался подагентом |
 | Source audit после merge `rust-v0.145.0` | `needs-checks` | Контракт диагностики сохранён вместе с upstream-тайм-аутом запуска, обязательным распространением ошибки OAuth refresh и ограничением строки executor stderr; общий проверочный проход не запускался подагентом |
+| Source audit после merge `rust-v0.146.0` | `needs-checks` | Контракт сохранён на новых upstream-границах `McpRuntime` и `PreparedMcpCall`; session- и operation-owned diagnostic context снова достигает `RmcpClient` |
+| `fork cards validate` после merge `rust-v0.146.0` | `ok` | `cards_checked: 25`, `card_errors: 0` |
+| `fork tests --mode list --card docs/fork/mcp-rollout-diagnostics.md` после merge `rust-v0.146.0` | `ok` | Исполняемая карта содержит подготовку fixture binary и 5 целевых проверок |
+| `fork tests --mode cards --card docs/fork/mcp-rollout-diagnostics.md --version 0.146.0` | `blocked` | Wrapper остановился на `migration map ready`: текущая и 9 других карточек ещё не имеют финального статуса |
+| `fork format --check` после merge `rust-v0.146.0` | `blocked` | Общий formatter не может разобрать оставшиеся conflict markers незавершённого merge |
 
 ### Известные падения и пропуски
 
@@ -448,6 +456,13 @@ runtime evidence, а не пользовательским событием по
   запуска, обязательное распространение ошибки OAuth refresh и ограничение
   размера строки executor stderr; карту проверок нужно выполнить в общем
   проходе.
+- После merge `rust-v0.146.0` upstream перенёс создание соединений в
+  `McpRuntime` и выполнение tool call в `PreparedMcpCall`. Diagnostic context
+  адаптирован к обеим новым границам без восстановления удалённого legacy path;
+  card-level tests не дошли до внутренних `argv`, потому что общий gate
+  `migration map ready` требует финальных статусов всех карточек. Проверку нужно
+  повторить после завершения parent migration pass. Общий formatter также
+  заблокирован оставшимися conflict markers незавершённого merge.
 - Текущая установленная версия может продолжать терять stderr в SQLite
   retention; эта карточка не исправляет уже произошедшие rollouts.
 - Если future implementation решит хранить полный stderr artifact рядом с

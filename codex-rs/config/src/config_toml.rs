@@ -67,10 +67,6 @@ const RESERVED_MODEL_PROVIDER_IDS: [&str; 4] = [
 
 pub const DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32 * 1024;
 
-const fn default_allow_login_shell() -> Option<bool> {
-    Some(true)
-}
-
 fn default_history() -> Option<History> {
     Some(History::default())
 }
@@ -193,7 +189,6 @@ pub struct ConfigToml {
     /// If `false`, the model can never use a login shell: `login = true`
     /// requests are rejected, and omitting `login` defaults to a non-login
     /// shell.
-    #[serde(default = "default_allow_login_shell")]
     pub allow_login_shell: Option<bool>,
 
     /// Sandbox mode to use.
@@ -652,6 +647,7 @@ pub struct ToolsToml {
     pub exec: Option<ExecToolToml>,
     pub read_file: Option<ReadFileToolToml>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
+    pub update_plan: Option<UpdatePlanToolConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
@@ -689,6 +685,13 @@ where
         return Err(D::Error::custom("value must be greater than 0"));
     }
     Ok(value)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct UpdatePlanToolConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Deserialize)]

@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 ---
 
@@ -586,6 +586,33 @@ tool-spec, unit-test и prompt-cache контрактов. Targeted tests,
 форматирование, генераторы и другие project-level проверки подагент не
 запускал; они остаются за общим проверочным проходом родительского агента через
 skill-owned workflow.
+
+### Миграция на `rust-v0.146.0`
+
+После merge `rust-v0.146.0` собственные файлы handler, spec и tests, а также
+runtime-контракт `get_system_time` сохранились без изменений. `handlers/mod.rs`
+по-прежнему подключает оба модуля и экспортирует `SystemTimeHandler`,
+`add_core_utility_tools(...)` без feature gate добавляет handler в базовый набор,
+а ожидаемый список инструментов в prompt-cache test содержит
+`get_system_time`. `codex-core` продолжает использовать зависимость workspace
+`chrono` с feature `serde`.
+
+Соседний upstream tool `clock.curr_time` не заменяет `get_system_time`: он
+регистрируется только при включенной feature `current_time_reminder`, которая
+остается выключенной по умолчанию, возвращает только UTC в фиксированном формате
+и не поддерживает параметры `format`, `offset` и `full`.
+
+В `codex-rs/Cargo.toml` остался не относящийся к этой карточке merge-конфликт
+версии workspace между `0.145.0` и `0.146.0`. Строки workspace-зависимости
+`chrono` и core feature `serde` находятся вне конфликтного участка и сохранены.
+Подагент этой карточки не разрешал чужой конфликт и не добавлял
+`codex-rs/Cargo.toml` в index.
+
+Миграционный аудит ограничен source-level сверкой owner-файлов,
+runtime-контракта, tool spec, unit tests, prompt-cache и состояния feature по
+умолчанию. Targeted tests, форматирование, генераторы и другие project-level
+проверки подагент не запускал; они остаются за общим проверочным проходом
+родительского агента через skill-owned workflow.
 
 ### Известные падения и пропуски
 

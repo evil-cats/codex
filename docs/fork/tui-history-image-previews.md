@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -393,6 +393,36 @@ snapshots для этой миграции не потребовались.
   является частью этой карточки и намеренно оставлен владельцу соответствующей
   fork-доработки.
 
+Заметка для переноса на `rust-v0.146.0`: аудит диапазона
+`rust-v0.145.0..rust-v0.146.0` показал, что upstream не менял собственно
+контракт предварительного просмотра изображений: `ImagePreviewSize`,
+`preview_size`, `[tui.history_image_preview]`, доверенная граница
+`InsertLocalImage`, типизированный `HistoryCellDisplayItem::LocalImage`,
+формирование управляющей последовательности терминала и Kitty virtual placement
+сохранились. Адаптация понадобилась в двух местах, где новый upstream пересёкся
+с fork-архитектурой:
+
+- в `custom_terminal.rs` новое тестовое поле `screen_size_override` объединено с
+  `history_rows_inserted_total` и `kitty_history_images`; все поля
+  инициализируются одновременно, а привязки Kitty по-прежнему очищаются вместе
+  с историей терминала;
+- новый upstream-тест
+  `directive_only_completion_removes_streamed_directive` в `app/tests.rs`
+  переведён с upstream `ReflowRenderResult.lines` на fork-поле
+  `ReflowRenderResult.items`, чтобы он проходил через типизированный путь
+  replay/reflow и использовал общий `rendered_line_text`;
+- `app/tests.rs` остаётся `UU` из-за отдельного конфликта импортов, не
+  принадлежащего этой карточке, поэтому task-owned адаптация в этом смешанном
+  файле намеренно не добавлена в index;
+- snapshot-файл
+  `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
+  не изменился между upstream-метками и сохраняет прежнее визуальное
+  подтверждение fallback. Проверка нового upstream snapshot для
+  `directive_only_completion_removes_streamed_directive` переведена на
+  перекомпоновку через `HistoryCellDisplayItem` без изменения ожидаемого
+  содержимого snapshot; фактическая проверка pending snapshots передана
+  родительскому проходу.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -551,10 +581,20 @@ Explorer нашёл эти имена только в docs, а не как те�
 карточка не утверждает, что такие падения остаются актуальными после текущей
 миграции.
 
-В текущем запуске подагента проверки, сборка, генераторы, форматирование и
-markdownlint не запускались по ограничению задачи. Проверки уровня проекта из
-`fork-tests.v1`, gates генераторов и сборки, а также проверка pending snapshots
-переданы родительскому общему проверочному проходу.
+В текущем запуске миграции на `rust-v0.146.0`:
+
+- режим списка `fork tests` успешно вывел пять ожидаемых строк исполняемой
+  карты;
+- проверка whitespace diff для `codex-rs/tui/src/custom_terminal.rs`
+  завершилась успешно, после чего полностью разрешённый task-owned конфликт
+  этого файла добавлен в index; повторная проверка staged diff также
+  завершилась успешно;
+- тесты, генераторы, форматирование, сборка, markdownlint и проверка pending
+  snapshots не запускались по ограничению роли подагента; их должен выполнить
+  родительский общий проверочный проход через skill-owned команды;
+- `app/tests.rs` остаётся смешанным неразрешённым файлом из-за чужого
+  конфликта импортов; task-owned переход нового теста с `.lines` на `.items`
+  сохранён в рабочем дереве, но файл не добавлен в index.
 
 ## Ограничения
 

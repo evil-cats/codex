@@ -834,6 +834,21 @@ impl TestToolServer {
             std::process::exit(86);
         }
 
+        if write_state_file_once(
+            "MCP_TEST_EXIT_AFTER_CALL_STATE_FILE",
+            "process-exit-scheduled",
+        )? {
+            eprintln!("mcp flaky_recovery scheduled process exit after response");
+            let _ = std::io::stderr().flush();
+            tokio::spawn(async {
+                sleep(Duration::from_millis(50)).await;
+                std::process::exit(87);
+            });
+            return Ok(Self::structured_result(
+                json!({ "result": "exit_scheduled" }),
+            ));
+        }
+
         Ok(Self::structured_result(json!({ "result": "recovered" })))
     }
 

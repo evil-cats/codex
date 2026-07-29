@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: working-tree
 ---
 
@@ -167,6 +167,7 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
+| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, смешанный `Search`/`File`, перенос pending `File`, completed-only replay и interleaving с завершением `exec` |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
 | `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, а при несвязанном завершении `exec` не сбрасывает активный in-progress `File` |
@@ -594,6 +595,11 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | Миграционный проход `rust-v0.145.0`: сохранённая история thread | `resolved-current-pass` | В `thread_transcript.rs` сохранён отдельный renderer `CoreToolActivity` и одновременно принят новый upstream-интерфейс построения transcript с `split_reasoning_summary_parts` и `InlineVisualizationContext` |
 | Миграционный проход `rust-v0.145.0`: статическая сверка остального контракта | `preserved-current-pass` | Сохранены `TurnItem::CoreToolActivity` и его enum, события начала и завершения вокруг маршрутизации tool, привязанное к environment вычисление `read_file detail`, преобразование app-server v2 и replay, явное исключение из analytics, маршрутизация live/replay в TUI, тесты группировки, snapshots и ограниченная по размеру сводка `/agent` |
 | Миграционный проход `rust-v0.145.0`: проверки подагента | `not-run-current-pass` | По ограничению subagent one-card flow тесты, сборка, генераторы, форматирование, markdownlint, `fork tests --mode list` и принятие snapshots не запускались; проверки карточки и общие gate-проверки переданы parent-agent |
+| Миграционный проход `rust-v0.146.0`: аудит изменений во владеющих файлах | `resolved-current-pass` | Upstream добавил `plugin_id` и `script_path` в `ThreadItem::CommandExecution`, распространение новых полей через legacy-события и app-server, связанную обработку analytics, а также изменил завершение хода и replay итогового сообщения агента; эти изменения не затронули `CoreToolActivity`, но регрессионный fork-тест чередования завершения `exec` с активным `File` адаптирован к новому литералу `CommandExecution` значениями `None` для `plugin_id` и `script_path` |
+| Миграционный проход `rust-v0.146.0`: статическая сверка TUI activity и snapshot-покрытия | `preserved-current-pass` | Сохранены сопоставление трёх core tools, model-visible `FunctionCallOutput`, lifecycle и replay в protocol/app-server, исключение из analytics, группировка в live/replay-потоках TUI, transcript и `/agent`; inline snapshot-тесты по-прежнему фиксируют `Exploring -> File`, сгруппированный `Explored -> File`, `Inspected -> Thread info` и `Inspected -> System time` |
+| `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` в проходе `rust-v0.146.0` | `ok-current-pass` | Исполняемая карта печатает core activity path detail, TUI snapshots и lifecycle, thread history replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork cards validate` в проходе `rust-v0.146.0` | `ok-current-pass` | Проверены 25 карточек, ошибок формы и связи с исполняемыми картами нет |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity --version 0.146.0` | `blocked-current-pass` | Обёртка остановилась до внутренних тестовых `argv` на проверке `migration map ready`: текущая карточка имеет статус `inProgress`, две соседние карточки ещё `pending`; JSON-карта миграции намеренно не менялась и прямой обход проверки не выполнялся |
 
 ### Известные падения и пропуски
 
@@ -602,6 +608,12 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 - В миграционном проходе `rust-v0.145.0` проверки уровня проекта не запускались
   по ограничению subagent one-card flow; их выполняет parent-agent в общем
   проверочном проходе.
+- В миграционном проходе `rust-v0.146.0` остаются общие неразрешённые конфликты
+  других областей; они не относятся к owner-файлам этой карточки и намеренно не
+  разрешаются и не добавляются в index этим проходом.
+- Проверки уровня карточки `rust-v0.146.0` не запускали внутренние тестовые
+  `argv`: обёртка остановилась на незавершённых статусах карты миграции до
+  начала тестов.
 - На момент subagent-прохода в общих owner-файлах
   `chatwidget/tool_lifecycle.rs`, `history_cell/mod.rs` и сгенерированном
   `ThreadItem.ts` оставались конфликты других областей. Участки

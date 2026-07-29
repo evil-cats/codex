@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: discussion-2026-07-09-tui-mcp-runtime-leak
 ---
 
@@ -347,12 +347,15 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 | Перенос на `rust-v0.144.5` | `done` | После merge сохранены API app-server и путь teardown, переходы жизненного цикла TUI для `/resume`, `/clear`, новой сессии, `/fork`, shutdown-first exit и side close, а также все пять целей тестов из `fork-tests.v1`; правки к коду не потребовались, проверки уровня проекта оставлены общему проходу |
 | Перенос на `rust-v0.144.6` | `done` | После merge сохранены non-destructive `thread/unload`, keyed serialization и защита от пересечения с pending unload, bounded shutdown с ошибкой без удаления loaded runtime, идемпотентный `notLoaded`, attach-before-unload переходы `/resume`, `/clear`, новой сессии и `/fork`, а также side close с сохранением локального state при ошибке; все пять целей `fork-tests.v1` и дополнительные regression tests ошибок и повторной выгрузки остаются в коде, проверки уровня проекта оставлены общему проходу |
 | Перенос на `rust-v0.145.0` | `done` | Сохранены non-destructive `thread/unload`, keyed serialization, pending-unload guards, bounded shutdown, идемпотентный `notLoaded` и повторный resume. Конфликты TUI разрешены с сохранением upstream backfill загруженных subagents после `/resume`; новые upstream-переходы prompt backtrack и safety-buffering retry переведены с unload-before-attach на attach-before-unload. Переходы `/resume`, `/clear`, новой сессии, `/fork`, shutdown-first exit и side close сохранены. Проверки уровня проекта оставлены общему проходу миграции. |
+| Перенос на `rust-v0.146.0` | `done` | Аудит исходного кода подтвердил, что upstream по-прежнему не предоставляет публичный `thread/unload`: его TUI-переходы используют `thread/unsubscribe`, а `pending_thread_unloads` остается внутренней защитой lifecycle. Сохранены fork API и teardown, attach-before-unload для переходов primary thread, prompt backtrack и safety-buffering retry, а также unload при side discard и shutdown-first exit. В смешанных TUI-конфликтах объединены добавленная upstream возможность задавать имя новой сессии для `/new` и `/clear`, явный учет side runtimes, upstream-импорты для неблокирующего `turn/interrupt` и новый directive-only reflow test через `ReflowRenderResult.items`; сохранены перенос `last_terminal_title` в `replace_chat_widget` и соседние image-preview/core-tool-activity изменения. В сгенерированном `ClientRequest.ts` сохранены и fork-вариант `thread/unload`, и новый upstream-вариант `externalAgentConfig/import/recordHistory`. Три task-owned TUI-пути и один schema-путь с конфликтами разрешены и добавлены в index; исполняемая карта пяти card-level tests напечатана, а их запуск оставлен parent после финализации статуса карточки в migration map. |
 | `.codex/skills/fork/scripts/fork generators` | `ok` | Config schema и app-server schema artifacts синхронизированы |
 | `.codex/skills/fork/scripts/fork format --fix` | `ok` | Rust/doc formatting wrapper применен после правок |
 | `.codex/skills/fork/scripts/fork format --check` | `ok` | Форматирование проверено после реализации |
+| `.codex/skills/fork/scripts/fork format --check` при переносе на `rust-v0.146.0` | `blocked` | Rust formatter остановился на оставшихся вне этой карточки `UU` и не дошел до чистой общей проверки |
 | `.codex/skills/fork/scripts/fork tests --mode list --card docs/fork/tui-thread-runtime-unload.md` | `ok` | Исполняемая карта содержит пять card-level targets |
 | `.codex/skills/fork/scripts/fork tests --mode cards --card docs/fork/tui-thread-runtime-unload.md` | `ok` | App-server unload test и четыре TUI lifecycle regression tests прошли |
-| `.codex/skills/fork/scripts/fork cards validate` | `ok` | `cards_checked: 23`, `card_errors: 0` |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card docs/fork/tui-thread-runtime-unload.md --version 0.146.0` | `blocked` | Gate `migration map ready` остановил запуск до tests на статусе карточки `inProgress`; parent должен повторить команду после установки `migrated` |
+| `.codex/skills/fork/scripts/fork cards validate` | `ok` | `cards_checked: 25`, `card_errors: 0` |
 | `markdownlint-cli2 --config docs/.markdownlint-cli2.yaml docs/fork/tui-thread-runtime-unload.md` | `ok` | `0 error(s)` |
 | `git diff --check` | `ok` | Whitespace/conflict-marker issues не найдены |
 | `.codex/skills/fork/scripts/fork build-fast` | `ok` | Release-fast binary собран и прошел binary metadata/version checks |
@@ -360,6 +363,14 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 
 ### Известные падения и пропуски
 
+- При переносе на `rust-v0.146.0` card-level запуск остановился на gate
+  `migration map ready`: карточка еще имеет статус `inProgress`.
+  Card-level tests нужно повторно запустить parent после установки финального статуса `migrated`;
+  migration map подагент не менял.
+- Общая проверка форматирования для `rust-v0.146.0` остановилась на чужих
+  conflict markers, оставшихся после незавершенного merge. Task-owned TUI-пути
+  проверены через scoped `git diff --check`; formatter нужно повторить после
+  разрешения остальных `UU`.
 - Runtime smoke с реальным stdio MCP процессом для `/resume`, `/clear` и
   `/fork` еще не выполнялся; покрытие идет через shutdown chain и loaded-list
   regression tests.

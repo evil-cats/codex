@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: working-tree
 ---
 
@@ -671,6 +671,22 @@ rollout не удалось получить.
 
 Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
 запуске 2026-07-21 не выполнялись по skill-owned one-card правилу; общий
+агент должен запустить нужные проверки отдельно.
+
+Фактическая проверка 2026-07-29 после слияния `rust-v0.146.0`:
+
+| Область | Результат |
+| --- | --- |
+| `codex-rs/protocol/src/shell_environment.rs` и `codex-rs/core/src/exec_env.rs` | Константы и `RuntimeEnv` сохраняют `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID`; runtime-значения по-прежнему добавляются после shell env policy |
+| `codex-rs/core/src/agent/agent_name.rs` и `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime env и `get_thread_info.agent_name` по-прежнему используют общий helper имени агента |
+| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` и `codex-rs/core/src/tasks/user_shell.rs` | Shell tool сохраняет `ToolInvocation.call_id`, а `/shell` создает UUID до сборки env и использует его как `CommandExecutionItem.id`; новые upstream-поля `plugin_id` и `script_path` не меняют этот контракт |
+| `codex-rs/core/src/tools/runtimes/mod.rs` и `codex-rs/core/src/unified_exec/process_manager.rs` | Перенос proxy helper в `codex-network-proxy` и новые upstream-механизмы unified exec не затрагивают восстановление runtime-переменных после snapshot и runtime overlay поверх `local_policy_env` |
+| Конфликты и тестовое покрытие карточки | В card-owned путях конфликтных маркеров нет; сохранились тесты env policy, agent helper, shell tool, snapshot restore и unified exec overlay, а блок `fork-tests.v1` остается актуальным |
+
+Кодовых изменений по этой карточке после проверки 2026-07-29 не потребовалось.
+
+Проверочные команды, сборка, форматирование, генераторы и `fix` в one-card
+запуске 2026-07-29 не выполнялись по skill-owned one-card правилу; общий
 агент должен запустить нужные проверки отдельно.
 
 ### Известные падения и пропуски

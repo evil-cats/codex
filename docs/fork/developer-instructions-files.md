@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -19,7 +19,7 @@ developer instructions в отдельных Markdown-файлах и подкл
 | --- | --- |
 | Статус | `active` |
 | Основной commit | `d976b54ed Support developer instructions files` |
-| Текущая база проверки | `rust-v0.145.0`, ветка `hermione-0.145.0` |
+| Текущая база проверки | `rust-v0.146.0`, ветка `hermione-0.146.0` |
 | Config key | `developer_instructions_files` |
 | Тип | `Vec<AbsolutePathBuf>` |
 | Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
@@ -353,6 +353,14 @@ scope `session/context aggregation`: это существующий сквоз�
 сквозной тест сохранён вместе с новым именем соседнего Azure-теста из upstream.
 Независимый конфликт в `codex-rs/core/src/config/mod.rs` не относится к
 `developer_instructions_files` и оставлен родительскому проходу.
+
+В миграционном проходе 2026-07-29 для `rust-v0.146.0` карточка сверена с текущей
+рабочей копией без запуска сборки, тестов, генераторов, форматирования или
+`fix` по ограничению подагентского запуска. Поле `ConfigToml`, нормализация
+путей, порядок секций, поведение предупреждения и ошибки, runtime override,
+артефакт schema и передача итогового значения в сообщение роли `developer`
+сохранились. В owner-файлах карточки конфликтных маркеров нет; кодовых правок не
+потребовалось.
 
 Старый текст карточки называл прямые команды `just write-config-schema` и
 `just build-fast-release` как маршрут повторения на `f-ms-dev` при разрешении

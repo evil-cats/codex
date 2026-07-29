@@ -2,6 +2,7 @@ use super::*;
 use codex_app_server_protocol::ImageGenerationItem;
 use codex_app_server_protocol::PluginAvailability;
 use codex_protocol::items::ImagePreviewSize;
+use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -16,7 +17,7 @@ pub(super) async fn test_config() -> Config {
             .await
             .expect("config");
     config.codex_home = codex_home.abs();
-    config.sqlite_home = codex_home.clone();
+    config.sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.as_path().abs());
     config.log_dir = codex_home.join("log");
     config.cwd = PathBuf::from(test_path_display("/tmp/project")).abs();
     config.config_layer_stack = ConfigLayerStack::default();
@@ -861,6 +862,8 @@ pub(super) fn begin_exec_with_source(
         command: codex_shell_command::parse_command::shlex_join(&command),
         cwd: chat.config.cwd.clone().into(),
         process_id: None,
+        plugin_id: None,
+        script_path: None,
         source,
         status: AppServerCommandExecutionStatus::InProgress,
         command_actions,
@@ -884,6 +887,8 @@ pub(super) fn begin_unified_exec_startup(
         command: codex_shell_command::parse_command::shlex_join(&command),
         cwd: chat.config.cwd.clone().into(),
         process_id: Some(process_id.to_string()),
+        plugin_id: None,
+        script_path: None,
         source: ExecCommandSource::UnifiedExecStartup,
         status: AppServerCommandExecutionStatus::InProgress,
         command_actions: Vec::new(),
@@ -1096,6 +1101,8 @@ pub(super) fn end_exec(
         command,
         cwd,
         process_id,
+        plugin_id,
+        script_path,
         source,
         command_actions,
         ..
@@ -1110,6 +1117,8 @@ pub(super) fn end_exec(
             command,
             cwd,
             process_id,
+            plugin_id,
+            script_path,
             source,
             status: if exit_code == 0 {
                 AppServerCommandExecutionStatus::Completed

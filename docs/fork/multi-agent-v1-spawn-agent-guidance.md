@@ -2,7 +2,7 @@
 id: fork-multi-agent-v1-spawn-agent-guidance
 status: active
 created: 2026-07-05
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: discussion-2026-07-05..discussion-2026-07-10
 ---
 
@@ -26,7 +26,7 @@ description. Текущий контракт больше не опираетс�
 | Статус | `active`; V1 tool-owned guidance согласован, policy-split удален как legacy |
 | Целевой tool | V1 `spawn_agent` |
 | Owner-файл prompt | `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` |
-| Тесты | `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` |
+| Тесты | `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs`, `codex-rs/core/src/context/world_state/multi_agent_mode_tests.rs`, `codex-rs/core/tests/suite/multi_agent_mode.rs`, `codex-rs/core/tests/suite/spawn_agent_description.rs` |
 | Видимая для модели поверхность | описание tool, раскрываемое напрямую или через `tool_search` |
 | Главный контракт | V1 `spawn_agent` description сам содержит критерии useful delegation и механику уже выбранного concrete bounded subtask |
 
@@ -63,6 +63,11 @@ usage hint - сам `spawn_agent` tool description, а карточка не т�
 | --- | --- |
 | `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` | Владеет V1 и V2 `spawn_agent` tool descriptions; здесь V1 default usage hint должен оставаться tool-owned и самодостаточным |
 | `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` | Закрепляет model-visible текст V1 `spawn_agent`, отсутствие старого запрета, отсутствие legacy policy-ссылки и поведение `usage_hint_text` override |
+| `codex-rs/core/src/context/multi_agent_mode_instructions.rs` | Владеет нейтральным inactive reset: отменяет прежний mode и возвращает модель к актуальным tool descriptions без отдельной authorization policy |
+| `codex-rs/core/src/context/world_state/multi_agent_mode.rs` | При переходе к inactive mode должен сбросить прежний V2 mode, не синтезируя `ExplicitRequestOnly` поверх V1 |
+| `codex-rs/core/src/context/world_state/multi_agent_mode_tests.rs` и snapshot | Закрепляют нейтральный reset для переходов к inactive mode |
+| `codex-rs/core/tests/suite/multi_agent_mode.rs` | Проверяет холодное возобновление legacy V2 history в V1 без нового explicit-request guard |
+| `codex-rs/core/tests/suite/spawn_agent_description.rs` | Проверяет V1 tool-owned guidance в фактическом request и отсутствие legacy authorization/sidecar-work текста |
 | `docs/fork/multi-agent-v1-spawn-agent-guidance.md` | Handoff-карточка с текущим tool-owned контрактом, обоснованием, проверками и условиями переноса |
 
 Намеренно не менять в этой доработке:
@@ -70,6 +75,8 @@ usage hint - сам `spawn_agent` tool description, а карточка не т�
 - `${HOME}/.codex/policies/session-policy.md` и другие профильные policy-файлы;
 - runtime API V1 `spawn_agent`;
 - V2 inter-agent протокол;
+- тексты `ExplicitRequestOnly`, `Proactive` и `Custom` для фактически активного
+  V2 mode;
 - config keys вроде `usage_hint_text`, `root_agent_usage_hint_text` и
   `subagent_usage_hint_text`;
 - `usage_hint_enabled`, потому что в текущем checkout это deprecated
@@ -89,6 +96,10 @@ usage hint - сам `spawn_agent` tool description, а карточка не т�
    `usage_hint_enabled` не меняются в этой доработке.
 7. Родитель после delegation ждёт всех подагентов текущего раунда, закрывает их и
    не дублирует delegated work локально, пока подагенты работают.
+8. При переходе из прежнего V2 mode к inactive/V1 world-state слой добавляет
+   только нейтральный reset: прежний mode больше не действует, а дальнейшее
+   поведение определяется актуальными tool descriptions и инструкциями более
+   высокого приоритета. Отдельный explicit-request guard не добавляется.
 
 ## Текст для V1 `spawn_agent` tool description
 
@@ -200,6 +211,12 @@ that can run independently alongside useful local work
 6. Если upstream успел изменить V2 description, использовать его только как
    дополнительный контекст; tool-owned V1 guidance выше остается owner-текстом
    этой карточки, пока пользователь не примет новое решение.
+7. Если upstream перенёс multi-agent mode в world state, проверить переход с
+   известного или неизвестного V2 baseline к inactive/V1: он должен отменить
+   прежний mode нейтральным reset и не синтезировать V2 explicit-request guard
+   поверх V1 tool-owned guidance.
+8. Проверить request-level тест V1 description: он должен ожидать текущий
+   tool-owned контракт, а не удалённый upstream explicit-request guard.
 
 ## Проверки
 
@@ -218,6 +235,9 @@ that can run independently alongside useful local work
 | V1 `spawn_agent` сохраняет task message shape, read-only findings, coding worker subtasks, direct fork workspace edits, disjoint write scopes, agent roles и wait/close hint | `required` | `spawn_agent_tool_v1_uses_tool_owned_delegation_guidance` |
 | V1 сохраняет legacy `fork_context`, а V2 отдельно использует `fork_turns`, канонические вложенные имена задач и разрешает подагентам запускать собственных подагентов | `required` | `spawn_agent_tool_v1_keeps_legacy_fork_context_field`, `spawn_agent_tool_v2_requires_task_name_and_lists_visible_models` |
 | `usage_hint_text` override продолжает заменять дефолтный usage hint | `required` | `spawn_agent_tool_v1_usage_hint_text_replaces_default_guidance` |
+| Переходы world state из прежнего V2 mode к inactive используют нейтральный reset вместо V2 `ExplicitRequestOnly` | `required` | `context::world_state::multi_agent_mode::tests::snapshots` |
+| Холодное возобновление legacy V2 history в V1 отменяет прежний mode без нового explicit-request guard | `required` | `v1_resume_clears_legacy_v2_mode_without_explicit_request_guard` |
+| Фактический request содержит V1 tool-owned guidance и не содержит legacy authorization/sidecar-work текста | `required` | `spawn_agent_description_lists_visible_models_and_reasoning_efforts` |
 
 ### Владелец исполняемой карты
 
@@ -233,6 +253,18 @@ runbook прямого запуска.
     {
       "purpose": "multi agent v1 spawn agent guidance",
       "argv": ["just", "test", "-p", "codex-core", "spawn_agent_tool_"]
+    },
+    {
+      "purpose": "multi agent v1 world state boundary",
+      "argv": ["just", "test", "-p", "codex-core", "context::world_state::multi_agent_mode::tests::snapshots"]
+    },
+    {
+      "purpose": "multi agent v1 legacy mode resume",
+      "argv": ["just", "test", "-p", "codex-core", "--test", "all", "v1_resume_clears_legacy_v2_mode_without_explicit_request_guard"]
+    },
+    {
+      "purpose": "multi agent v1 request description",
+      "argv": ["just", "test", "-p", "codex-core", "--test", "all", "spawn_agent_description_lists_visible_models_and_reasoning_efforts"]
     }
   ]
 }
@@ -292,6 +324,18 @@ explicit-request guard и sidecar-work workflow. Два V1-теста адапт
 видимой модели помечена как совместимая с V1. V2 task-depth guidance и runtime
 API не менялись; команды уровня карточки и проекта в one-card проходе не
 запускались и остаются для общего проверочного прохода родительского агента.
+
+При переносе на `rust-v0.146.0` owner-файлы V1 description и unit-тестов между
+`rust-v0.145.0..rust-v0.146.0` не менялись, а слитый код уже сохранял
+tool-owned guidance. Upstream перенёс multi-agent mode в world state и добавил
+fallback `Unknown -> ExplicitRequestOnly` даже при отсутствии эффективного V2
+mode; для V1 это возвращало удалённый authorization guard вне tool description.
+Переходы из прежнего V2 mode к inactive заменены нейтральным reset, который
+отменяет mode и возвращает владение актуальным tool descriptions без новой
+authorization policy. Snapshot, холодный resume V2→V1 и request-level тест
+синхронизированы с текущим V1 контрактом. Тексты фактически активных V2 modes не
+менялись. Команды уровня карточки и проекта в one-card проходе не запускались;
+они остаются для общего проверочного прохода родительского агента.
 
 | Проверка | Результат | Существенное подтверждение |
 | --- | --- | --- |
@@ -360,6 +404,7 @@ skill-owned сборка и установка:
 | Не возвращать `{agent_role_usage_hint}` | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
 | Использовать из V2 хорошую идею concrete/bounded subtasks | `перенесено в карточку` | `Архитектурное решение`, `Текст для V1 spawn_agent tool description` |
 | Не переносить V2 "alongside useful local work" | `перенесено в карточку` | `Архитектурное решение`, `Итоговый контракт` |
+| Сбрасывать прежний V2 mode для V1 нейтральным world-state reset без новой authorization policy | `перенесено в карточку` | `Итоговый контракт`, `Порядок повторения при переносе`, `Проверки` |
 | Parent после delegation ждёт всех подагентов текущего раунда, закрывает их и не делает delegated work сам | `перенесено в карточку` | `Текст для V1 spawn_agent tool description`, `Итоговый контракт` |
 | Parent анализирует и интегрирует ответы до продолжения содержательной работы | `перенесено в карточку` | `Текст для V1 spawn_agent tool description`, `Итоговый контракт` |
 | Кодовая реализация и тесты выполнены | `перенесено в карточку` | `Карта файлов`, `Проверки` |

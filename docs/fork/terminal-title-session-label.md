@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: rust-v0.137.0..HEAD
 ---
 
@@ -39,11 +39,13 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/core/config.schema.json` | Экспортирует config key |
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective `Config.tui_terminal_title_label` и load assignment |
 | `codex-rs/core/src/config/config_tests.rs` | Обновляет defaults/expected config shape |
+| `codex-rs/thread-manager-sample/src/main.rs` | Задаёт `tui_terminal_title_label: None` при ручной инициализации `Config` |
 | `codex-rs/tui/src/bottom_pane/title_setup.rs` | Добавляет terminal title item `SessionLabel` |
 | `codex-rs/tui/src/bottom_pane/status_surface_preview.rs` | Добавляет preview item `SessionLabel` |
 | `codex-rs/tui/src/chatwidget/status_surfaces.rs` | Рендерит label в preview и terminal title |
 | `codex-rs/tui/src/terminal_title.rs` | Санитизирует итоговый title и безопасно пишет или очищает OSC title |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
+| `codex-rs/tui/src/app/session_lifecycle.rs` | Переносит кэш последнего terminal title в новый `ChatWidget` при смене текущего thread |
 | `codex-rs/tui/src/app.rs` | Очищает управляемый Codex title при завершении `App`; предыдущий title терминала не восстанавливается |
 | TUI snapshots | Обновляют popup со строкой `session-label` |
 
@@ -102,6 +104,12 @@ items вроде project name, current dir или run state не всегда п
 15. При завершении `App::drop` очищает последний управляемый Codex title.
     Предыдущий title shell/terminal не читается и не восстанавливается, потому
     что переносимого механизма для этого нет.
+16. `App::replace_chat_widget` переносит `last_terminal_title` в новый
+    `ChatWidget`, чтобы смена thread не очищала и не записывала повторно
+    неизменившийся OSC title.
+17. Ручная инициализация `Config` в `codex-thread-manager-sample` задаёт
+    `tui_terminal_title_label: None`, поскольку sample не получает значение
+    через общий config loading.
 
 ## Пошаговое воспроизведение
 
@@ -133,6 +141,9 @@ pub tui_terminal_title_label: Option<String>,
 Важно: на `0.137.0` merge это поле однажды потерялось именно на effective
 `Config` слое. При будущих migrations проверять не только TOML type, но и
 runtime `Config`.
+
+В `codex-rs/thread-manager-sample/src/main.rs` ручная инициализация `Config`
+должна задавать `tui_terminal_title_label: None`.
 
 ### 3. Обновить terminal title item model
 
@@ -202,6 +213,13 @@ TerminalTitleItem::SessionLabel => {
 - очищать ранее управляемый title при `NoVisibleContent`;
 - не выполнять повторную OSC-запись, если вычисленное значение не изменилось.
 
+При замене `ChatWidget` через
+`codex-rs/tui/src/app/session_lifecycle.rs::App::replace_chat_widget` кэш
+`last_terminal_title` переносится в новый `ChatWidget`. Это сохраняет общий
+контракт кэширования и жизненного цикла после разделения lifecycle-кода `App` по
+модулям и не допускает видимого мерцания из-за лишней последовательности очистки
+и записи.
+
 Низкоуровневый `set_terminal_title` владеет санитизацией всей итоговой строки,
 включая значение `session-label`. Этот слой удаляет управляющие и
 невидимые/bidi форматирующие codepoints, нормализует пробельные символы,
@@ -230,6 +248,9 @@ TerminalTitleItem::SessionLabel => {
   - пустой настроенный список очищает ранее управляемый title;
   - `NoVisibleContent` после санитизации также очищает ранее управляемый title;
   - cache обновляется только после успешного результата `Applied`.
+- `App::replace_chat_widget` сохраняет `last_terminal_title` при смене thread,
+  чтобы новый `ChatWidget` продолжал владеть уже записанным OSC title без лишней
+  последовательности очистки и записи.
 - Тест `terminal_title_can_include_configured_session_label`:
   - создаёт `ChatWidget`;
   - ставит `chat.config.tui_terminal_title_label = Some("hermione")`;
@@ -255,6 +276,8 @@ TerminalTitleItem::SessionLabel => {
 - `App::drop` вызывает `clear_managed_terminal_title`; lifecycle намеренно
   очищает управляемый title, но не пытается восстановить предыдущий.
 - Config-тесты обновлены с `terminal_title_label: None` в expected defaults.
+- `codex-thread-manager-sample` компилируется с
+  `tui_terminal_title_label: None` при ручной инициализации `Config`.
 - `codex-rs/core/config.schema.json` содержит schema для
   `terminal_title_label` после обновления config types.
 
@@ -287,6 +310,10 @@ TerminalTitleItem::SessionLabel => {
     {
       "purpose": "terminal title",
       "argv": ["just", "test", "-p", "codex-tui", "terminal_title"]
+    },
+    {
+      "purpose": "thread manager sample config initializer",
+      "argv": ["just", "test", "-p", "codex-thread-manager-sample", "--no-tests=pass"]
     }
   ]
 }
@@ -328,6 +355,29 @@ TerminalTitleItem::SessionLabel => {
   `rust-v0.144.6..rust-v0.145.0` меняет `config/src/types.rs`, config schema,
   config tests, effective config и `tui/src/app.rs`, но merge сохранил контракт
   карточки без конфликтов в её owner-файлах.
+- После merge `rust-v0.146.0` аудит исходников
+  `rust-v0.145.0..rust-v0.146.0` не нашёл изменений символов реализации terminal
+  title или пяти selector snapshots. Upstream меняет общие config-файлы,
+  `thread-manager-sample/src/main.rs` и `tui/src/app/session_lifecycle.rs`, но
+  текущее объединённое дерево сохраняет оба config-слоя, schema, отображение
+  `session-label` в selector, preview и runtime, ограничение label до 24
+  символов, безопасный путь OSC, контракт
+  кэширования и очистки, передачу `last_terminal_title` при замене `ChatWidget`,
+  ручную инициализацию `Config` в `codex-thread-manager-sample`, очистку на
+  `App::drop` и всё snapshot-покрытие карточки. Неразрешённые блоки конфликта
+  слияния в `app/session_lifecycle.rs` находятся вне передачи terminal title и
+  этой карточкой не изменялись и не добавлялись в индекс Git.
+- В one-card проходе после merge `rust-v0.146.0`
+  `fork tests --mode list --card docs/fork/terminal-title-session-label.md`
+  распознал три проверки карточки, а `fork cards validate` проверил 25 карточек
+  без ошибок.
+- В том же one-card проходе запуск уровня карточки через
+  `fork tests --mode cards --card docs/fork/terminal-title-session-label.md
+  --version 0.146.0` остановился на проверке `migration map ready`: эта карточка
+  оставалась `inProgress`, а другие записи карты ещё имели статус `pending`.
+  Внутренние проверки `codex-core`, `codex-tui` и
+  `codex-thread-manager-sample` не выполнялись; их должен запустить общий
+  проверочный проход после финализации статусов карточек.
 - Зафиксированное ожидаемое runtime-значение для настроенного session label:
 
   ```text
@@ -395,9 +445,11 @@ TerminalTitleItem::SessionLabel => {
 | Добавить `[tui].terminal_title_label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
 | Добавить item `session-label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
 | Прокинуть значение в effective `Config` | перенесено в карточку | `Итоговый контракт`, `Проверки`, `Риски` |
+| Сохранить ручную инициализацию `Config` в `codex-thread-manager-sample` | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Исторические результаты` |
 | Проверить рендеринг `hermione`, `project`, `Ready` | перенесено в карточку | `Проверки` |
 | Сохранить общий escaping значения label из config перед OSC | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Ограничения` |
 | Сохранить clear/cache lifecycle terminal title | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Риски` |
+| Сохранить `last_terminal_title` при замене `ChatWidget` | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Исторические результаты` |
 | Сохранить terminal support и очистку при завершении `App` без ложного обещания restore | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Проверки`, `Исторические результаты` |
 | Сохранить владельца `fork tests` и блок `fork-tests.v1` | перенесено в карточку | `Проверки` |
 | Сохранить исторические команды и результаты проверок | перенесено в карточку | `Проверки` |

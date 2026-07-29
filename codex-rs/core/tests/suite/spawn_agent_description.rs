@@ -32,6 +32,7 @@ use test_case::test_case;
 use tokio::time::sleep;
 
 const MULTI_AGENT_V1_NAMESPACE: &str = "multi_agent_v1";
+const MULTI_AGENT_V2_NAMESPACE: &str = "collaboration";
 const SPAWN_AGENT_TOOL_NAME: &str = "spawn_agent";
 
 fn spawn_agent_description(body: &Value) -> Option<String> {
@@ -191,6 +192,7 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
     let body = resp_mock.single_request().body_json();
     let description =
         spawn_agent_description(&body).expect("spawn_agent description should be present");
+    let normalized_description = description.split_whitespace().collect::<Vec<_>>().join(" ");
 
     assert!(
         description.contains("- `visible-model`: Fast and capable"),
@@ -208,8 +210,8 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
         "expected inherited-model guidance in spawn_agent description: {description:?}"
     );
     assert!(
-        description.contains(
-            "Do not set the `model` field unless the user explicitly asks for a different model or there is a clear task-specific reason."
+        normalized_description.contains(
+            "Do not set the `model` field unless the task clearly needs a different model, a configured agent role requires it, or a higher-priority instruction explicitly asks for it."
         ),
         "expected model override usage guidance in spawn_agent description: {description:?}"
     );
@@ -227,21 +229,30 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
     );
     assert!(
         description.contains(
+            "This spawn_agent tool creates a sub-agent for an already selected concrete,"
+        ),
+        "expected tool-owned V1 guidance in spawn_agent description: {description:?}"
+    );
+    assert!(
+        description.contains("Consider delegation for non-trivial")
+            && description.contains("independent research, implementation, or")
+            && description.contains("Do not spawn agents for trivial, vague, tightly coupled work"),
+        "expected bounded delegation criteria in spawn_agent description: {description:?}"
+    );
+    assert!(
+        description.contains("Do not duplicate delegated work locally")
+            && description.contains("then continue substantive parent work"),
+        "expected wait-and-integrate guidance in spawn_agent description: {description:?}"
+    );
+    assert!(
+        !description.contains(
             "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work."
-        ),
-        "expected explicit authorization rule in spawn_agent description: {description:?}"
-    );
-    assert!(
-        description.contains(
+        ) && !description.contains(
             "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
-        ) && description.contains("### When to delegate vs. do the subtask yourself"),
-        "expected delegation decision guidance in spawn_agent description: {description:?}"
-    );
-    assert!(
-        description.contains(
-            "Agent-role guidance below only helps choose which agent to use after spawning is already authorized; it never authorizes spawning by itself."
-        ),
-        "expected agent-role clarification in spawn_agent description: {description:?}"
+        ) && !description.contains(
+            "Agent-role guidance below only helps choose which agent to use after spawning is already authorized"
+        ) && !description.contains("alongside useful local work"),
+        "legacy authorization and sidecar-work guidance should stay absent: {description:?}"
     );
     assert!(
         !description.contains("A mini model can solve many tasks faster than the main model."),
@@ -302,5 +313,61 @@ async fn configured_agent_roles_control_spawn_agent_type(
         spawn_agent_exposes_agent_type(&response.single_request().body_json(), namespace),
         has_agent_role
     );
+    Ok(())
+}
+
+#[test_case(true, false; "wait agent remains available without clock sleep")]
+#[test_case(true, true; "wait agent remains available with clock sleep")]
+#[test_case(false, false; "wait agent can be disabled without clock sleep")]
+#[test_case(false, true; "wait agent can be disabled with clock sleep")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multi_agent_v2_wait_agent_tool_follows_configuration(
+    wait_agent_enabled: bool,
+    sleep_tool_enabled: bool,
+) -> Result<()> {
+    let current_time_reminder = if sleep_tool_enabled {
+        r#"
+[features.current_time_reminder]
+enabled = true
+sleep_tool = true
+"#
+    } else {
+        ""
+    };
+    let config_toml = format!(
+        r#"
+[features.multi_agent_v2]
+enabled = true
+wait_agent_enabled = {wait_agent_enabled}
+{current_time_reminder}"#
+    );
+    let server = start_mock_server().await;
+    let response = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+    let test = test_codex()
+        .with_pre_build_hook(move |home| {
+            std::fs::write(home.join("config.toml"), &config_toml)
+                .expect("write multi-agent configuration");
+        })
+        .build_with_auto_env(&server)
+        .await?;
+
+    test.submit_turn("hello").await?;
+
+    let request = response.single_request();
+    let body = request.body_json();
+    assert!(namespace_child_tool(&body, MULTI_AGENT_V2_NAMESPACE, SPAWN_AGENT_TOOL_NAME).is_some());
+    assert_eq!(
+        namespace_child_tool(&body, MULTI_AGENT_V2_NAMESPACE, "wait_agent").is_some(),
+        wait_agent_enabled
+    );
+    assert_eq!(
+        namespace_child_tool(&body, "clock", "sleep").is_some(),
+        sleep_tool_enabled
+    );
+
     Ok(())
 }

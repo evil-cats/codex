@@ -79,6 +79,17 @@ fn display_width(s: &str) -> usize {
     visible.width()
 }
 
+fn osc8_hyperlink_parts(symbol: &str) -> Option<(&str, &str)> {
+    let content = symbol.strip_prefix("\x1b]8;;")?;
+    let destination_end = content.find('\x07')?;
+    let destination = &content[..destination_end];
+    if destination.is_empty() {
+        return None;
+    }
+    let visible = content[destination_end + 1..].strip_suffix("\x1b]8;;\x07")?;
+    Some((destination, visible))
+}
+
 pub struct Frame<'a> {
     /// Where should the cursor be after drawing this frame?
     ///
@@ -169,6 +180,8 @@ where
     history_rows_inserted_total: u64,
     /// Kitty placeholder images close enough to the visible history area to render.
     kitty_history_images: Vec<KittyHistoryImageAnchor>,
+    #[cfg(test)]
+    screen_size_override: Option<Size>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -254,6 +267,8 @@ where
             visible_history_rows: 0,
             history_rows_inserted_total: 0,
             kitty_history_images: Vec::new(),
+            #[cfg(test)]
+            screen_size_override: None,
         }
     }
 
@@ -263,7 +278,10 @@ where
         screen_size: Size,
         cursor_pos: Position,
     ) -> Self {
-        Self::with_screen_size_and_cursor_position(backend, screen_size, cursor_pos)
+        let mut terminal =
+            Self::with_screen_size_and_cursor_position(backend, screen_size, cursor_pos);
+        terminal.screen_size_override = Some(screen_size);
+        terminal
     }
 
     /// Get a Frame object which provides a consistent view into the terminal state for rendering.
@@ -601,6 +619,10 @@ where
 
     /// Queries the real size of the backend.
     pub fn size(&self) -> io::Result<Size> {
+        #[cfg(test)]
+        if let Some(size) = self.screen_size_override {
+            return Ok(size);
+        }
         self.backend.size()
     }
 }
@@ -686,17 +708,27 @@ where
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
     let mut last_pos: Option<Position> = None;
+    let mut active_hyperlink: Option<String> = None;
     for command in commands {
-        let (x, y) = match command {
+        let (x, y) = match &command {
             DrawCommand::Put { x, y, .. } => (x, y),
             DrawCommand::ClearToEnd { x, y, .. } => (x, y),
         };
-        // Move the cursor if the previous location was not (x - 1, y)
-        if !matches!(last_pos, Some(p) if x == p.x + 1 && y == p.y) {
-            queue!(writer, MoveTo(x, y))?;
+        let hyperlink = match &command {
+            DrawCommand::Put { cell, .. } => osc8_hyperlink_parts(cell.symbol()),
+            DrawCommand::ClearToEnd { .. } => None,
+        };
+        let destination = hyperlink.map(|(destination, _)| destination);
+        let hyperlink_changed = active_hyperlink.as_deref() != destination;
+        if hyperlink_changed && active_hyperlink.is_some() {
+            queue!(writer, Print("\x1b]8;;\x07"))?;
         }
-        last_pos = Some(Position { x, y });
-        match command {
+        // Move the cursor if the previous location was not (x - 1, y)
+        if !matches!(last_pos, Some(p) if *x == p.x + 1 && *y == p.y) {
+            queue!(writer, MoveTo(*x, *y))?;
+        }
+        last_pos = Some(Position { x: *x, y: *y });
+        match &command {
             DrawCommand::Put { cell, .. } => {
                 if cell.modifier != modifier {
                     let diff = ModifierDiff {
@@ -715,16 +747,26 @@ where
                     bg = cell.bg;
                 }
 
-                queue!(writer, Print(cell.symbol()))?;
+                if hyperlink_changed && let Some(destination) = destination {
+                    queue!(writer, Print(format!("\x1b]8;;{destination}\x07")))?;
+                }
+                let symbol = hyperlink.map_or_else(|| cell.symbol(), |(_, visible)| visible);
+                queue!(writer, Print(symbol))?;
             }
             DrawCommand::ClearToEnd { bg: clear_bg, .. } => {
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
                 modifier = Modifier::empty();
-                queue!(writer, SetBackgroundColor(clear_bg.into()))?;
-                bg = clear_bg;
+                queue!(writer, SetBackgroundColor((*clear_bg).into()))?;
+                bg = *clear_bg;
                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
             }
         }
+        if hyperlink_changed {
+            active_hyperlink = destination.map(str::to_owned);
+        }
+    }
+    if active_hyperlink.is_some() {
+        queue!(writer, Print("\x1b]8;;\x07"))?;
     }
 
     queue!(
@@ -811,6 +853,11 @@ mod tests {
     use ratatui::backend::WindowSize;
     use ratatui::layout::Rect;
     use ratatui::style::Style;
+    use ratatui::style::Stylize;
+    use ratatui::text::Line;
+    use ratatui::widgets::Paragraph;
+    use ratatui::widgets::Widget;
+    use ratatui::widgets::Wrap;
 
     struct CaptureBackend {
         output: Vec<u8>,
@@ -956,6 +1003,41 @@ mod tests {
                 .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 2, y: 0, .. })),
             "expected clear-to-end to start after the remaining wide char; commands: {commands:?}"
         );
+    }
+
+    #[test]
+    fn terminal_draw_coalesces_wrapped_hyperlink_output() {
+        let auth_url = format!(
+            "https://auth.openai.com/oauth/authorize?response_type=code&state={}",
+            "x".repeat(/*n*/ 400)
+        );
+        let width = 44;
+        let height = 20;
+        let area = Rect::new(0, 0, width, height);
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(width, height)).expect("terminal");
+        terminal.set_viewport_area(area);
+
+        terminal
+            .draw(|frame| {
+                Paragraph::new(vec![
+                    Line::from(vec!["  ".into(), auth_url.as_str().cyan().underlined()]),
+                    "".into(),
+                    "  Press Esc to cancel".into(),
+                ])
+                .wrap(Wrap { trim: false })
+                .render(area, frame.buffer_mut());
+                crate::terminal_hyperlinks::mark_url_hyperlink(frame.buffer_mut(), area, &auth_url);
+            })
+            .expect("draw");
+
+        let output = terminal.backend().output();
+        let open = format!("\x1b]8;;{auth_url}\x07");
+        let close = "\x1b]8;;\x07";
+        assert_eq!(output.matches(&open).count(), 1);
+        assert_eq!(output.matches(close).count(), 1);
+        let footer = output.find("Press").expect("footer");
+        assert!(output.find(close).expect("hyperlink close") < footer);
     }
 
     #[test]

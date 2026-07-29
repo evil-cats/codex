@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-07-21
+updated: 2026-07-29
 source_scope: rust-v0.140.0..hermione-0.140.0
 ---
 
@@ -409,6 +409,43 @@ fork-version. Сам профиль не добавляет зависимост
 общий родительский проход через `fork build-fast` после разрешения всех
 Cargo-конфликтов.
 
+## Migration check: `0.146.0`
+
+Аудит источников `rust-v0.145.0..rust-v0.146.0` показал, что upstream не менял
+корневой `justfile`, `[profile.release]`, `history_cell/mod.rs`,
+`insert_history.rs`, `resize_reflow.rs` и `app_backtrack.rs`. В
+`codex-rs/Cargo.toml` upstream добавил новые элементы workspace и зависимости,
+а также поднял версию workspace до `0.146.0`, но параметры
+`[profile.release]` сохранились без изменений.
+
+В текущей рабочей копии поверх этой структуры сохранён точный fork-контракт
+`[profile.release-fast]`: `inherits = "release"`, `lto = "thin"`,
+`codegen-units = 32`, `debug = "none"` и `strip = "symbols"`. Корневой
+`justfile` по-прежнему содержит внутренний target `build-fast-release`, который
+собирает пакет `codex-cli` с Cargo profile `release-fast`. Версия workspace
+равна `0.146.0`, а пакет `codex-cli` и соответствующая запись `Cargo.lock`
+имеют версию `0.146.0+hermione`.
+
+Связанные якоря ремонта миграции также сохранены вместе с изменениями upstream
+`0.146.0`: итоговый `Config.tui_terminal_title_label` заполняется из
+`cfg.tui.terminal_title_label`, а новые настройки config-модуля не вытеснили
+fork-поле. История TUI сохраняет `HyperlinkLine`, преобразование
+`Line<'static>` через `HistoryCellDisplayItem::from(...)`, извлечение обычного
+`Line` с исключением `LocalImage`, перевод исходных `Line` в `Line<'static>` до
+`plain_hyperlink_lines(...)`, очистку текста через `sanitize_user_text(...)` и
+элементы `LocalImage` в `HistoryRenderMode::Rich`. Добавленная upstream функция
+`normalize_whitespace_only_hyperlink_lines(...)` также присутствует и
+используется для Markdown- и потоковой истории агента.
+
+Кодовые правки для этой карточки не потребовались. В путях-владельцах карточки нет
+неразрешённых конфликтов или конфликтных маркеров. `Cargo.lock` имеет общие
+staged и unstaged изменения миграции, но не является конфликтующим путём этой
+карточки и здесь не редактировался. Сборка, тесты, генераторы и форматирование в
+этом one-card проходе не запускались; итоговую согласованность слияния,
+stripped-артефакт `codex-rs/target/release-fast/codex` и версию бинарника должен
+подтвердить общий родительский проход через `fork build-fast` после разрешения
+оставшихся общих конфликтов.
+
 ## Проверки
 
 ### Смысловое покрытие
@@ -457,6 +494,7 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Migration `0.144.6` | локально подтверждены якоря профиля, target `build-fast-release`, итоговый `Config.tui_terminal_title_label` и преобразования истории TUI; в Git-состоянии проверенных файлов-владельцев нет неразрешённых конфликтов или конфликтных маркеров; кодовые правки не потребовались | сборка, тесты, генераторы, форматирование и markdownlint не запускались в текущем проходе по одной карточке |
 | Общий build gate migration `0.144.6` | `passed`: собран `codex-rs/target/release-fast/codex`; отдельная проверка показала ELF x86-64 stripped и `codex-cli 0.144.6+hermione` | SHA-256 `07dfa949a0d78f485186c06fc1dc7024beddf471522a7f41891c2097ba626880`; размер `358455432` байта |
 | Migration `0.145.0` | локально подтверждены якоря профиля, target `build-fast-release`, версии workspace `0.145.0`, package и lock-записи `codex-cli` `0.145.0+hermione`; кодовые правки не потребовались | общие конфликты `Cargo.lock` принадлежат другим fork-пакетам; сборка и прочие project-level gates в one-card проходе не запускались |
+| Migration `0.146.0` | аудит источников подтвердил неизменный upstream release profile; в текущей рабочей копии сохранены `[profile.release-fast]`, target `build-fast-release`, версии workspace `0.146.0` и `codex-cli` `0.146.0+hermione`, якоря ремонта config/истории TUI и новое upstream-преобразование whitespace-only hyperlink lines; кодовые правки не потребовались | пути-владельцы карточки не конфликтуют; общие staged/unstaged изменения `Cargo.lock` и чужие неразрешённые конфликты не трогались; build gate оставлен родительскому проходу |
 
 ### Известные падения и пропуски
 
@@ -512,3 +550,4 @@ Skill-owned owner для проверки доработки: `fork build-fast`.
 | Проверить перенос profile на `0.144.5` | перенесено; `fork build-fast` должен подтвердить stripped-артефакт и метаданные версии, `fork install` — установленный исполняемый файл при необходимости | "Migration check: `0.144.5`", "Проверки" |
 | Проверить перенос profile на `0.144.6` | перенесено; общий родительский проход должен подтвердить stripped-артефакт | "Migration check: `0.144.6`", "Проверки" |
 | Проверить перенос profile на `0.145.0` | перенесено; после разрешения общих Cargo-конфликтов родительский проход должен подтвердить согласованность lockfile, stripped-артефакт и версию бинарника | "Migration check: `0.145.0`", "Проверки" |
+| Проверить перенос profile на `0.146.0` | перенесено; после разрешения общих конфликтов родительский проход должен подтвердить согласованность merge, stripped-артефакт и версию бинарника | "Migration check: `0.146.0`", "Проверки" |
