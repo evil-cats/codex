@@ -192,7 +192,6 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
     let body = resp_mock.single_request().body_json();
     let description =
         spawn_agent_description(&body).expect("spawn_agent description should be present");
-    let normalized_description = description.split_whitespace().collect::<Vec<_>>().join(" ");
 
     assert!(
         description.contains("- `visible-model`: Fast and capable"),
@@ -210,8 +209,8 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
         "expected inherited-model guidance in spawn_agent description: {description:?}"
     );
     assert!(
-        normalized_description.contains(
-            "Do not set the `model` field unless the task clearly needs a different model, a configured agent role requires it, or a higher-priority instruction explicitly asks for it."
+        description.contains(
+            "Do not set the `model` field unless the user explicitly asks for a different model or there is a clear task-specific reason."
         ),
         "expected model override usage guidance in spawn_agent description: {description:?}"
     );
@@ -229,30 +228,21 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
     );
     assert!(
         description.contains(
-            "This spawn_agent tool creates a sub-agent for an already selected concrete,"
-        ),
-        "expected tool-owned V1 guidance in spawn_agent description: {description:?}"
-    );
-    assert!(
-        description.contains("Consider delegation for non-trivial")
-            && description.contains("independent research, implementation, or")
-            && description.contains("Do not spawn agents for trivial, vague, tightly coupled work"),
-        "expected bounded delegation criteria in spawn_agent description: {description:?}"
-    );
-    assert!(
-        description.contains("Do not duplicate delegated work locally")
-            && description.contains("then continue substantive parent work"),
-        "expected wait-and-integrate guidance in spawn_agent description: {description:?}"
-    );
-    assert!(
-        !description.contains(
             "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work."
-        ) && !description.contains(
+        ),
+        "expected explicit authorization rule in spawn_agent description: {description:?}"
+    );
+    assert!(
+        description.contains(
             "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
-        ) && !description.contains(
-            "Agent-role guidance below only helps choose which agent to use after spawning is already authorized"
-        ) && !description.contains("alongside useful local work"),
-        "legacy authorization and sidecar-work guidance should stay absent: {description:?}"
+        ) && description.contains("### When to delegate vs. do the subtask yourself"),
+        "expected delegation decision guidance in spawn_agent description: {description:?}"
+    );
+    assert!(
+        description.contains(
+            "Agent-role guidance below only helps choose which agent to use after spawning is already authorized; it never authorizes spawning by itself."
+        ),
+        "expected agent-role clarification in spawn_agent description: {description:?}"
     );
     assert!(
         !description.contains("A mini model can solve many tasks faster than the main model."),

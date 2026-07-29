@@ -50,7 +50,7 @@ fn render_diff<S: WorldStateSection>(
             PreviousSectionState::Known(&previous_snapshot)
         }
     };
-    ErasedWorldStateSection::render_diff(*after, previous)
+    ErasedWorldStateSection::render_diff(*after, previous).map(|update| update.fragment)
 }
 
 fn render_snapshot<S: WorldStateSection>(section: &S) -> String {

@@ -323,7 +323,7 @@ async fn stale_prepared_call_does_not_run_preparation() {
     let marker = Arc::clone(&prepared_side_effect_ran);
 
     prepared
-        .call_with_preparation(/*diagnostic_context*/ None, || async move {
+        .call_with_preparation(|| async move {
             marker.store(true, Ordering::SeqCst);
             Ok((None, None))
         })
@@ -351,7 +351,7 @@ async fn preparation_holds_catalog_authority_until_it_finishes() {
     let finish = Arc::clone(&finish_preparation);
     let call = tokio::spawn(async move {
         prepared
-            .call_with_preparation(/*diagnostic_context*/ None, || async move {
+            .call_with_preparation(|| async move {
                 started.notify_one();
                 finish.notified().await;
                 Err(anyhow::anyhow!("stop after preparation"))

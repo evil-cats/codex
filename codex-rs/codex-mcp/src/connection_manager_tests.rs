@@ -2295,7 +2295,6 @@ async fn no_local_runtime_fails_local_stdio_but_keeps_local_http_server() {
                 Arc::new(environment_manager_without_environments()),
                 PathBuf::from("/tmp"),
             ),
-            diagnostic_context: None,
             codex_apps_tools_cache: ConnectorRuntimeManager::<ToolInfo>::default(),
             tool_catalog_cache: McpToolCatalogCache::default(),
             codex_apps_tools_cache_key: ConnectorRuntimeContextKey::personal(
@@ -2611,7 +2610,6 @@ async fn reconcile_reusable_server(
             tx_event: Some(tx_event),
             startup_cancellation_token: CancellationToken::new(),
             runtime_context,
-            diagnostic_context: None,
             codex_apps_tools_cache: ConnectorRuntimeManager::default(),
             tool_catalog_cache: McpToolCatalogCache::default(),
             codex_apps_tools_cache_key: ConnectorRuntimeContextKey::personal(

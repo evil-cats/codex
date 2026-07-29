@@ -403,7 +403,6 @@ impl ThreadHistoryBuilder {
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::TurnContext(_)
             | RolloutItem::WorldState(_)
-            | RolloutItem::McpDiagnostic(_)
             | RolloutItem::SessionMeta(_) => {}
         }
     }

@@ -495,7 +495,6 @@ mod tests {
 
     use codex_utils_absolute_path::test_support::PathExt;
     use pretty_assertions::assert_eq;
-    use tracing::Instrument;
     use tracing_subscriber::filter::Targets;
     use tracing_subscriber::fmt::writer::MakeWriter;
     use tracing_subscriber::layer::SubscriberExt;
@@ -673,65 +672,6 @@ mod tests {
             .expect("query logs after flush");
         assert_eq!(after_flush.len(), 1);
         assert_eq!(after_flush[0].message.as_deref(), Some("buffered-log"));
-
-        let _ = tokio::fs::remove_dir_all(codex_home).await;
-    }
-
-    #[tokio::test]
-    async fn spawned_mcp_stderr_event_keeps_thread_id_and_fields() {
-        let codex_home = temp_codex_home();
-        let runtime = StateRuntime::init(
-            crate::SqliteConfig::new_for_testing(codex_home.as_path().abs()),
-            "test-provider".to_string(),
-        )
-        .await
-        .expect("initialize runtime");
-        let layer = start(runtime.clone());
-
-        let guard = tracing_subscriber::registry()
-            .with(
-                layer
-                    .clone()
-                    .with_filter(Targets::new().with_default(tracing::Level::TRACE)),
-            )
-            .set_default();
-
-        let stderr_span = tracing::info_span!(
-            "mcp_startup",
-            thread_id = "thread-mcp",
-            server_name = "codebase-memory-mcp"
-        );
-        tokio::spawn(
-            async {
-                tracing::info!(
-                    server_name = "codebase-memory-mcp",
-                    program = "codebase-memory-mcp",
-                    stderr_line = "level=info msg=mem.init",
-                    "MCP server stderr"
-                );
-            }
-            .instrument(stderr_span),
-        )
-        .await
-        .expect("stderr task should complete");
-
-        layer.flush().await;
-        drop(guard);
-
-        let rows = runtime
-            .query_logs(&crate::LogQuery {
-                thread_ids: vec!["thread-mcp".to_string()],
-                search: Some("MCP server stderr".to_string()),
-                ..Default::default()
-            })
-            .await
-            .expect("query logs after flush");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].thread_id.as_deref(), Some("thread-mcp"));
-        let body = rows[0].message.as_deref().expect("log body");
-        assert!(body.contains("codebase-memory-mcp"));
-        assert!(body.contains("stderr_line"));
-        assert!(body.contains("mem.init"));
 
         let _ = tokio::fs::remove_dir_all(codex_home).await;
     }

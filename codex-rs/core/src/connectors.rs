@@ -256,7 +256,6 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_mcp_manager(
         // Connector discovery is threadless. Use an actually configured env if
         // one exists, but do not reintroduce the old hidden-local fallback.
         runtime_context,
-        diagnostic_context: None,
         codex_apps_tools_cache: mcp_manager.codex_apps_tools_cache(),
         tool_catalog_cache: mcp_manager.tool_catalog_cache(),
         codex_apps_tools_cache_key: connector_runtime_context_key(auth.as_ref()),

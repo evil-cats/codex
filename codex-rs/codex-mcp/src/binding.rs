@@ -9,7 +9,6 @@ use anyhow::Context;
 use anyhow::Result;
 use codex_config::AppToolApproval;
 use codex_protocol::mcp::CallToolResult;
-use codex_rmcp_client::McpOperationDiagnosticContext;
 use rmcp::model::ListResourceTemplatesResult;
 use rmcp::model::ListResourcesResult;
 use rmcp::model::PaginatedRequestParams;
@@ -240,11 +239,8 @@ impl PreparedMcpCall {
         arguments: Option<JsonValue>,
         meta: Option<JsonValue>,
     ) -> Result<CallToolResult> {
-        self.call_with_preparation(
-            /*diagnostic_context*/ None,
-            || async move { Ok((arguments, meta)) },
-        )
-        .await
+        self.call_with_preparation(|| async move { Ok((arguments, meta)) })
+            .await
     }
 
     /// Runs irreversible call preparation and execution under the authority of
@@ -253,11 +249,7 @@ impl PreparedMcpCall {
         clippy::await_holding_invalid_type,
         reason = "catalog replacement must remain serialized with call preparation and execution"
     )]
-    pub async fn call_with_preparation<F, Fut>(
-        &self,
-        diagnostic_context: Option<McpOperationDiagnosticContext>,
-        prepare: F,
-    ) -> Result<CallToolResult>
+    pub async fn call_with_preparation<F, Fut>(&self, prepare: F) -> Result<CallToolResult>
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(Option<JsonValue>, Option<JsonValue>)>>,
@@ -274,13 +266,7 @@ impl PreparedMcpCall {
         let result = self
             .client
             .client
-            .call_tool_with_diagnostic_context(
-                tool_name.clone(),
-                arguments,
-                meta,
-                self.client.tool_timeout,
-                diagnostic_context,
-            )
+            .call_tool(tool_name.clone(), arguments, meta, self.client.tool_timeout)
             .await
             .with_context(|| format!("tool call failed for `{}/{tool_name}`", self.server_name))?;
         drop(current_revision);

@@ -54,21 +54,24 @@ impl WorldStateSection for MultiAgentModeState {
         &self,
         previous: PreviousSectionState<'_, Self::Snapshot>,
     ) -> Option<Box<dyn ContextualUserFragment>> {
-        let instructions = match (&self.mode, previous) {
+        let mode = match (&self.mode, previous) {
             (Some(mode), PreviousSectionState::Known(previous))
                 if previous.mode.as_ref() == Some(mode) =>
             {
                 return None;
             }
-            (Some(mode), _) => MultiAgentModeInstructions::from_mode(mode.clone())?,
-            (None, PreviousSectionState::Known(previous)) if previous.mode.is_some() => {
-                MultiAgentModeInstructions::Inactive
+            (Some(mode), _) => mode.clone(),
+            (None, PreviousSectionState::Known(previous))
+                if previous.mode == Some(MultiAgentMode::Proactive) =>
+            {
+                MultiAgentMode::ExplicitRequestOnly
             }
-            (None, PreviousSectionState::Unknown) => MultiAgentModeInstructions::Inactive,
+            (None, PreviousSectionState::Unknown) => MultiAgentMode::ExplicitRequestOnly,
             (None, PreviousSectionState::Absent | PreviousSectionState::Known(_)) => return None,
         };
 
-        Some(Box::new(instructions))
+        MultiAgentModeInstructions::from_mode(mode)
+            .map(|instructions| Box::new(instructions) as Box<dyn ContextualUserFragment>)
     }
 }
 

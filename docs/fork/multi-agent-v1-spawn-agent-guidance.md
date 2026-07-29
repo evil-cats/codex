@@ -1,6 +1,6 @@
 ---
 id: fork-multi-agent-v1-spawn-agent-guidance
-status: active
+status: reverted
 created: 2026-07-05
 updated: 2026-07-29
 source_scope: discussion-2026-07-05..discussion-2026-07-10
@@ -10,11 +10,9 @@ source_scope: discussion-2026-07-05..discussion-2026-07-10
 
 ## Обзор
 
-Эта карточка фиксирует fork-доработку Hermione для V1 `spawn_agent` tool
-description. Текущий контракт больше не опирается на профильную
-`session-policy`: правила делегирования подагентов были убраны из policy как
-неудачная модель, поэтому V1 tool description должен быть самодостаточным и не
-ссылаться на отсутствующий policy-owner.
+Эта карточка исторически фиксирует fork-доработку Hermione для V1 `spawn_agent`
+tool description. Реализация удалена из fork, а затронутые owner-файлы возвращены
+к состоянию `rust-v0.146.0`.
 
 Цель доработки: сохранить полезную возможность запускать sub-agents для
 конкретных bounded subtasks, но не возвращать старый запрет "только если
@@ -23,12 +21,32 @@ description. Текущий контракт больше не опираетс�
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `active`; V1 tool-owned guidance согласован, policy-split удален как legacy |
+| Статус | `reverted`; fork-specific V1 guidance и нейтральный world-state reset удалены |
 | Целевой tool | V1 `spawn_agent` |
 | Owner-файл prompt | `codex-rs/core/src/tools/handlers/multi_agents_spec.rs` |
 | Тесты | `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs`, `codex-rs/core/src/context/world_state/multi_agent_mode_tests.rs`, `codex-rs/core/tests/suite/multi_agent_mode.rs`, `codex-rs/core/tests/suite/spawn_agent_description.rs` |
 | Видимая для модели поверхность | описание tool, раскрываемое напрямую или через `tool_search` |
 | Главный контракт | V1 `spawn_agent` description сам содержит критерии useful delegation и механику уже выбранного concrete bounded subtask |
+
+## Откат на `rust-v0.146.0`
+
+По решению пользователя fork-доработка полностью удалена:
+
+- V1 `spawn_agent` description и связанные tests восстановлены из
+  `rust-v0.146.0`;
+- нейтральный inactive reset для прежнего V2 mode удалён вместе с его snapshot и
+  resume/request-level покрытием;
+- более ранний fork-backport V1 delegation guidance также не сохраняется,
+  поскольку итоговая цель отката — точное upstream-поведение `0.146.0`;
+- завершённая карта `docs/fork/migration/0.146.0.json` не переписывается и
+  остаётся историческим снимком выполненной миграции.
+
+Блок `fork-tests.v1` удалён: карточка больше не является active-владельцем
+исполняемого покрытия. Названия прежних tests и результаты запусков сохранены
+ниже как историческое подтверждение.
+
+Последующие разделы описывают прежнюю активную реализацию и сохранены для
+истории; они больше не задают текущий fork-контракт.
 
 ## Зачем это нужно
 
@@ -241,34 +259,10 @@ that can run independently alongside useful local work
 
 ### Владелец исполняемой карты
 
-Проверки уровня карточки запускает skill-owned command `fork tests`.
-Внутренние argv и назначение точечной проверки живут только в блоке
-`fork-tests.v1` ниже; они являются данными для `fork tests`, а не пользовательским
-runbook прямого запуска.
-
-```json
-{
-  "schema": "fork-tests.v1",
-  "tests": [
-    {
-      "purpose": "multi agent v1 spawn agent guidance",
-      "argv": ["just", "test", "-p", "codex-core", "spawn_agent_tool_"]
-    },
-    {
-      "purpose": "multi agent v1 world state boundary",
-      "argv": ["just", "test", "-p", "codex-core", "context::world_state::multi_agent_mode::tests::snapshots"]
-    },
-    {
-      "purpose": "multi agent v1 legacy mode resume",
-      "argv": ["just", "test", "-p", "codex-core", "--test", "all", "v1_resume_clears_legacy_v2_mode_without_explicit_request_guard"]
-    },
-    {
-      "purpose": "multi agent v1 request description",
-      "argv": ["just", "test", "-p", "codex-core", "--test", "all", "spawn_agent_description_lists_visible_models_and_reasoning_efforts"]
-    }
-  ]
-}
-```
+До отката проверки уровня карточки принадлежали skill-owned command
+`fork tests`. После перехода в `reverted` исполняемой карты у карточки нет;
+прежние test targets остаются только в смысловом покрытии и исторических
+результатах.
 
 ### Дополнительные gates
 

@@ -98,7 +98,6 @@ impl AppsRequestProcessor {
                         tx_event: None,
                         startup_cancellation_token: cancellation_token.clone(),
                         runtime_context,
-                        diagnostic_context: None,
                         codex_apps_tools_cache: mcp_manager.codex_apps_tools_cache(),
                         tool_catalog_cache: mcp_manager.tool_catalog_cache(),
                         codex_apps_tools_cache_key: cache_key.clone(),

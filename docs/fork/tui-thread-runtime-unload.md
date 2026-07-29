@@ -24,12 +24,13 @@ TUI. При этом сохраненная сессия, rollout, metadata, а�
 | Основной симптом | Одна активная TUI-сессия может оставить несколько живых MCP-процессов после `/resume` или `/clear` |
 | Предполагаемая причина | TUI-путь вызывает `thread/unsubscribe`, хотя ему нужна выгрузка или shutdown runtime |
 | Реализованный API app-server | `thread/unload` для выгрузки live-runtime без delete/archive |
-| Связанная карточка | `docs/fork/mcp-rollout-diagnostics.md` |
+| Исторически связанная карточка | `docs/fork/mcp-rollout-diagnostics.md` (`reverted`) |
 | Не входит в границы задачи | Удаление истории, семантика archive/delete, автоматическое закрытие работающих subagents при обычной `/agent` навигации |
 
-Связь с `docs/fork/mcp-rollout-diagnostics.md` ограничена lifecycle-уровнем:
-недавняя MCP recovery-доработка усиливает shutdown/recovery path, но текущий
-TUI-баг находится выше: старый thread может вообще не попасть в явный shutdown.
+Связь с `docs/fork/mcp-rollout-diagnostics.md` была ограничена
+lifecycle-уровнем. Эта MCP recovery-доработка теперь имеет статус `reverted`;
+контракт `thread/unload` остаётся независимым и опирается на upstream shutdown
+runtime, а не на удалённый recovery path.
 
 ## Зачем это нужно
 

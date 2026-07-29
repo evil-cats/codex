@@ -99,7 +99,6 @@ async fn hosted_plugin_runtime_ps_mcp_tool_calls_use_current_auth_manager_token(
             Arc::new(environment_manager_without_environments()),
             home.path().to_path_buf(),
         ),
-        diagnostic_context: None,
         codex_apps_tools_cache: CodexAppsToolsCache::default(),
         tool_catalog_cache: McpToolCatalogCache::default(),
         codex_apps_tools_cache_key: codex_mcp::codex_apps_tools_cache_key(Some(&expected_auth)),

@@ -235,9 +235,6 @@ fn rollout_item_type(item: &RolloutItem) -> String {
         RolloutItem::Compacted(_) => "compacted".to_string(),
         RolloutItem::TurnContext(_) => "turn_context".to_string(),
         RolloutItem::WorldState(_) => "world_state".to_string(),
-        RolloutItem::McpDiagnostic(diagnostic) => {
-            format!("mcp_diagnostic.{:?}", diagnostic.event)
-        }
         RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => {
             format!("event.item_completed.{}", turn_item_type(&event.item))
         }
@@ -256,6 +253,7 @@ fn turn_item_type(item: &TurnItem) -> &'static str {
         TurnItem::DynamicToolCall(_) => "dynamic_tool_call",
         TurnItem::CollabAgentToolCall(_) => "collab_agent_tool_call",
         TurnItem::SubAgentActivity(_) => "sub_agent_activity",
+        TurnItem::CoreToolActivity(_) => "core_tool_activity",
         TurnItem::WebSearch(_) => "web_search",
         TurnItem::ImageView(_) => "image_view",
         TurnItem::Extension(_) => "extension",
@@ -264,7 +262,6 @@ fn turn_item_type(item: &TurnItem) -> &'static str {
         TurnItem::ExitedReviewMode(_) => "exited_review_mode",
         TurnItem::FileChange(_) => "file_change",
         TurnItem::McpToolCall(_) => "mcp_tool_call",
-        TurnItem::CoreToolActivity(_) => "core_tool_activity",
         TurnItem::ContextCompaction(_) => "context_compaction",
     }
 }

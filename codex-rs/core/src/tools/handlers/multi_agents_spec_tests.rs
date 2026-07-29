@@ -37,19 +37,6 @@ fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
     }
 }
 
-fn spawn_agent_tool_v1_description(options: SpawnAgentToolOptions) -> String {
-    let tool = create_spawn_agent_tool_v1(options);
-    let ToolSpec::Namespace(namespace) = tool else {
-        panic!("spawn_agent v1 should be a namespace tool");
-    };
-    let Some(ResponsesApiNamespaceTool::Function(ResponsesApiTool { description, .. })) =
-        namespace.tools.into_iter().next()
-    else {
-        panic!("spawn_agent should be a namespace function tool");
-    };
-    description
-}
-
 #[test]
 fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     let mut incompatible = model_preset("incompatible", /*show_in_picker*/ true);
@@ -86,12 +73,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         .as_ref()
         .expect("spawn_agent should use object params");
     assert!(description.contains("Spawns an agent to work on the specified task."));
-    assert!(description.contains(
-        "If your current task is `/root/task1` and you spawn_agent with task_name \"task_3\" the agent will have canonical task name `/root/task1/task_3`."
-    ));
-    assert!(description.contains(
-        "The spawned agent will have the same tools as you and the ability to spawn its own subagents."
-    ));
+    assert!(description.contains("The spawned agent will have the same tools as you"));
     assert!(!description.contains("max_concurrent_threads_per_session"));
     assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
     assert!(
@@ -112,14 +94,6 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         Some(true)
     );
     assert!(properties.contains_key("fork_turns"));
-    assert_eq!(
-        properties
-            .get("fork_turns")
-            .and_then(|schema| schema.description.as_deref()),
-        Some(
-            "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
-        )
-    );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
@@ -181,14 +155,6 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         .expect("spawn_agent should use object params");
 
     assert!(properties.contains_key("fork_context"));
-    assert_eq!(
-        properties
-            .get("fork_context")
-            .and_then(|schema| schema.description.as_deref()),
-        Some(
-            "True forks the current thread history into the new agent; false or omitted starts with only the initial prompt."
-        )
-    );
     assert!(!properties.contains_key("fork_turns"));
     assert_eq!(
         properties.get("agent_type"),
@@ -214,90 +180,6 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
             .and_then(|schema| schema.description.as_deref()),
         Some(SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION)
     );
-}
-
-#[test]
-fn spawn_agent_tool_v1_uses_tool_owned_delegation_guidance() {
-    let mut visible_model = model_preset("visible", /*show_in_picker*/ true);
-    visible_model.multi_agent_version = Some(MultiAgentVersion::V1);
-    let description = spawn_agent_tool_v1_description(SpawnAgentToolOptions {
-        available_models: vec![visible_model],
-        agent_type_description: "role help".to_string(),
-        expose_agent_type: true,
-        hide_agent_type_model_reasoning: false,
-        expose_spawn_agent_model_overrides: true,
-        multi_agent_version: MultiAgentVersion::V1,
-        usage_hint_text: None,
-    });
-
-    assert!(
-        description.contains(
-            "This spawn_agent tool creates a sub-agent for an already selected concrete,"
-        )
-    );
-    assert!(description.contains("bounded subtask that is useful to delegate"));
-    assert!(description.contains("Consider delegation for non-trivial"));
-    assert!(description.contains("independent research, implementation, or"));
-    assert!(description.contains("Do not spawn agents for trivial, vague, tightly coupled work"));
-    assert!(description.contains("Spawned agents inherit your current model by default."));
-    assert!(description.contains("Give each sub-agent a self-contained task message"));
-    assert!(description.contains("For read-only tasks, ask for concise findings with file paths"));
-    assert!(description.contains("For coding tasks, prefer concrete code-change worker subtasks"));
-    assert!(
-        description.contains("If agent roles are available, use them to choose the best owner")
-    );
-    assert!(description.contains("selected subtask."));
-    assert!(description.contains("wait for all agents in the current"));
-    assert!(description.contains("close them when they are no longer needed"));
-    assert!(description.contains("then continue substantive parent work"));
-    assert!(description.contains("Do not duplicate delegated work locally"));
-    assert!(
-        description
-            .contains("Available model overrides (optional; inherited parent model is preferred):")
-    );
-    assert!(!description.contains("session delegation policy owns"));
-    assert!(!description.contains("### Delegation workflow"));
-    assert!(
-        !description.contains("Use sub-agents when the user's task can be usefully decomposed")
-    );
-    assert!(!description.contains("Do not spawn sub-agents for trivial single-step work"));
-    assert!(
-        !description.contains(
-            "Do not perform the delegated work yourself while the sub-agents are running."
-        )
-    );
-    assert!(!description.contains(
-        "Do not spawn sub-agents unless the user explicitly asks for sub-agents, delegation, or parallel agent work."
-    ));
-    assert!(!description.contains(
-        "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
-    ));
-    assert!(!description.contains(
-        "Agent-role guidance below only helps choose which agent to use after spawning is already authorized"
-    ));
-    assert!(!description.contains("alongside useful local work"));
-    assert!(!description.contains("While the subagent is running in the background"));
-}
-
-#[test]
-fn spawn_agent_tool_v1_usage_hint_text_replaces_default_guidance() {
-    let description = spawn_agent_tool_v1_description(SpawnAgentToolOptions {
-        available_models: Vec::new(),
-        agent_type_description: "role help".to_string(),
-        expose_agent_type: true,
-        hide_agent_type_model_reasoning: false,
-        expose_spawn_agent_model_overrides: true,
-        multi_agent_version: MultiAgentVersion::V1,
-        usage_hint_text: Some("Custom v1 usage hint.".to_string()),
-    });
-
-    assert!(description.contains("Spawn a sub-agent for a well-scoped task."));
-    assert!(description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
-    assert!(description.contains("Custom v1 usage hint."));
-    assert!(!description.contains("This spawn_agent tool gives you access to sub-agents"));
-    assert!(!description.contains("### Delegation workflow"));
-    assert!(!description.contains("Do not perform the delegated work yourself"));
-    assert!(!description.contains("This spawn_agent tool creates a sub-agent"));
 }
 
 #[test]

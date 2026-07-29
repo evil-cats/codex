@@ -46,8 +46,6 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
-use crate::stdio_diagnostics::StdioServerDiagnosticState;
-
 static PROCESS_COUNTER: AtomicUsize = AtomicUsize::new(1);
 // Tool results can make valid MCP responses large, so keep the protocol
 // ceiling well above ordinary messages while still bounding hostile input.
@@ -179,19 +177,12 @@ pub(super) struct ExecutorProcessTransport {
     /// Human-readable program name used only in diagnostics.
     program_name: String,
 
-    /// Configured MCP server name used to correlate diagnostics with session
-    /// configuration.
-    server_name: String,
-
     /// Buffered child stdout bytes that have not yet formed a complete
     /// newline-delimited JSON-RPC message.
     stdout: LineBuffer,
 
     /// Buffered stderr bytes for diagnostic logging.
     stderr: LineBuffer,
-
-    /// Bounded diagnostics shared with the MCP client recovery path.
-    diagnostics: Arc<StdioServerDiagnosticState>,
 
     /// Whether the executor has reported process closure or a terminal
     /// subscription failure. Once closed, any remaining partial stdout line is
@@ -210,12 +201,7 @@ pub(super) struct ExecutorProcessTransport {
 }
 
 impl ExecutorProcessTransport {
-    pub(super) fn new(
-        process: Arc<dyn ExecProcess>,
-        server_name: String,
-        program_name: String,
-        diagnostics: Arc<StdioServerDiagnosticState>,
-    ) -> Self {
+    pub(super) fn new(process: Arc<dyn ExecProcess>, program_name: String) -> Self {
         // Subscribe before returning the transport to rmcp. Some test servers
         // can emit output or exit quickly after `process/start`, and the
         // process event log will replay anything that landed before this
@@ -226,10 +212,8 @@ impl ExecutorProcessTransport {
             stdin_write_semaphore: Arc::new(Semaphore::new(1)),
             events,
             program_name,
-            server_name,
             stdout: LineBuffer::default(),
             stderr: LineBuffer::new(MAX_MCP_STDERR_LINE_BYTES),
-            diagnostics,
             closed: false,
             terminated: false,
             last_seq: 0,
@@ -313,14 +297,12 @@ impl ExecutorProcessTransport {
                 }
                 Ok(ExecProcessEvent::Exited { seq, .. }) => {
                     self.note_seq(seq);
-                    self.diagnostics.mark_dead();
                     // Wait for `Closed` before ending the rmcp stream so any
                     // output flushed during process shutdown can still be
                     // decoded into JSON-RPC messages.
                 }
                 Ok(ExecProcessEvent::Closed { seq }) => {
                     self.note_seq(seq);
-                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
                 Ok(ExecProcessEvent::Failed(message)) => {
@@ -328,7 +310,6 @@ impl ExecutorProcessTransport {
                         "Remote MCP server process failed ({}): {message}",
                         self.program_name
                     );
-                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -345,7 +326,6 @@ impl ExecutorProcessTransport {
                     }
                 }
                 Err(broadcast::error::RecvError::Closed) => {
-                    self.diagnostics.mark_dead();
                     self.closed = true;
                 }
             }
@@ -386,10 +366,8 @@ impl ExecutorProcessTransport {
                 "Remote MCP server process failed ({}): {message}",
                 self.program_name
             );
-            self.diagnostics.mark_dead();
             self.closed = true;
         } else if response.closed {
-            self.diagnostics.mark_dead();
             self.closed = true;
         }
         Ok(())
@@ -466,13 +444,10 @@ impl ExecutorProcessTransport {
         self.stderr.extend_from_slice(bytes)?;
         while let Some(line) = self.stderr.take_line() {
             let line = Self::trim_trailing_carriage_return(line);
-            let stderr_line = String::from_utf8_lossy(&line);
-            self.diagnostics.push_stderr_line(stderr_line.to_string());
             info!(
-                server_name = %self.server_name,
-                program = %self.program_name,
-                stderr_line = %stderr_line,
-                "MCP server stderr"
+                "MCP server stderr ({}): {}",
+                self.program_name,
+                String::from_utf8_lossy(&line)
             );
         }
         Ok(())
@@ -482,13 +457,10 @@ impl ExecutorProcessTransport {
         let Some(line) = self.stderr.take_remaining() else {
             return;
         };
-        let stderr_line = String::from_utf8_lossy(&line);
-        self.diagnostics.push_stderr_line(stderr_line.to_string());
         info!(
-            server_name = %self.server_name,
-            program = %self.program_name,
-            stderr_line = %stderr_line,
-            "MCP server stderr"
+            "MCP server stderr ({}): {}",
+            self.program_name,
+            String::from_utf8_lossy(&line)
         );
     }
 

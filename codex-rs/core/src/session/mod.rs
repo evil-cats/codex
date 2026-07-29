@@ -144,8 +144,6 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationResponse;
-use codex_rmcp_client::McpDiagnosticContext;
-use codex_rmcp_client::McpDiagnosticSink;
 use codex_rollout::state_db;
 use codex_rollout_trace::AgentResultTracePayload;
 use codex_rollout_trace::ThreadStartedTraceMetadata;
@@ -162,9 +160,9 @@ use codex_thread_store::ResumeThreadParams;
 use codex_thread_store::ThreadPersistenceMetadata;
 use codex_thread_store::ThreadStore;
 use codex_utils_path_uri::PathUri;
-use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::future::Shared;
+use futures::prelude::*;
 use rmcp::model::RequestId;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -3590,27 +3588,6 @@ impl Session {
             && let Err(e) = live_thread.append_items(items).await
         {
             error!("failed to record rollout items: {e:#}");
-        }
-    }
-
-    pub(crate) fn mcp_diagnostic_context(&self) -> McpDiagnosticContext {
-        let live_thread = self.live_thread().cloned();
-        let sink: McpDiagnosticSink = Arc::new(move |item| {
-            let live_thread = live_thread.clone();
-            async move {
-                if let Some(live_thread) = live_thread
-                    && let Err(e) = live_thread
-                        .append_items(&[RolloutItem::McpDiagnostic(item)])
-                        .await
-                {
-                    error!("failed to record MCP diagnostic rollout item: {e:#}");
-                }
-            }
-            .boxed()
-        });
-        McpDiagnosticContext {
-            thread_id: self.thread_id().to_string(),
-            sink,
         }
     }
 

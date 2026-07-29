@@ -52,7 +52,6 @@ use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
 use codex_rmcp_client::ExecutorStdioServerLauncher;
 use codex_rmcp_client::LocalStdioServerLauncher;
-use codex_rmcp_client::McpDiagnosticContext;
 use codex_rmcp_client::RmcpClient;
 use codex_rmcp_client::StdioServerLauncher;
 use codex_rmcp_client::ToolWithConnectorId;
@@ -161,9 +160,6 @@ pub(crate) struct CodexAppsStartupReconnect {
     factory: Arc<dyn Fn() -> ManagedClientFuture + Send + Sync>,
     state: StdMutex<CodexAppsStartupReconnectState>,
     startup_status_context: Option<CodexAppsStartupStatusContext>,
-    // Фоновое повторное подключение должно сохранить исходный scope с thread_id,
-    // иначе stderr нового stdio child попадет в threadless-раздел log DB.
-    startup_span: tracing::Span,
 }
 
 impl CodexAppsStartupReconnect {
@@ -172,7 +168,6 @@ impl CodexAppsStartupReconnect {
             factory,
             state: StdMutex::new(CodexAppsStartupReconnectState::default()),
             startup_status_context: None,
-            startup_span: tracing::Span::current(),
         }
     }
 
@@ -217,55 +212,49 @@ impl CodexAppsStartupReconnect {
         }
 
         let reconnect = Arc::clone(self);
-        let startup_span = self.startup_span.clone();
-        tokio::spawn(
-            async move {
-                let result = (reconnect.factory)().await;
-                let startup_status_context = reconnect.startup_status_context.clone();
-                let recovered = {
-                    let mut state = reconnect
-                        .state
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    state.reconnect_in_flight = false;
-                    match result {
-                        Ok(client) => {
-                            state.current_client = Some(client);
-                            state.consecutive_failures = 0;
-                            state.retry_not_before = None;
-                            true
-                        }
-                        Err(error) => {
-                            state.consecutive_failures =
-                                state.consecutive_failures.saturating_add(1);
-                            let retry_after =
-                                codex_apps_reconnect_backoff(state.consecutive_failures);
-                            state.retry_not_before = Some(TokioInstant::now() + retry_after);
-                            warn!(
-                                error = %error,
-                                retry_after_ms = retry_after.as_millis(),
-                                "Apps MCP startup reconnect failed; continuing with cached tools"
-                            );
-                            false
-                        }
+        tokio::spawn(async move {
+            let result = (reconnect.factory)().await;
+            let startup_status_context = reconnect.startup_status_context.clone();
+            let recovered = {
+                let mut state = reconnect
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.reconnect_in_flight = false;
+                match result {
+                    Ok(client) => {
+                        state.current_client = Some(client);
+                        state.consecutive_failures = 0;
+                        state.retry_not_before = None;
+                        true
                     }
-                };
-
-                if recovered && let Some(context) = startup_status_context {
-                    let _ = context
-                        .tx_event
-                        .send(Event {
-                            id: context.submit_id,
-                            msg: EventMsg::McpStartupUpdate(McpStartupUpdateEvent {
-                                server: context.server_name,
-                                status: McpStartupStatus::Ready,
-                            }),
-                        })
-                        .await;
+                    Err(error) => {
+                        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+                        let retry_after = codex_apps_reconnect_backoff(state.consecutive_failures);
+                        state.retry_not_before = Some(TokioInstant::now() + retry_after);
+                        warn!(
+                            error = %error,
+                            retry_after_ms = retry_after.as_millis(),
+                            "Apps MCP startup reconnect failed; continuing with cached tools"
+                        );
+                        false
+                    }
                 }
+            };
+
+            if recovered && let Some(context) = startup_status_context {
+                let _ = context
+                    .tx_event
+                    .send(Event {
+                        id: context.submit_id,
+                        msg: EventMsg::McpStartupUpdate(McpStartupUpdateEvent {
+                            server: context.server_name,
+                            status: McpStartupStatus::Ready,
+                        }),
+                    })
+                    .await;
             }
-            .instrument(startup_span),
-        );
+        });
     }
 }
 
@@ -289,7 +278,6 @@ struct ManagedClientStartup {
     runtime_context: McpRuntimeContext,
     resolved_environment: std::result::Result<Option<Arc<Environment>>, String>,
     runtime_auth_provider: Option<SharedAuthProvider>,
-    diagnostic_context: Option<McpDiagnosticContext>,
     client_elicitation_capability: ElicitationCapability,
     supports_openai_form_elicitation: bool,
     cancel_token: CancellationToken,
@@ -310,7 +298,6 @@ impl ManagedClientStartup {
             runtime_context,
             resolved_environment,
             runtime_auth_provider,
-            diagnostic_context,
             client_elicitation_capability,
             supports_openai_form_elicitation,
             cancel_token,
@@ -342,7 +329,6 @@ impl ManagedClientStartup {
                         runtime_context,
                         resolved_environment,
                         runtime_auth_provider,
-                        diagnostic_context,
                     ),
                 )
                 .await
@@ -427,7 +413,6 @@ impl AsyncManagedClient {
         runtime_context: McpRuntimeContext,
         resolved_environment: std::result::Result<Option<Arc<Environment>>, String>,
         runtime_auth_provider: Option<SharedAuthProvider>,
-        diagnostic_context: Option<McpDiagnosticContext>,
         client_elicitation_capability: ElicitationCapability,
         supports_openai_form_elicitation: bool,
     ) -> Self {
@@ -454,7 +439,6 @@ impl AsyncManagedClient {
             runtime_context,
             resolved_environment,
             runtime_auth_provider,
-            diagnostic_context,
             client_elicitation_capability,
             supports_openai_form_elicitation,
             cancel_token: cancel_token.clone(),
@@ -985,7 +969,6 @@ async fn make_rmcp_client(
     runtime_context: McpRuntimeContext,
     resolved_environment: std::result::Result<Option<Arc<Environment>>, String>,
     runtime_auth_provider: Option<SharedAuthProvider>,
-    diagnostic_context: Option<McpDiagnosticContext>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
     let config = server.config().clone();
     let resolved_environment =
@@ -1027,18 +1010,9 @@ async fn make_rmcp_client(
             };
 
             let cwd = cwd.map(codex_utils_path_uri::LegacyAppPathString::into_string);
-            let client = RmcpClient::new_stdio_client(
-                server_name.to_string(),
-                command_os,
-                args_os,
-                env_os,
-                &env_vars,
-                cwd,
-                launcher,
-            )
-            .await
-            .map_err(|err| StartupOutcomeError::from(anyhow!(err)))?;
-            Ok(with_diagnostic_context(client, diagnostic_context))
+            RmcpClient::new_stdio_client(command_os, args_os, env_os, &env_vars, cwd, launcher)
+                .await
+                .map_err(|err| StartupOutcomeError::from(anyhow!(err)))
         }
         McpServerTransportConfig::StreamableHttp {
             url,
@@ -1056,7 +1030,7 @@ async fn make_rmcp_client(
                     Ok(token) => token,
                     Err(error) => return Err(error.into()),
                 };
-            let client = RmcpClient::new_streamable_http_client(
+            RmcpClient::new_streamable_http_client(
                 server_name,
                 &url,
                 resolved_bearer_token,
@@ -1068,19 +1042,8 @@ async fn make_rmcp_client(
                 runtime_auth_provider,
             )
             .await
-            .map_err(StartupOutcomeError::from)?;
-            Ok(with_diagnostic_context(client, diagnostic_context))
+            .map_err(StartupOutcomeError::from)
         }
-    }
-}
-
-fn with_diagnostic_context(
-    client: RmcpClient,
-    diagnostic_context: Option<McpDiagnosticContext>,
-) -> RmcpClient {
-    match diagnostic_context {
-        Some(diagnostic_context) => client.with_diagnostic_context(diagnostic_context),
-        None => client,
     }
 }
 

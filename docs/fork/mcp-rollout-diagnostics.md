@@ -1,6 +1,6 @@
 ---
 id: fork-mcp-rollout-diagnostics
-status: active
+status: reverted
 created: 2026-07-09
 updated: 2026-07-29
 source_scope: discussion-2026-07-09-mcp-transport-closed
@@ -10,15 +10,13 @@ source_scope: discussion-2026-07-09-mcp-transport-closed
 
 ## Обзор
 
-Эта карточка фиксирует fork-доработку Hermione для диагностики и восстановления
-MCP stdio transport после `Transport closed`. Codex должен сохранять
-ограниченную диагностику времени выполнения в rollout сессии как служебный
-`RolloutItem`, который не попадает в model context, но переживает resume и
-позволяет разобрать, что сказал MCP-сервер перед закрытием транспорта.
+Эта карточка исторически фиксирует fork-доработку Hermione для диагностики и
+восстановления MCP stdio transport после `Transport closed`. Реализация удалена
+из fork, а затронутые owner-файлы возвращены к состоянию `rust-v0.146.0`.
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `active` |
+| Статус | `reverted` |
 | Пользовательская цель | По `thread_id`, `server_name` и `call_id` восстановить причину `Transport closed` без зависимости от SQLite retention |
 | Базовое допущение | MCP-вызовы считаются идемпотентными, поэтому retry после recovery допустим |
 | Наблюдаемый runtime-симптом | `codebase-memory-mcp/search_graph` возвращает `Transport closed`, а stderr перед смертью не находится достоверно |
@@ -27,10 +25,33 @@ MCP stdio transport после `Transport closed`. Codex должен сохра
 | Связанная карточка | `docs/fork/mcp-stderr-thread-logs.md` |
 | Не входит в границы задачи | Полное перепроектирование `rollout-trace`, перенос всей SQLite log DB в rollout, unbounded stdout/stderr capture |
 
-`docs/fork/mcp-stderr-thread-logs.md` владеет thread-attributed stderr в
-tracing/SQLite log DB. Эта карточка владеет другим уровнем: служебная
-диагностика должна сохраняться рядом с rollout сессии, чтобы ошибка MCP
-оставалась расследуемой даже если log DB уже вытеснила нужные строки.
+Исторически `docs/fork/mcp-stderr-thread-logs.md` владела thread-attributed
+stderr в tracing/SQLite log DB, а эта карточка — persisted rollout diagnostics.
+Обе реализации теперь имеют статус `reverted`; различие ниже сохранено как
+история прежней архитектуры.
+
+## Откат на `rust-v0.146.0`
+
+По решению пользователя доработка полностью удалена:
+
+- `RolloutItem::McpDiagnostic`, его protocol-типы, persistence и фильтрация при
+  reconstruction удалены;
+- bounded stderr tail, `launch_id` и diagnostic context удалены;
+- recovery после `TransportClosed`/broken pipe, one-shot replay и lazy recovery
+  после idle process exit также удалены; отдельная recovery-карточка пока не
+  создавалась;
+- target-only modules и integration tests удалены, остальные owner-файлы
+  восстановлены из `rust-v0.146.0` либо очищены на уровне принадлежащих карточке
+  hunks;
+- завершённая карта `docs/fork/migration/0.146.0.json` не переписывается и
+  остаётся историческим снимком выполненной миграции.
+
+Блок `fork-tests.v1` удалён: карточка больше не является active-владельцем
+исполняемого покрытия. Прежние test targets и результаты сохранены ниже как
+историческое подтверждение.
+
+Последующие разделы описывают прежнюю активную реализацию и сохранены для
+истории; они больше не задают текущий fork-контракт.
 
 ## Зачем это нужно
 
@@ -312,87 +333,10 @@ runtime evidence, а не пользовательским событием по
 
 ### Владелец исполняемой карты
 
-Проверки уровня карточки запускает skill-owned command `fork tests`. Карточка
-хранит машиночитаемый блок `fork-tests.v1`; внутренние `argv` ниже являются
-данными для `fork tests`, а не пользовательским runbook прямого запуска.
-
-Первый шаг исполняемой карты собирает тестовый бинарник `test_stdio_server` из
-пакета `codex-rmcp-client`. Это обязательное предусловие для последующих тестов
-`codex-core`: запуск с фильтром пакета `codex-core` не собирает бинарник
-другого пакета, а `cargo_bin("test_stdio_server")` ожидает резервный путь
-`codex-rs/target/debug/test_stdio_server`, если Cargo не передал
-`CARGO_BIN_EXE_test_stdio_server`.
-
-```json
-{
-  "schema": "fork-tests.v1",
-  "tests": [
-    {
-      "purpose": "mcp stdio fixture binary",
-      "argv": [
-        "cargo",
-        "build",
-        "--manifest-path",
-        "codex-rs/Cargo.toml",
-        "-p",
-        "codex-rmcp-client",
-        "--bin",
-        "test_stdio_server"
-      ]
-    },
-    {
-      "purpose": "mcp rollout diagnostic reconstruction",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "mcp_diagnostic_rollout_item_is_not_replayed_to_model_history"
-      ]
-    },
-    {
-      "purpose": "mcp transport closed recovery and diagnostic",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "mcp_transport_closed_persists_diagnostic_and_retries_once"
-      ]
-    },
-    {
-      "purpose": "mcp transport replay failure stops after one retry",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "mcp_transport_closed_replay_failure_is_not_retried_again"
-      ]
-    },
-    {
-      "purpose": "mcp process exit lazy recovery",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "mcp_process_exit_marks_launch_dead_and_recovers_on_next_call"
-      ]
-    },
-    {
-      "purpose": "rmcp stderr tail and process lifecycle",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-rmcp-client",
-        "mcp_stderr_tail_flushes_on_transport_close"
-      ]
-    }
-  ]
-}
-```
+До отката проверки уровня карточки принадлежали skill-owned command
+`fork tests`. После перехода в `reverted` исполняемой карты у карточки нет;
+прежние fixture и test targets остаются только в смысловом покрытии и
+исторических результатах.
 
 ### Дополнительные gates
 

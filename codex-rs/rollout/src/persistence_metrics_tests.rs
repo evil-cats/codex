@@ -367,6 +367,7 @@ fn filtered_core_tool_activity_completion_includes_its_nested_item_type() {
             error: None,
             duration: None,
         }),
+        started_at_ms: Some(0),
         completed_at_ms: 0,
     }));
 

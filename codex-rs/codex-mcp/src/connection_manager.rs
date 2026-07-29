@@ -57,7 +57,6 @@ use codex_protocol::protocol::McpStartupCompleteEvent;
 use codex_protocol::protocol::McpStartupFailure;
 use codex_protocol::protocol::McpStartupStatus;
 use codex_protocol::protocol::McpStartupUpdateEvent;
-use codex_rmcp_client::McpDiagnosticContext;
 use codex_rmcp_client::determine_streamable_http_auth_status_from_credentials;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
@@ -172,7 +171,6 @@ impl McpConnectionSet {
             tx_event,
             startup_cancellation_token,
             runtime_context,
-            diagnostic_context,
             codex_apps_tools_cache,
             tool_catalog_cache,
             codex_apps_tools_cache_key,
@@ -346,7 +344,6 @@ impl McpConnectionSet {
                 runtime_context.clone(),
                 resolved_environment,
                 runtime_auth_provider,
-                diagnostic_context.clone(),
                 client_elicitation_capability.clone(),
                 supports_openai_form_elicitation,
             );

@@ -1,6 +1,6 @@
 ---
 id: fork-mcp-stderr-thread-logs
-status: active
+status: reverted
 created: 2026-07-09
 updated: 2026-07-29
 source_scope: investigation-019f41cd-da28-7dc3-b2a5-9438bd0e8bdd
@@ -10,16 +10,13 @@ source_scope: investigation-019f41cd-da28-7dc3-b2a5-9438bd0e8bdd
 
 ## Обзор
 
-Эта карточка фиксирует handoff по багу диагностики MCP stdio: Codex должен
-сохранять stderr MCP-сервера в локальной log DB так, чтобы запись можно было
-найти по concrete `thread_id` и имени MCP-сервера. В расследовании вокруг
-`codebase-memory-mcp` было подтверждено, что сам сервер пишет startup log в
-stderr, но в логах текущей Codex-сессии не находится ни `mem.init`, ни реальная
-строка `MCP server stderr` для этого сервера.
+Эта карточка исторически фиксирует handoff по багу диагностики MCP stdio.
+Реализация привязки stderr к thread удалена из fork, а затронутые owner-файлы
+возвращены к состоянию `rust-v0.146.0`.
 
 | Поле | Значение |
 | --- | --- |
-| Статус | `active` |
+| Статус | `reverted` |
 | Пользовательская цель | Отличить падение MCP-сервера от обрыва транспорта и найти stderr конкретного MCP по thread |
 | Наблюдаемый сервер | `codebase-memory-mcp` |
 | Транспорт | MCP stdio через stdin/stdout, stderr читается отдельно |
@@ -34,6 +31,28 @@ stderr, но в логах текущей Codex-сессии не находит
 `level=info msg=mem.init ...` в stderr. Потеря происходила на стороне Codex
 logging/attribution: stderr-reader запускался как detached task, а startup MCP
 path не гарантировал `thread_id` в span, который попадет в log DB.
+
+## Откат на `rust-v0.146.0`
+
+По решению пользователя доработка полностью удалена:
+
+- передача `server_name` в low-level stdio command удалена;
+- явное наследование session span detached stderr-reader и структурированные
+  поля `server_name`, `program`, `stderr_line` удалены;
+- regression coverage thread-attributed stderr удалено;
+- общий с rollout diagnostics bounded diagnostic state и lifecycle recovery
+  также удалён;
+- изменение `CODEX_AGENT` в `stdio_server_launcher.rs` сохранено как независимая
+  fork-доработка;
+- завершённая карта `docs/fork/migration/0.146.0.json` не переписывается и
+  остаётся историческим снимком выполненной миграции.
+
+Блок `fork-tests.v1` удалён: карточка больше не является active-владельцем
+исполняемого покрытия. Прежние test targets и результаты сохранены ниже как
+историческое подтверждение.
+
+Последующие разделы описывают прежнюю активную реализацию и сохранены для
+истории; они больше не задают текущий fork-контракт.
 
 ## Зачем это нужно
 
@@ -316,41 +335,10 @@ output или TUI history. Цель - локальные logs/feedback diagnosti
 
 ### Владелец исполняемой карты
 
-Card-level проверки запускает skill-owned command `fork tests`. Карточка не
-является runbook запуска внутренних команд: конкретные argv хранятся только в
-машинно-читаемом блоке `fork-tests.v1`, который читает `fork tests`.
-
-```json
-{
-  "schema": "fork-tests.v1",
-  "tests": [
-    {
-      "purpose": "mcp stderr log attribution",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-state",
-        "spawned_mcp_stderr_event_keeps_thread_id_and_fields"
-      ]
-    },
-    {
-      "purpose": "rmcp stdio call chain",
-      "argv": ["just", "test", "-p", "codex-rmcp-client", "resources"]
-    },
-    {
-      "purpose": "Codex Apps startup reconnect lifecycle",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-mcp",
-        "list_all_tools_reconnects_failed_codex_apps_startup_and_reuses_client"
-      ]
-    }
-  ]
-}
-```
+До отката проверки уровня карточки принадлежали skill-owned command
+`fork tests`. После перехода в `reverted` исполняемой карты у карточки нет;
+прежние test targets остаются только в смысловом покрытии и исторических
+результатах.
 
 ### Дополнительные gates
 

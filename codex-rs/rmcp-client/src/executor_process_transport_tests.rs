@@ -23,7 +23,6 @@ use super::ExecutorProcessTransport;
 use super::LineBuffer;
 use super::LineTooLong;
 use super::MAX_MCP_STDOUT_LINE_BYTES;
-use crate::stdio_diagnostics::StdioServerDiagnosticState;
 
 struct BlockingFirstWriteProcess {
     process_id: ProcessId,
@@ -91,12 +90,8 @@ async fn serializes_concurrent_stdin_writes() {
         writes: StdMutex::new(Vec::new()),
         release_first_write: AtomicBool::new(false),
     });
-    let mut transport = ExecutorProcessTransport::new(
-        process.clone(),
-        "mcp-stdio-test".to_string(),
-        "test-server".to_string(),
-        StdioServerDiagnosticState::new(),
-    );
+    let mut transport =
+        ExecutorProcessTransport::new(process.clone(), "mcp-stdio-test".to_string());
     let first_message: TxJsonRpcMessage<RoleClient> =
         serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
             .expect("first MCP message should deserialize");

@@ -70,7 +70,6 @@ use codex_protocol::request_user_input::RequestUserInputQuestionOption;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
-use codex_rmcp_client::McpOperationDiagnosticContext;
 use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -394,78 +393,71 @@ async fn handle_approved_mcp_tool_call(
     let result = async {
         let result = async {
             let result = prepared_call
-                .call_with_preparation(
-                    Some(McpOperationDiagnosticContext {
-                        turn_id: Some(turn_context.sub_id.clone()),
-                        call_id: Some(call_id.to_string()),
-                        tool_name: Some(invocation.tool.clone()),
-                    }),
-                    || async {
-                        if let McpToolApprovalApplication::Apply { decision, policy } =
-                            &approval_application
-                        {
-                            let session_approval_key = session_mcp_tool_approval_key(
+                .call_with_preparation(|| async {
+                    if let McpToolApprovalApplication::Apply { decision, policy } =
+                        &approval_application
+                    {
+                        let session_approval_key = session_mcp_tool_approval_key(
+                            &invocation,
+                            Some(&metadata),
+                            policy.mode,
+                        );
+                        let persistent_approval_key = if policy.allow_persistent {
+                            persistent_mcp_tool_approval_key(
                                 &invocation,
                                 Some(&metadata),
                                 policy.mode,
-                            );
-                            let persistent_approval_key = if policy.allow_persistent {
-                                persistent_mcp_tool_approval_key(
-                                    &invocation,
-                                    Some(&metadata),
-                                    policy.mode,
-                                )
-                            } else {
-                                None
-                            };
-                            apply_mcp_tool_approval_decision(
-                                sess,
-                                turn_context,
-                                decision,
-                                session_approval_key,
-                                persistent_approval_key,
                             )
-                            .await;
-                        }
-                        maybe_mark_thread_memory_mode_polluted(sess, turn_context, &prepared_call)
-                            .await;
-                        let rewritten_arguments = rewrite_mcp_tool_arguments_for_openai_files(
+                        } else {
+                            None
+                        };
+                        apply_mcp_tool_approval_decision(
                             sess,
                             turn_context,
-                            arguments_value,
-                            metadata.openai_file_input_optional_fields.as_ref(),
+                            decision,
+                            session_approval_key,
+                            persistent_approval_key,
                         )
-                        .await
-                        .map_err(anyhow::Error::msg)?;
-                        if let Some(rewritten_arguments) = rewritten_arguments.as_ref() {
-                            tool_input = rewritten_arguments.clone();
-                        }
-                        let request_meta = build_mcp_tool_call_request_meta(
-                            turn_context,
-                            &server,
-                            call_id,
-                            Some(&metadata),
-                        );
-                        let request_meta = with_mcp_tool_call_thread_id_meta(
-                            request_meta,
-                            &sess.thread_id.to_string(),
-                        );
-                        let request_meta = augment_mcp_tool_request_meta_with_sandbox_state(
-                            step_context,
-                            &prepared_call,
-                            request_meta,
-                        )
-                        .await?;
-                        let mcp_call_trace = sess
-                            .services
-                            .rollout_thread_trace
-                            .start_mcp_call_trace(call_id);
-                        Ok((
-                            rewritten_arguments,
-                            mcp_call_trace.add_request_meta(request_meta),
-                        ))
-                    },
-                )
+                        .await;
+                    }
+                    maybe_mark_thread_memory_mode_polluted(sess, turn_context, &prepared_call)
+                        .await;
+                    let rewritten_arguments = rewrite_mcp_tool_arguments_for_openai_files(
+                        sess,
+                        turn_context,
+                        arguments_value,
+                        metadata.openai_file_input_optional_fields.as_ref(),
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    if let Some(rewritten_arguments) = rewritten_arguments.as_ref() {
+                        tool_input = rewritten_arguments.clone();
+                    }
+                    let request_meta = build_mcp_tool_call_request_meta(
+                        turn_context,
+                        &server,
+                        call_id,
+                        Some(&metadata),
+                    );
+                    let request_meta = with_mcp_tool_call_thread_id_meta(
+                        request_meta,
+                        &sess.thread_id.to_string(),
+                    );
+                    let request_meta = augment_mcp_tool_request_meta_with_sandbox_state(
+                        step_context,
+                        &prepared_call,
+                        request_meta,
+                    )
+                    .await?;
+                    let mcp_call_trace = sess
+                        .services
+                        .rollout_thread_trace
+                        .start_mcp_call_trace(call_id);
+                    Ok((
+                        rewritten_arguments,
+                        mcp_call_trace.add_request_meta(request_meta),
+                    ))
+                })
                 .await
                 .map_err(|error| format!("tool call error: {error:?}"))?;
             let result = sanitize_mcp_tool_result_for_model(

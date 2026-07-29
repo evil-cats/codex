@@ -82,18 +82,13 @@ impl Session {
         .instrument(info_span!(
             "session_init.mcp_manager_init",
             otel.name = "session_init.mcp_manager_init",
-            thread_id = %self.thread_id,
         ))
         .await;
 
         self.services.mcp_runtime.validate_required_servers().await
     }
 
-    #[tracing::instrument(
-        name = "mcp.runtime.refresh",
-        skip_all,
-        fields(thread_id = %self.thread_id)
-    )]
+    #[tracing::instrument(name = "mcp.runtime.refresh", skip_all)]
     pub(super) async fn publish_mcp_runtime(
         &self,
         desired: &McpDesiredState,
@@ -163,7 +158,6 @@ impl Session {
             tx_event: Some(self.get_tx_event()),
             startup_cancellation_token: CancellationToken::new(),
             runtime_context,
-            diagnostic_context: Some(self.mcp_diagnostic_context()),
             codex_apps_tools_cache: self.services.mcp_manager.codex_apps_tools_cache(),
             tool_catalog_cache: self.services.mcp_manager.tool_catalog_cache(),
             codex_apps_tools_cache_key: connector_runtime_context_key(auth.as_ref()),

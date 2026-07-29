@@ -23,7 +23,6 @@ use serde_json::Value;
 use serde_json::json;
 
 const NO_SPAWN_TEXT: &str = "Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.";
-const INACTIVE_MODE_TEXT: &str = "Any earlier multi-agent mode instruction no longer applies. Follow the currently available multi-agent tool descriptions and applicable higher-priority instructions.";
 const PROACTIVE_TEXT: &str = "Proactive multi-agent delegation is active.";
 const CUSTOM_MODE_HINT_TEXT: &str = "Use the configured delegation policy.";
 const ROOT_USAGE_HINT_TEXT: &str = "Root usage hint.";
@@ -433,104 +432,6 @@ async fn ultra_on_multi_agent_v1_uses_max_without_mode_instructions() -> Result<
     let input = request.input();
     let texts = developer_texts(&input);
     assert_eq!(count_containing(&texts, MULTI_AGENT_MODE_OPEN_TAG), 0);
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn v1_resume_clears_legacy_v2_mode_without_explicit_request_guard() -> Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-    let responses = mount_sse_sequence(
-        &server,
-        (1..=2)
-            .map(|index| {
-                sse(vec![
-                    ev_response_created(&format!("resp-{index}")),
-                    ev_completed(&format!("resp-{index}")),
-                ])
-            })
-            .collect(),
-    )
-    .await;
-    let initial = test_codex()
-        .with_model_info_override("gpt-5.4", add_ultra_reasoning)
-        .with_config(configure_ultra)
-        .build(&server)
-        .await?;
-    let home = initial.home.clone();
-    let rollout_path = initial
-        .session_configured
-        .rollout_path
-        .clone()
-        .expect("rollout path");
-
-    submit_turn(&initial.codex, "before resume", /*effort*/ None).await?;
-    initial.codex.ensure_rollout_materialized().await;
-    initial.codex.flush_rollout().await?;
-    drop(initial);
-
-    let rollout = std::fs::read_to_string(&rollout_path)?;
-    let mut removed_mode_snapshot = false;
-    let mut removed_multi_agent_version = false;
-    let rollout = rollout
-        .lines()
-        .map(|line| {
-            let mut value = serde_json::from_str::<Value>(line)?;
-            match value.get("type").and_then(Value::as_str) {
-                Some("world_state") => {
-                    if let Some(state) = value
-                        .pointer_mut("/payload/state")
-                        .and_then(Value::as_object_mut)
-                    {
-                        removed_mode_snapshot |= state.remove("multi_agent_mode").is_some();
-                    }
-                }
-                Some("session_meta" | "turn_context") => {
-                    if let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) {
-                        removed_multi_agent_version |=
-                            payload.remove("multi_agent_version").is_some();
-                    }
-                }
-                Some(_) | None => {}
-            }
-            serde_json::to_string(&value)
-        })
-        .collect::<serde_json::Result<Vec<_>>>()?;
-    assert!(removed_mode_snapshot);
-    assert!(removed_multi_agent_version);
-    std::fs::write(&rollout_path, format!("{}\n", rollout.join("\n")))?;
-
-    let mut resume_builder = test_codex().with_config(|config| {
-        config
-            .features
-            .disable(Feature::MultiAgentV2)
-            .expect("test config should allow feature update");
-    });
-    let resumed = resume_builder.resume(&server, home, rollout_path).await?;
-    submit_turn(&resumed.codex, "after resume", /*effort*/ None).await?;
-
-    let requests = responses.requests();
-    let resumed_input = requests[1].input();
-    let texts = developer_texts(&resumed_input);
-    let proactive_index = texts
-        .iter()
-        .position(|text| text.contains(PROACTIVE_TEXT))
-        .expect("legacy proactive mode");
-    let inactive_index = texts
-        .iter()
-        .position(|text| text.contains(INACTIVE_MODE_TEXT))
-        .expect("inactive mode reset");
-    assert_eq!(
-        (
-            count_containing(&texts, PROACTIVE_TEXT),
-            count_containing(&texts, INACTIVE_MODE_TEXT),
-            count_containing(&texts, NO_SPAWN_TEXT),
-        ),
-        (1, 1, 0)
-    );
-    assert!(proactive_index < inactive_index);
 
     Ok(())
 }

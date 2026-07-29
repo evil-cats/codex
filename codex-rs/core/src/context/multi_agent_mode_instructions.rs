@@ -4,13 +4,11 @@ use codex_protocol::protocol::MULTI_AGENT_MODE_CLOSE_TAG;
 use codex_protocol::protocol::MULTI_AGENT_MODE_OPEN_TAG;
 
 const EXPLICIT_REQUEST_ONLY_MULTI_AGENT_MODE_TEXT: &str = "Any earlier instruction enabling proactive multi-agent delegation no longer applies. Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.";
-const INACTIVE_MULTI_AGENT_MODE_TEXT: &str = "Any earlier multi-agent mode instruction no longer applies. Follow the currently available multi-agent tool descriptions and applicable higher-priority instructions.";
 const PROACTIVE_MULTI_AGENT_MODE_TEXT: &str = "Proactive multi-agent delegation is active. Any earlier instruction requiring an explicit user request before spawning sub-agents no longer applies. Use sub-agents when parallel work would materially improve speed or quality. This mode remains active until a later multi-agent mode developer message changes it.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum MultiAgentModeInstructions {
-    Active(MultiAgentMode),
-    Inactive,
+pub(super) struct MultiAgentModeInstructions {
+    multi_agent_mode: MultiAgentMode,
 }
 
 impl MultiAgentModeInstructions {
@@ -22,7 +20,7 @@ impl MultiAgentModeInstructions {
             return None;
         }
 
-        Some(Self::Active(multi_agent_mode))
+        Some(Self { multi_agent_mode })
     }
 }
 
@@ -40,13 +38,12 @@ impl ContextualUserFragment for MultiAgentModeInstructions {
     }
 
     fn body(&self) -> String {
-        match self {
-            Self::Active(MultiAgentMode::Custom(hint_text)) => hint_text.clone(),
-            Self::Active(MultiAgentMode::ExplicitRequestOnly) => {
+        match &self.multi_agent_mode {
+            MultiAgentMode::Custom(hint_text) => hint_text.clone(),
+            MultiAgentMode::ExplicitRequestOnly => {
                 EXPLICIT_REQUEST_ONLY_MULTI_AGENT_MODE_TEXT.to_string()
             }
-            Self::Active(MultiAgentMode::Proactive) => PROACTIVE_MULTI_AGENT_MODE_TEXT.to_string(),
-            Self::Inactive => INACTIVE_MULTI_AGENT_MODE_TEXT.to_string(),
+            MultiAgentMode::Proactive => PROACTIVE_MULTI_AGENT_MODE_TEXT.to_string(),
         }
     }
 }

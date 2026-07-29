@@ -1228,7 +1228,6 @@ pub(super) fn extract_memory_mode(items: &[RolloutItem]) -> Option<String> {
         | RolloutItem::Compacted(_)
         | RolloutItem::TurnContext(_)
         | RolloutItem::WorldState(_)
-        | RolloutItem::McpDiagnostic(_)
         | RolloutItem::EventMsg(_) => None,
     })
 }

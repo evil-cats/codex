@@ -3012,7 +3012,6 @@ fn multi_agent_version_from_items(
             | RolloutItem::InterAgentCommunicationMetadata { .. }
             | RolloutItem::Compacted(_)
             | RolloutItem::WorldState(_)
-            | RolloutItem::McpDiagnostic(_)
             | RolloutItem::EventMsg(_) => None,
         })
     })
@@ -3196,44 +3195,7 @@ pub enum RolloutItem {
     Compacted(CompactedItem),
     TurnContext(TurnContextItem),
     WorldState(WorldStateItem),
-    McpDiagnostic(McpDiagnosticItem),
     EventMsg(EventMsg),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-pub struct McpDiagnosticItem {
-    pub thread_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub call_id: Option<String>,
-    pub server_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-    pub launch_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub old_launch_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub new_launch_id: Option<String>,
-    pub event: McpDiagnosticEvent,
-    pub timestamp_ms: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stderr_tail: Option<String>,
-    pub stderr_truncated: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum McpDiagnosticEvent {
-    ProcessStarted,
-    ProcessExited,
-    TransportClosed,
-    TransportBrokenPipe,
-    RecoveryStarted,
-    RecoverySucceeded,
-    RecoveryFailed,
 }
 
 /// Persisted comparison state used to resume model-visible world-state diffing.
