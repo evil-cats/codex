@@ -1,3 +1,5 @@
+//! Рендерит model-visible goal context и короткие lifecycle steering fragments.
+
 use codex_core::context::ContextualUserFragment;
 use codex_core::context::InternalContextSource;
 use codex_core::context::InternalModelContextFragment;
@@ -10,6 +12,13 @@ static CONTINUATION_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
     parse_embedded_template(
         include_str!("../templates/goals/continuation.md"),
         "goals/continuation.md",
+    )
+});
+
+static ACTIVE_CONTEXT_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
+    parse_embedded_template(
+        include_str!("../templates/goals/active_context.md"),
+        "goals/active_context.md",
     )
 });
 
@@ -54,7 +63,6 @@ fn goal_context_input_item(prompt: String) -> ResponseItem {
 }
 
 fn continuation_prompt(goal: &ThreadGoal) -> String {
-    let objective = escape_xml_text(&goal.objective);
     let tokens_used = goal.tokens_used.to_string();
     let token_budget = goal
         .token_budget
@@ -67,13 +75,29 @@ fn continuation_prompt(goal: &ThreadGoal) -> String {
 
     CONTINUATION_PROMPT_TEMPLATE
         .render([
-            ("objective", objective.as_str()),
             ("tokens_used", tokens_used.as_str()),
             ("token_budget", token_budget.as_str()),
             ("remaining_tokens", remaining_tokens.as_str()),
         ])
         .unwrap_or_else(|err| {
             panic!("embedded goals/continuation.md template failed to render: {err}")
+        })
+}
+
+pub(crate) fn active_goal_context_prompt(goal: &ThreadGoal) -> String {
+    let objective = escape_xml_text(&goal.objective);
+    let token_budget = goal
+        .token_budget
+        .map(|budget| budget.to_string())
+        .unwrap_or_else(|| "none".to_string());
+
+    ACTIVE_CONTEXT_PROMPT_TEMPLATE
+        .render([
+            ("objective", objective.as_str()),
+            ("token_budget", token_budget.as_str()),
+        ])
+        .unwrap_or_else(|err| {
+            panic!("embedded goals/active_context.md template failed to render: {err}")
         })
 }
 
@@ -99,7 +123,6 @@ fn budget_limit_prompt(goal: &ThreadGoal) -> String {
 }
 
 fn objective_updated_prompt(goal: &ThreadGoal) -> String {
-    let objective = escape_xml_text(&goal.objective);
     let tokens_used = goal.tokens_used.to_string();
     let (token_budget, remaining_tokens) = match goal.token_budget {
         Some(token_budget) => (
@@ -111,7 +134,6 @@ fn objective_updated_prompt(goal: &ThreadGoal) -> String {
 
     OBJECTIVE_UPDATED_PROMPT_TEMPLATE
         .render([
-            ("objective", objective.as_str()),
             ("tokens_used", tokens_used.as_str()),
             ("token_budget", token_budget.as_str()),
             ("remaining_tokens", remaining_tokens.as_str()),

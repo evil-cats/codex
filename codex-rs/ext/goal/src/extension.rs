@@ -1,3 +1,7 @@
+//! Регистрирует goal extension и связывает persisted goal state с lifecycle thread и turn.
+
+mod world_state;
+
 use std::sync::Arc;
 use std::sync::Weak;
 
@@ -479,6 +483,7 @@ pub fn install_with_backend<C>(
     ));
     registry.thread_lifecycle_contributor(extension.clone());
     registry.config_contributor(extension.clone());
+    registry.prompt_contributor(extension.clone());
     registry.turn_lifecycle_contributor(extension.clone());
     registry.token_usage_contributor(extension.clone());
     registry.tool_lifecycle_contributor(extension.clone());

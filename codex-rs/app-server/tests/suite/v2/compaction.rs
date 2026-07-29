@@ -1,9 +1,9 @@
-//! End-to-end compaction flow tests.
+//! Интеграционные тесты потоков compaction через app-server.
 //!
-//! Phases:
-//! 1) Arrange: mock responses/compact endpoints + config.
-//! 2) Act: start a thread and submit multiple turns to trigger auto-compaction.
-//! 3) Assert: verify item/started + item/completed notifications for context compaction.
+//! Этапы:
+//! 1) Подготовить mock endpoints `responses`/`compact` и конфигурацию.
+//! 2) Запустить thread и отправить turns, вызывающие auto-compaction.
+//! 3) Проверить lifecycle-уведомления и контекст после compaction.
 
 use anyhow::Result;
 use app_test_support::ChatGptAuthFixture;
@@ -49,6 +49,9 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const AUTO_COMPACT_LIMIT: i64 = 1_000;
 const COMPACT_PROMPT: &str = "Summarize the conversation.";
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
+const ACTIVE_GOAL_OBJECTIVE: &str = "Finish <alpha> & verify compaction";
+const ESCAPED_ACTIVE_GOAL_OBJECTIVE: &str = "Finish &lt;alpha&gt; &amp; verify compaction";
+const ACTIVE_GOAL_USER_MESSAGE: &str = "create the durable mid-turn goal";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()> {
@@ -108,6 +111,186 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_survives_mid_turn_local_compaction() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("create-goal"),
+            responses::ev_function_call(
+                "call-create-goal",
+                "create_goal",
+                &serde_json::json!({ "objective": ACTIVE_GOAL_OBJECTIVE }).to_string(),
+            ),
+            responses::ev_completed_with_tokens("create-goal", /*total_tokens*/ 330_000),
+        ]),
+    )
+    .await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("compact"),
+            responses::ev_assistant_message(
+                "compact-summary",
+                "A deliberately goal-free compact summary.",
+            ),
+            responses::ev_completed_with_tokens("compact", /*total_tokens*/ 200),
+        ]),
+    )
+    .await;
+    let post_compact = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("complete-goal"),
+            responses::ev_function_call(
+                "call-complete-goal",
+                "update_goal",
+                r#"{"status":"complete"}"#,
+            ),
+            responses::ev_completed_with_tokens("complete-goal", /*total_tokens*/ 120),
+        ]),
+    )
+    .await;
+    let completed_goal_follow_up = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("final"),
+            responses::ev_assistant_message("final-message", "done"),
+            responses::ev_completed_with_tokens("final", /*total_tokens*/ 120),
+        ]),
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::from([(Feature::Goals, true)]),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build()
+        .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    send_turn_and_wait(&mut mcp, &thread_id, ACTIVE_GOAL_USER_MESSAGE).await?;
+
+    let post_compact_request = post_compact.single_request();
+    let post_compact_body = post_compact_request.body_json().to_string();
+    assert!(post_compact_body.contains("<thread_goal_context>"));
+    assert!(post_compact_body.contains(ESCAPED_ACTIVE_GOAL_OBJECTIVE));
+    assert_eq!(
+        post_compact_body
+            .matches(ESCAPED_ACTIVE_GOAL_OBJECTIVE)
+            .count(),
+        1,
+        "the exact objective should be injected once after local compaction"
+    );
+    assert!(
+        post_compact_body.contains("A deliberately goal-free compact summary."),
+        "the regression must prove the goal comes from WorldState rather than the summary"
+    );
+    assert!(
+        completed_goal_follow_up
+            .single_request()
+            .body_json()
+            .to_string()
+            .contains("previously active thread goal is no longer active"),
+        "completing the goal should clear its active WorldState"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_survives_mid_turn_token_budget_compaction() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("create-goal"),
+            responses::ev_function_call(
+                "call-create-goal",
+                "create_goal",
+                &serde_json::json!({ "objective": ACTIVE_GOAL_OBJECTIVE }).to_string(),
+            ),
+            responses::ev_completed_with_tokens("create-goal", /*total_tokens*/ 330_000),
+        ]),
+    )
+    .await;
+    let post_compact = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("complete-goal"),
+            responses::ev_function_call(
+                "call-complete-goal",
+                "update_goal",
+                r#"{"status":"complete"}"#,
+            ),
+            responses::ev_completed_with_tokens("complete-goal", /*total_tokens*/ 120),
+        ]),
+    )
+    .await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("final"),
+            responses::ev_assistant_message("final-message", "done"),
+            responses::ev_completed_with_tokens("final", /*total_tokens*/ 120),
+        ]),
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::from([(Feature::Goals, true), (Feature::TokenBudget, true)]),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build()
+        .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    send_turn_and_wait(&mut mcp, &thread_id, ACTIVE_GOAL_USER_MESSAGE).await?;
+
+    let post_compact_request = post_compact.single_request();
+    let post_compact_body = post_compact_request.body_json().to_string();
+    assert!(post_compact_body.contains("<thread_goal_context>"));
+    assert!(post_compact_body.contains(ESCAPED_ACTIVE_GOAL_OBJECTIVE));
+    assert_eq!(
+        post_compact_body
+            .matches(ESCAPED_ACTIVE_GOAL_OBJECTIVE)
+            .count(),
+        1,
+        "the exact objective should be injected once after TokenBudget compaction"
+    );
+    assert!(
+        !post_compact_body.contains(ACTIVE_GOAL_USER_MESSAGE),
+        "a fresh TokenBudget window should drop the original user message"
+    );
 
     Ok(())
 }
