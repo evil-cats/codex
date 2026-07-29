@@ -1,3 +1,5 @@
+//! Реализует model tools чтения, создания, завершения и отмены persisted goals.
+
 use std::sync::Arc;
 
 use codex_extension_api::FunctionCallError;
@@ -55,7 +57,15 @@ pub struct CreateGoalRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct UpdateGoalArgs {
-    status: ThreadGoalStatus,
+    status: UpdateGoalStatus,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum UpdateGoalStatus {
+    Complete,
+    Blocked,
+    Cancel,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -223,24 +233,48 @@ impl GoalToolExecutor {
         invocation: ToolCall,
     ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
         let args: UpdateGoalArgs = parse_arguments(invocation.function_arguments()?)?;
-        if !matches!(
-            args.status,
-            ThreadGoalStatus::Complete | ThreadGoalStatus::Blocked
-        ) {
-            return Err(FunctionCallError::RespondToModel(
-                "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
-                    .to_string(),
-            ));
+        if args.status == UpdateGoalStatus::Cancel {
+            self.account_active_goal_progress(
+                codex_state::GoalAccountingMode::ActiveOrStopped,
+                invocation.call_id.as_str(),
+                BudgetLimitedGoalDisposition::ClearActive,
+            )
+            .await?;
+            let goal = self
+                .state_db
+                .thread_goals()
+                .delete_thread_goal(self.thread_id)
+                .await
+                .map_err(|err| {
+                    FunctionCallError::RespondToModel(format!("failed to cancel goal: {err}"))
+                })?
+                .ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "cannot cancel goal because this thread has no goal".to_string(),
+                    )
+                })?;
+            self.analytics.cleared(
+                &goal,
+                GoalEventAttribution::Turn(invocation.turn_id.as_str()),
+            );
+            self.accounting_state.clear_current_turn_goal();
+            self.event_emitter.thread_goal_cleared(self.thread_id);
+            return goal_response(/*goal*/ None, CompletionBudgetReport::Omit);
         }
 
+        let status = match args.status {
+            UpdateGoalStatus::Complete => ThreadGoalStatus::Complete,
+            UpdateGoalStatus::Blocked => ThreadGoalStatus::Blocked,
+            UpdateGoalStatus::Cancel => unreachable!("cancel handled above"),
+        };
         self.account_active_goal_progress(
-            match args.status {
+            match status {
                 ThreadGoalStatus::Complete => codex_state::GoalAccountingMode::ActiveOrComplete,
                 ThreadGoalStatus::Blocked => codex_state::GoalAccountingMode::ActiveOrStopped,
                 ThreadGoalStatus::Active
                 | ThreadGoalStatus::Paused
                 | ThreadGoalStatus::UsageLimited
-                | ThreadGoalStatus::BudgetLimited => unreachable!("status validated above"),
+                | ThreadGoalStatus::BudgetLimited => unreachable!("status mapped above"),
             },
             invocation.call_id.as_str(),
             BudgetLimitedGoalDisposition::ClearActive,
@@ -256,7 +290,7 @@ impl GoalToolExecutor {
                 self.thread_id,
                 codex_state::GoalUpdate {
                     objective: None,
-                    status: Some(state_status_from_protocol(args.status)),
+                    status: Some(state_status_from_protocol(status)),
                     token_budget: None,
                     expected_goal_id: None,
                 },
@@ -282,7 +316,7 @@ impl GoalToolExecutor {
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
         goal_response(
             Some(goal),
-            if args.status == ThreadGoalStatus::Complete {
+            if status == ThreadGoalStatus::Complete {
                 CompletionBudgetReport::Include
             } else {
                 CompletionBudgetReport::Omit

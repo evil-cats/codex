@@ -1,3 +1,6 @@
+//! Собирает устойчивый model-visible `WorldState` и его инкрементальные updates.
+//! Сохраняемые fragments отделяются от одноразовой доставки ближайшему sampling.
+
 mod agents_md;
 mod apps_instructions;
 mod collaboration_mode;
@@ -54,7 +57,12 @@ trait ErasedWorldStateSection: Send + Sync {
     fn render_diff(
         &self,
         previous: PreviousSectionState<'_, Value>,
-    ) -> Option<Box<dyn ContextualUserFragment>>;
+    ) -> Option<RenderedWorldStateUpdate>;
+}
+
+struct RenderedWorldStateUpdate {
+    fragment: Box<dyn ContextualUserFragment>,
+    next_sampling_only: bool,
 }
 
 impl<S: WorldStateSection> ErasedWorldStateSection for S {
@@ -99,7 +107,7 @@ impl<S: WorldStateSection> ErasedWorldStateSection for S {
     fn render_diff(
         &self,
         previous: PreviousSectionState<'_, Value>,
-    ) -> Option<Box<dyn ContextualUserFragment>> {
+    ) -> Option<RenderedWorldStateUpdate> {
         let typed_snapshot;
         let previous = match previous {
             PreviousSectionState::Known(previous) => {
@@ -121,7 +129,10 @@ impl<S: WorldStateSection> ErasedWorldStateSection for S {
             PreviousSectionState::Absent => PreviousSectionState::Absent,
             PreviousSectionState::Unknown => PreviousSectionState::Unknown,
         };
-        WorldStateSection::render_diff(self, previous)
+        WorldStateSection::render_diff(self, previous).map(|fragment| RenderedWorldStateUpdate {
+            fragment,
+            next_sampling_only: false,
+        })
     }
 }
 
@@ -149,15 +160,19 @@ impl ErasedWorldStateSection for ExtensionWorldStateSection {
     fn render_diff(
         &self,
         previous: PreviousSectionState<'_, Value>,
-    ) -> Option<Box<dyn ContextualUserFragment>> {
+    ) -> Option<RenderedWorldStateUpdate> {
         let previous = match previous {
             PreviousSectionState::Absent => PreviousWorldStateSection::Absent,
             PreviousSectionState::Unknown => PreviousWorldStateSection::Unknown,
             PreviousSectionState::Known(previous) => PreviousWorldStateSection::Known(previous),
         };
-        self.0
-            .render_diff(previous)
-            .map(|fragment| Box::new(WorldStateContextFragment(fragment)) as _)
+        self.0.render_diff(previous).map(|fragment| {
+            let next_sampling_only = fragment.is_for_next_sampling_only();
+            RenderedWorldStateUpdate {
+                fragment: Box::new(WorldStateContextFragment(fragment)),
+                next_sampling_only,
+            }
+        })
     }
 }
 
@@ -258,6 +273,55 @@ pub(crate) struct WorldState {
     sections: IndexMap<&'static str, Box<dyn ErasedWorldStateSection>>,
 }
 
+pub(crate) struct WorldStateDiff {
+    updates: Vec<RenderedWorldStateUpdate>,
+}
+
+impl WorldStateDiff {
+    pub(crate) fn len(&self) -> usize {
+        self.updates.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
+    /// Разделяет устойчивые history fragments и одноразовые fragments ближайшего sampling.
+    pub(crate) fn into_delivery(
+        self,
+    ) -> (
+        Vec<Box<dyn ContextualUserFragment>>,
+        Vec<Box<dyn ContextualUserFragment>>,
+    ) {
+        let mut history_fragments = Vec::new();
+        let mut next_sampling_fragments = Vec::new();
+        for update in self.updates {
+            if update.next_sampling_only {
+                next_sampling_fragments.push(update.fragment);
+            } else {
+                history_fragments.push(update.fragment);
+            }
+        }
+        (history_fragments, next_sampling_fragments)
+    }
+
+    fn into_fragments(self) -> Vec<Box<dyn ContextualUserFragment>> {
+        self.updates
+            .into_iter()
+            .map(|update| update.fragment)
+            .collect()
+    }
+}
+
+impl IntoIterator for WorldStateDiff {
+    type Item = Box<dyn ContextualUserFragment>;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_fragments().into_iter()
+    }
+}
+
 /// Compact comparison state for each model-visible world-state section.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -330,6 +394,7 @@ impl WorldState {
     /// Renders every section as new, without any known previous state.
     pub(crate) fn render_full(&self) -> Vec<Box<dyn ContextualUserFragment>> {
         self.render_with(|_, _| PreviousSectionState::Absent)
+            .into_fragments()
     }
 
     /// Renders each section against the exact persisted snapshot when available.
@@ -337,6 +402,11 @@ impl WorldState {
         &self,
         previous: &WorldStateSnapshot,
     ) -> Vec<Box<dyn ContextualUserFragment>> {
+        self.render_diff_for_sampling(previous).into_fragments()
+    }
+
+    /// Рендерит diff вместе с политикой доставки каждого fragment.
+    pub(crate) fn render_diff_for_sampling(&self, previous: &WorldStateSnapshot) -> WorldStateDiff {
         self.render_with(|id, _| match previous.sections.get(id) {
             Some(previous) => PreviousSectionState::Known(previous),
             None => PreviousSectionState::Absent,
@@ -349,6 +419,16 @@ impl WorldState {
         previous: Option<&WorldStateSnapshot>,
         items: &[ResponseItem],
     ) -> Vec<Box<dyn ContextualUserFragment>> {
+        self.render_history_diff_for_sampling(previous, items)
+            .into_fragments()
+    }
+
+    /// Сверяет snapshot с retained history и сохраняет политику доставки diff.
+    pub(crate) fn render_history_diff_for_sampling(
+        &self,
+        previous: Option<&WorldStateSnapshot>,
+        items: &[ResponseItem],
+    ) -> WorldStateDiff {
         self.render_with(|id, section| {
             if let Some(previous) = previous.and_then(|previous| previous.sections.get(id)) {
                 if section.has_retained_fragment_matcher() && !has_retained_fragment(items, section)
@@ -368,11 +448,14 @@ impl WorldState {
     fn render_with<'a>(
         &self,
         mut previous: impl FnMut(&str, &dyn ErasedWorldStateSection) -> PreviousSectionState<'a, Value>,
-    ) -> Vec<Box<dyn ContextualUserFragment>> {
-        self.sections
-            .iter()
-            .filter_map(|(id, section)| section.render_diff(previous(id, section.as_ref())))
-            .collect()
+    ) -> WorldStateDiff {
+        WorldStateDiff {
+            updates: self
+                .sections
+                .iter()
+                .filter_map(|(id, section)| section.render_diff(previous(id, section.as_ref())))
+                .collect(),
+        }
     }
 }
 

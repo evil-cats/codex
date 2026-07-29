@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #![allow(clippy::expect_used)]
 
+//! Проверяет persisted goal backend, accounting и host-owned lifecycle events.
+
 use codex_utils_absolute_path::test_support::PathExt;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -841,6 +843,79 @@ async fn update_goal_can_block_and_accounts_final_progress() -> anyhow::Result<(
 }
 
 #[tokio::test]
+async fn update_goal_can_cancel_immediately_and_clear_goal() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    harness.start_turn("turn-1", &TokenUsage::default()).await;
+
+    let tools = harness.tools();
+    let create_tool = tool_by_name(&tools, "create_goal");
+    create_tool
+        .handle(tool_call(
+            "create_goal",
+            "call-create-goal",
+            json!({ "objective": "cancel goal extension backend" }),
+        ))
+        .await?;
+    harness.sink.clear();
+
+    harness
+        .record_token_usage(
+            "turn-1",
+            &token_usage(
+                /*input_tokens*/ 20, /*cached_input_tokens*/ 5, /*output_tokens*/ 8,
+                /*reasoning_output_tokens*/ 2, /*total_tokens*/ 30,
+            ),
+        )
+        .await;
+    let update_tool = tool_by_name(&tools, "update_goal");
+    let invocation = tool_call(
+        "update_goal",
+        "call-cancel-goal",
+        json!({ "status": "cancel" }),
+    );
+    let output = update_tool.handle(invocation.clone()).await?;
+    let result = output.code_mode_result(&invocation.payload);
+
+    assert_eq!(
+        result,
+        json!({
+            "goal": serde_json::Value::Null,
+            "remainingTokens": serde_json::Value::Null,
+            "completionBudgetReport": serde_json::Value::Null,
+        })
+    );
+    assert_eq!(
+        None,
+        runtime.thread_goals().get_thread_goal(thread_id).await?
+    );
+    assert_eq!(
+        vec![CapturedGoalEvent {
+            event_id: "call-cancel-goal".to_string(),
+            turn_id: Some("turn-1".to_string()),
+            status: ThreadGoalStatus::Active,
+            tokens_used: 23,
+        }],
+        harness.sink.goal_events()
+    );
+    assert_eq!(vec![thread_id], harness.sink.cleared_thread_ids().clone());
+
+    let replacement = tool_call(
+        "create_goal",
+        "call-create-replacement",
+        json!({ "objective": "replacement after cancellation" }),
+    );
+    let output = create_tool.handle(replacement.clone()).await?;
+    assert_eq!(
+        json!("replacement after cancellation"),
+        output.code_mode_result(&replacement.payload)["goal"]["objective"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn external_goal_mutation_start_accounts_active_goal_progress() -> anyhow::Result<()> {
     let runtime = test_runtime().await?;
     let thread_id = test_thread_id()?;
@@ -1390,6 +1465,7 @@ async fn seed_thread_metadata(
 #[derive(Debug, Default)]
 struct RecordingEventSink {
     events: Mutex<Vec<Event>>,
+    cleared_thread_ids: Mutex<Vec<ThreadId>>,
 }
 
 impl RecordingEventSink {
@@ -1410,10 +1486,17 @@ impl RecordingEventSink {
 
     fn clear(&self) {
         self.events().clear();
+        self.cleared_thread_ids().clear();
     }
 
     fn events(&self) -> std::sync::MutexGuard<'_, Vec<Event>> {
         self.events.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn cleared_thread_ids(&self) -> std::sync::MutexGuard<'_, Vec<ThreadId>> {
+        self.cleared_thread_ids
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -1424,6 +1507,10 @@ impl ExtensionEventSink for RecordingEventSink {
 
     fn emit_warning(&self, _warning: ExtensionWarning) {
         panic!("goal extension tests do not emit warnings");
+    }
+
+    fn emit_thread_goal_cleared(&self, thread_id: ThreadId) {
+        self.cleared_thread_ids().push(thread_id);
     }
 }
 

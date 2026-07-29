@@ -1,5 +1,6 @@
 //! Восстанавливает точный active-goal context через extension-owned `WorldState`.
-//! Маркер очистки создаётся только после snapshot с доказанным состоянием `active`.
+//! Маркер очистки создаётся только после snapshot с доказанным состоянием `active`
+//! и доставляется одному sampling без записи в conversation history.
 
 use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionFuture;
@@ -30,6 +31,10 @@ impl<C> ContextContributor for GoalExtension<C>
 where
     C: Send + Sync + 'static,
 {
+    fn matches_model_context_fragment(&self, role: &str, text: &str) -> bool {
+        is_thread_goal_context_fragment(role, text)
+    }
+
     fn contribute_world_state<'a>(
         &'a self,
         input: WorldStateContributionInput<'a>,
@@ -77,6 +82,7 @@ fn active_goal_world_state_section(
     });
     let expected_snapshot = snapshot.clone();
     let retained_body = body.clone();
+    let current_is_active = active_goal.is_some();
 
     let contribution =
         WorldStateSectionContribution::new(ACTIVE_GOAL_WORLD_STATE_ID, snapshot, move |previous| {
@@ -95,11 +101,16 @@ fn active_goal_world_state_section(
                 None if !previous_was_active => return None,
                 None => NO_ACTIVE_GOAL_BODY,
             };
-            Some(RenderedWorldStateFragment::new(
+            let fragment = RenderedWorldStateFragment::new(
                 "user",
                 (THREAD_GOAL_CONTEXT_OPEN_TAG, THREAD_GOAL_CONTEXT_CLOSE_TAG),
                 body,
-            ))
+            );
+            Some(if current_is_active {
+                fragment
+            } else {
+                fragment.for_next_sampling_only()
+            })
         });
 
     match retained_body {
@@ -111,6 +122,12 @@ fn active_goal_world_state_section(
         }),
         None => contribution,
     }
+}
+
+fn is_thread_goal_context_fragment(role: &str, text: &str) -> bool {
+    role == "user"
+        && text.trim_start().starts_with(THREAD_GOAL_CONTEXT_OPEN_TAG)
+        && text.trim_end().ends_with(THREAD_GOAL_CONTEXT_CLOSE_TAG)
 }
 
 fn unavailable_goal_world_state_section() -> WorldStateSectionContribution {

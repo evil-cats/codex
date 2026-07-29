@@ -1,6 +1,8 @@
+//! Хранит conversation history и устойчивый baseline model-visible `WorldState`.
+
 use crate::audio_preparation::estimate_audio_token_count;
-use crate::context::ContextualUserFragment;
 use crate::context::world_state::WorldState;
+use crate::context::world_state::WorldStateDiff;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::normalize;
 use crate::event_mapping::has_non_contextual_dev_message_content;
@@ -91,10 +93,10 @@ impl ContextManager {
     pub(crate) fn update_world_state(
         &mut self,
         world_state: &WorldState,
-    ) -> (Vec<Box<dyn ContextualUserFragment>>, Option<WorldStateItem>) {
+    ) -> (WorldStateDiff, Option<WorldStateItem>) {
         let snapshot = world_state.snapshot();
-        let fragments =
-            world_state.render_history_diff(self.world_state_baseline.as_ref(), &self.items);
+        let fragments = world_state
+            .render_history_diff_for_sampling(self.world_state_baseline.as_ref(), &self.items);
         let rollout_item = self.world_state_baseline.as_ref().map_or_else(
             || Some(WorldStateItem::full(snapshot.clone().into_value())),
             |previous| {

@@ -1,3 +1,6 @@
+//! Определяет host-owned каналы событий, доступные extensions.
+
+use codex_protocol::ThreadId;
 use codex_protocol::protocol::Event;
 
 /// Extension warning with an explicit thread target and optional turn correlation.
@@ -25,6 +28,9 @@ pub trait ExtensionEventSink: Send + Sync {
     /// Implementations must use [`ExtensionWarning::thread_id`] for routing. The optional
     /// [`ExtensionWarning::turn_id`] is correlation metadata and does not identify a thread.
     fn emit_warning(&self, warning: ExtensionWarning);
+
+    /// Queue a notification that the persisted goal for `thread_id` was removed.
+    fn emit_thread_goal_cleared(&self, _thread_id: ThreadId) {}
 }
 
 /// Event sink used when the host does not expose extension event emission.

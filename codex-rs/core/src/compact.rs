@@ -348,7 +348,9 @@ async fn run_compact_task_inner_impl(
     let history_items = history_snapshot.raw_items();
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
+    let user_messages = collect_user_messages_excluding(history_items, |item| {
+        sess.is_extension_model_context_message(item)
+    });
 
     let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
     if let Some(summary_item) = new_history.last_mut() {
@@ -523,8 +525,17 @@ pub(crate) struct CompactedUserMessage {
 }
 
 pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<CompactedUserMessage> {
+    collect_user_messages_excluding(items, |_| false)
+}
+
+/// Собирает реальные user messages, исключая prompt state по признаку вызывающего кода.
+pub(crate) fn collect_user_messages_excluding(
+    items: &[ResponseItem],
+    mut should_exclude: impl FnMut(&ResponseItem) -> bool,
+) -> Vec<CompactedUserMessage> {
     items
         .iter()
+        .filter(|item| !should_exclude(item))
         .filter_map(|item| match crate::event_mapping::parse_turn_item(item) {
             Some(TurnItem::UserMessage(user)) => {
                 if is_summary_message(&user.message()) {

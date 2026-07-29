@@ -1,3 +1,5 @@
+//! Строит отладочный prompt из того же устойчивого и одноразового context, что runtime.
+
 use std::sync::Arc;
 
 use codex_exec_server::EnvironmentManager;
@@ -87,7 +89,8 @@ pub(crate) async fn build_prompt_input_from_session(
     let step_context = sess
         .capture_step_context(Arc::clone(&turn_context), &CancellationToken::new())
         .await?;
-    sess.record_context_updates_and_set_reference_context_item(step_context.as_ref())
+    let world_state_delivery = sess
+        .record_context_updates_and_set_reference_context_item(step_context.as_ref())
         .await;
 
     if !input.is_empty() {
@@ -96,10 +99,11 @@ pub(crate) async fn build_prompt_input_from_session(
             .await;
     }
 
-    let prompt_input = sess
+    let mut prompt_input = sess
         .clone_history()
         .await
         .for_prompt(&turn_context.model_info.input_modalities);
+    prompt_input.extend(world_state_delivery.next_sampling_items);
     let base_instructions = sess.get_base_instructions().await;
     let prompt = build_prompt(
         prompt_input,

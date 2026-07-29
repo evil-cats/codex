@@ -78,6 +78,15 @@ pub trait McpServerContributor<C: Sync>: Send + Sync {
 /// fragment: thread/session context for stable inputs, and turn context for
 /// fragments that depend on turn-local host state.
 pub trait ContextContributor: Send + Sync {
+    /// Распознаёт model-context fragment, созданный этим contributor.
+    ///
+    /// Пути замены context используют признак, чтобы отличить extension-owned
+    /// prompt state от реальных conversation messages без зависимости от
+    /// конкретной extension или её markers.
+    fn matches_model_context_fragment(&self, _role: &str, _text: &str) -> bool {
+        false
+    }
+
     /// Returns thread-scoped context using the supplied extension state.
     fn contribute_thread_context<'a>(
         &'a self,

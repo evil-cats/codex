@@ -230,7 +230,9 @@ impl GoalRuntimeHandle {
             return Ok(());
         }
 
-        self.inner.analytics.cleared(&goal);
+        self.inner
+            .analytics
+            .cleared(&goal, GoalEventAttribution::NoTurn);
         self.inner.accounting_state.clear_active_goal();
         Ok(())
     }

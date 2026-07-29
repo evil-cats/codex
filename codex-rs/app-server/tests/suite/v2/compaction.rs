@@ -17,6 +17,7 @@ use codex_app_server_protocol::RawResponseCompletedNotification;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
+use codex_app_server_protocol::ThreadGoalClearedNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -47,6 +48,23 @@ const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 const ACTIVE_GOAL_OBJECTIVE: &str = "Finish <alpha> & verify compaction";
 const ESCAPED_ACTIVE_GOAL_OBJECTIVE: &str = "Finish &lt;alpha&gt; &amp; verify compaction";
 const ACTIVE_GOAL_USER_MESSAGE: &str = "create the durable mid-turn goal";
+
+#[derive(Clone, Copy, Debug)]
+enum TerminalGoalAction {
+    Complete,
+    Blocked,
+    Cancel,
+}
+
+impl TerminalGoalAction {
+    fn status(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Blocked => "blocked",
+            Self::Cancel => "cancel",
+        }
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()> {
@@ -266,6 +284,21 @@ async fn active_goal_world_state_survives_mid_turn_token_budget_compaction() -> 
     );
 
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_complete_clearing_is_one_shot_across_compaction() -> Result<()> {
+    assert_terminal_goal_context_is_one_shot(TerminalGoalAction::Complete).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_blocked_clearing_is_one_shot_across_compaction() -> Result<()> {
+    assert_terminal_goal_context_is_one_shot(TerminalGoalAction::Blocked).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_cancel_clearing_is_one_shot_across_compaction() -> Result<()> {
+    assert_terminal_goal_context_is_one_shot(TerminalGoalAction::Cancel).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -741,6 +774,129 @@ async fn thread_compact_start_rejects_unknown_thread_id() -> Result<()> {
     Ok(())
 }
 
+async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("create-goal"),
+            responses::ev_function_call(
+                "call-create-goal",
+                "create_goal",
+                &serde_json::json!({ "objective": ACTIVE_GOAL_OBJECTIVE }).to_string(),
+            ),
+            responses::ev_completed_with_tokens("create-goal", /*total_tokens*/ 100),
+        ]),
+    )
+    .await;
+    let terminal = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("terminal-goal"),
+            responses::ev_function_call(
+                "call-terminal-goal",
+                "update_goal",
+                &serde_json::json!({ "status": action.status() }).to_string(),
+            ),
+            responses::ev_completed_with_tokens("terminal-goal", /*total_tokens*/ 100),
+        ]),
+    )
+    .await;
+    let clearing = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("clearing-follow-up"),
+            responses::ev_function_call(
+                "call-update-plan",
+                "update_plan",
+                &serde_json::json!({
+                    "plan": [{
+                        "step": "Verify terminal goal context cleanup",
+                        "status": "in_progress",
+                    }],
+                })
+                .to_string(),
+            ),
+            responses::ev_completed_with_tokens(
+                "clearing-follow-up",
+                /*total_tokens*/ 330_000,
+            ),
+        ]),
+    )
+    .await;
+    let compact = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("compact-terminal-goal"),
+            responses::ev_assistant_message(
+                "compact-terminal-summary",
+                "A deliberately terminal-goal-free compact summary.",
+            ),
+            responses::ev_completed_with_tokens("compact-terminal-goal", /*total_tokens*/ 200),
+        ]),
+    )
+    .await;
+    let post_compact = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("post-terminal-compact"),
+            responses::ev_assistant_message("final-message", "done"),
+            responses::ev_completed_with_tokens("post-terminal-compact", /*total_tokens*/ 120),
+        ]),
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    compaction_config(&server.uri(), AUTO_COMPACT_LIMIT)
+        .enable_feature(Feature::Goals)
+        .write(codex_home.path())?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    send_turn_and_wait(&mut mcp, &thread_id, ACTIVE_GOAL_USER_MESSAGE).await?;
+
+    let terminal_body = terminal.single_request().body_json().to_string();
+    assert!(terminal_body.contains("<thread_goal_context>"));
+    assert!(terminal_body.contains(ESCAPED_ACTIVE_GOAL_OBJECTIVE));
+
+    let clearing_body = clearing.single_request().body_json().to_string();
+    assert_eq!(
+        clearing_body
+            .matches("previously active thread goal is no longer active")
+            .count(),
+        1,
+        "terminal transition should be delivered to exactly one sampling request"
+    );
+    assert!(
+        !compact
+            .single_request()
+            .body_json()
+            .to_string()
+            .contains("previously active thread goal is no longer active"),
+        "the clearing fragment must not be persisted into compaction input"
+    );
+    let post_compact_body = post_compact.single_request().body_json().to_string();
+    assert_no_thread_goal_context(&post_compact_body, "terminal goal compaction replacement");
+    assert!(post_compact_body.contains("A deliberately terminal-goal-free compact summary."));
+
+    if matches!(action, TerminalGoalAction::Cancel) {
+        let cleared: ThreadGoalClearedNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_notification("thread/goal/cleared"),
+        )
+        .await??;
+        assert_eq!(cleared.thread_id, thread_id);
+    }
+
+    Ok(())
+}
+
 async fn start_thread(mcp: &mut TestAppServer) -> Result<String> {
     let thread_id = mcp
         .send_thread_start_request_with_auto_env(ThreadStartParams {
@@ -822,11 +978,11 @@ fn parse_json_header(value: &str) -> serde_json::Value {
 fn assert_no_thread_goal_context(body: &str, compaction_path: &str) {
     assert!(
         !body.contains("<thread_goal_context>"),
-        "a never-active goal must not emit thread goal context after {compaction_path}"
+        "thread goal context must be absent after {compaction_path}"
     );
     assert!(
         !body.contains("previously active thread goal is no longer active"),
-        "a never-active goal must not emit a clearing marker after {compaction_path}"
+        "a clearing marker must be absent after {compaction_path}"
     );
 }
 

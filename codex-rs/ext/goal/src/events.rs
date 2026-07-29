@@ -1,6 +1,9 @@
+//! Преобразует события goal extension в host-owned delivery calls.
+
 use std::sync::Arc;
 
 use codex_extension_api::ExtensionEventSink;
+use codex_protocol::ThreadId;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ThreadGoal;
@@ -30,5 +33,9 @@ impl GoalEventEmitter {
                 goal,
             }),
         });
+    }
+
+    pub(crate) fn thread_goal_cleared(&self, thread_id: ThreadId) {
+        self.sink.emit_thread_goal_cleared(thread_id);
     }
 }

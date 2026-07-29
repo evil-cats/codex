@@ -1,3 +1,5 @@
+//! Описывает extension-owned секции `WorldState` и способ доставки их fragments.
+
 use std::sync::Arc;
 
 use codex_exec_server_protocol::ExecutorCapabilityDiscoverySnapshot;
@@ -35,6 +37,7 @@ pub struct RenderedWorldStateFragment {
     role: &'static str,
     markers: (&'static str, &'static str),
     body: String,
+    next_sampling_only: bool,
 }
 
 impl RenderedWorldStateFragment {
@@ -47,7 +50,14 @@ impl RenderedWorldStateFragment {
             role,
             markers,
             body: body.into(),
+            next_sampling_only: false,
         }
+    }
+
+    /// Доставляет fragment только ближайшему sampling без записи в conversation history.
+    pub fn for_next_sampling_only(mut self) -> Self {
+        self.next_sampling_only = true;
+        self
     }
 
     pub fn role(&self) -> &'static str {
@@ -60,6 +70,10 @@ impl RenderedWorldStateFragment {
 
     pub fn body(&self) -> &str {
         &self.body
+    }
+
+    pub fn is_for_next_sampling_only(&self) -> bool {
+        self.next_sampling_only
     }
 }
 

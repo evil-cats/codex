@@ -6,19 +6,25 @@ updated: 2026-07-29
 source_scope: hermione-0.145.0..HEAD
 ---
 
-# Active goal в `WorldState` после compaction
+# Thread goal в `WorldState` после compaction и terminal transition
 
 ## Обзор
 
-Эта карточка фиксирует fork-доработку Hermione, которая сохраняет точный
-`objective` активной thread goal в model-visible context после local, remote и
-`TokenBudget` compaction.
+Эта карточка фиксирует fork-доработку Hermione, которая:
+
+- сохраняет точный `objective` активной thread goal в model-visible context
+  после local, remote и `TokenBudget` compaction;
+- позволяет модели немедленно отменить существующую goal через
+  `update_goal(status="cancel")`;
+- доставляет clearing fragment после `complete`, `blocked` или `cancel` только
+  в ближайший sampling и не превращает его в постоянное напоминание истории.
 
 Доработка была реализована и проверена на `hermione-0.145.0`. При переносе на
-`hermione-0.146.0` обнаружены и исправлены два проявления регрессии для thread,
-в котором goal никогда не была активна: состояние `Unknown` после compaction и
-нормализованный `Known(inactive)` при обычном tool follow-up ошибочно
-рендерились как переход из active goal в inactive.
+`hermione-0.146.0` обнаружены и исправлены регрессии для never-active и
+terminal goal: состояния `Unknown` после compaction и нормализованный
+`Known(inactive)` ошибочно рендерились как переход из active goal, а прежний
+extension-owned active fragment мог попасть в replacement history как обычная
+пользовательская реплика.
 
 До доработки goal продолжает существовать в `state_db.thread_goals`, но
 model-visible goal fragment является обычным contextual user fragment. Local и
@@ -31,15 +37,15 @@ remote compaction не сохраняют такой fragment дословно, 
 | --- | --- |
 | Статус карточки | `active`: доработка поддерживается в fork |
 | Статус реализации | `implemented` |
-| Проверочный статус | `verified` на `0.145.0`; целевые тесты `0.146.0` ожидают готовности общей migration map |
+| Проверочный статус | `verified`: card tests для active, never-active, `complete`, `blocked` и `cancel` проходят на `0.146.0` |
 | Пользовательская цель | Восстанавливать точную active goal перед первым sampling после compaction |
 | Источник истины | `state_db.thread_goals` |
 | Model-visible механизм | Extension-owned секция `WorldState` |
-| Внешние API и config | Без изменений |
+| Внешние API и config | App-server API, config и persisted status schema без изменений; model tool `update_goal` получает действие `cancel` |
 | Текущая база | `0.146.0`, ветка `hermione-0.146.0` |
-| Бинарник `release-fast` | Для `0.145.0` собран, метаданные и версия проверены |
-| Локальная установка | Бинарник `0.145.0` в `/home/slader/.local/bin/codex-hermione`, проверен |
-| Установка на `f-ms-dev` | Бинарник `0.145.0` в `/home/slader/.local/bin/codex-hermione`, проверен |
+| Бинарник `release-fast` | Для `0.146.0` собран, метаданные и версия проверены до текущей доработки |
+| Локальная установка | Бинарник `0.146.0` в `/home/slader/.local/bin/codex-hermione`, проверен до текущей доработки |
+| Установка на `f-ms-dev` | Бинарник `0.146.0` в `/home/slader/.local/bin/codex-hermione`, проверен до текущей доработки |
 
 ## Зачем это нужно
 
@@ -64,17 +70,37 @@ Compaction summary не является authoritative goal storage и може�
 | --- | --- |
 | `codex-rs/ext/goal/src/extension.rs` | Регистрирует `GoalExtension` как `ContextContributor` |
 | `codex-rs/ext/goal/src/extension/world_state.rs` | Загружает active goal и формирует extension-owned `WorldState` section |
+| `codex-rs/ext/goal/src/spec.rs` | Объявляет `cancel` в model-visible schema и отделяет его от blocked audit |
+| `codex-rs/ext/goal/src/tool.rs` | Немедленно учитывает финальный progress и удаляет отменённую goal |
+| `codex-rs/ext/goal/src/analytics.rs` | Сохраняет turn attribution для tool-side clear |
+| `codex-rs/ext/goal/src/events.rs` | Передаёт host уведомление об очистке goal |
+| `codex-rs/ext/goal/src/runtime.rs` | Отличает внешний clear без turn attribution от model tool action |
 | `codex-rs/ext/goal/src/steering.rs` | Рендерит устойчивый active-goal context и короткие turn steering prompts |
 | `codex-rs/ext/goal/templates/goals/active_context.md` | Хранит objective и постоянные goal-инварианты |
 | `codex-rs/ext/goal/templates/goals/continuation.md` | Запускает автоматический continuation turn без дублирования objective |
 | `codex-rs/ext/goal/templates/goals/objective_updated.md` | Ссылается на обновлённый objective из `WorldState` |
-| `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет model-visible request после обычного tool follow-up, local и `TokenBudget` mid-turn compaction |
+| `codex-rs/ext/extension-api/src/contributors/world_state.rs` | Помечает diff fragment как предназначенный только для ближайшего sampling |
+| `codex-rs/ext/extension-api/src/contributors.rs` | Даёт extension способ распознать собственный model-context fragment при замене истории |
+| `codex-rs/ext/extension-api/src/capabilities/events.rs` | Даёт extension host-owned канал уведомления об очищенной goal |
+| `codex-rs/core/src/compact.rs` | Не переносит extension context в local summary как пользовательское сообщение |
+| `codex-rs/core/src/compact_remote.rs` | Удаляет extension context из remote replacement перед актуальным initial context |
+| `codex-rs/core/src/context/world_state/mod.rs` | Разделяет сохраняемые и одноразовые WorldState fragments |
+| `codex-rs/core/src/context_manager/history.rs` | Продвигает snapshot, не записывая одноразовый fragment в history |
+| `codex-rs/core/src/prompt_debug.rs` | Показывает одноразовый fragment в том же prompt, который получает sampling |
+| `codex-rs/core/src/session/mod.rs` | Возвращает одноразовые WorldState items вызывающему sampling path |
+| `codex-rs/core/src/session/rollout_reconstruction.rs` | Не восстанавливает extension prompt state как user message в legacy replacement path |
+| `codex-rs/core/src/session/turn.rs` | Добавляет одноразовые items только в ближайший Responses request |
+| `codex-rs/app-server/src/extensions.rs` | Преобразует tool-side clear в `thread/goal/cleared` |
+| `codex-rs/ext/goal/tests/goal_extension_backend.rs` | Проверяет немедленное удаление goal и clear event |
+| `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет active, never-active и terminal goal context до и после compaction |
 
 Намеренно не меняются:
 
-- schema, app-server protocol и публичные goal RPC;
+- app-server schema/protocol и публичные goal RPC;
 - persisted формат `thread_goals`;
-- budget accounting и правила переходов goal status;
+- persisted enum `ThreadGoalStatus`: `cancel` является действием удаления, а не
+  новым status;
+- budget accounting и правила переходов остальных goal status;
 - `codex-rs/prompts/src/goals.rs` и
   `codex-rs/prompts/templates/goals/*.md`: эти одноимённые legacy prompt helpers
   не имеют production-callers в текущем checkout и не являются runtime-владельцем
@@ -120,6 +146,10 @@ Extension-owned section использует стабильный section ID и 
 - изменение objective или `token_budget` добавляет полный актуальный fragment;
 - переход из `Active` в другой status добавляет clearing fragment, запрещающий
   продолжать прежнюю goal как активную;
+- clearing fragment не записывается в conversation history: он добавляется
+  только в ближайший sampling request, после чего исчезает;
+- snapshot при этом сразу продвигается в `inactive`, поэтому следующий model
+  step не создаёт тот же fragment повторно;
 - отсутствие goal при `PreviousWorldStateSection::Absent` или
   `PreviousWorldStateSection::Unknown` ничего не добавляет;
 - отсутствие goal при `Known(inactive)` ничего не добавляет;
@@ -134,6 +164,24 @@ Extension-owned section использует стабильный section ID и 
 Динамические `tokens_used`, `time_used_seconds` и `remaining_tokens` не входят в
 snapshot. Их изменение не должно инвалидировать prompt cache на каждом model
 step.
+
+### Cancel contract
+
+`update_goal(status="cancel")`:
+
+- доступен только при существующей goal;
+- немедленно учитывает накопленный progress текущего turn;
+- удаляет goal из `state_db.thread_goals`, очищает accounting state и возвращает
+  `goal: null`;
+- отправляет host уведомление `thread/goal/cleared`;
+- не создаёт persisted status `Cancelled`;
+- не применяет трёхходовый blocked audit: этот audit относится только к
+  `status="blocked"`;
+- после удаления позволяет обычному `create_goal` создать новую goal.
+
+`complete` и `blocked` остаются persisted terminal statuses. Все три исхода —
+`complete`, `blocked` и `cancel` — переводят active-goal WorldState section в
+`inactive`.
 
 ### Compaction contract
 
@@ -152,6 +200,13 @@ step.
 
 Первый post-compaction model request обязан содержать objective дословно после
 XML escaping, даже если compaction output намеренно не содержит goal.
+
+Если goal стала terminal или была отменена до compaction, replacement history
+не должна восстанавливать ни прежний active-goal fragment, ни clearing fragment.
+Для этого extension распознаёт собственные model-context markers, а local и
+remote compaction исключают такие fragments из conversation messages до
+добавления актуального full `WorldState`. Общий runtime при этом не знает о
+goal feature или её XML tags.
 
 ### Steering prompts
 
@@ -185,6 +240,44 @@ turn.
 
 Goal реализуется как `ContextContributor` внутри extension crate. `codex-core`
 не получает зависимости или условной ветки, знающей о goal feature.
+
+### Почему clearing fragment одноразовый
+
+Persisted WorldState snapshot отвечает за сравнение состояния, но обычный
+contextual fragment, записанный в conversation history, повторно отправляется в
+каждом следующем Responses request. Поэтому одного подавления повторного render
+недостаточно: clearing fragment всё равно становится постоянным напоминанием.
+
+WorldState diff разделяет:
+
+- сохраняемые fragments, которые входят в conversation history и rollout;
+- fragments ближайшего sampling, которые добавляются только в создаваемый
+  request.
+
+Снимок сохраняется в обоих случаях. Это сохраняет инкрементальную историю,
+не требует её переписывать и гарантирует одноразовую доставку terminal
+transition.
+
+### Почему cancel не является новым status
+
+Новый persisted status `Cancelled` расширил бы state/protocol/app-server schema,
+хотя требуемая семантика — отсутствие текущей goal. Удаление через существующий
+goal store даёт прямой контракт `get_goal -> null`, не оставляет отменённую цель
+кандидатом на continuation и позволяет создать новую goal без специального
+status transition.
+
+### Почему compaction фильтрует extension context
+
+Active-goal diff хранится как contextual user message, чтобы оставаться частью
+инкрементальной model history до следующей замены окна. Без явного
+extension-owned matcher local compaction принимал такой standalone fragment за
+реальную пользовательскую реплику и переносил его в replacement history даже
+после terminal transition.
+
+`ContextContributor::matches_model_context_fragment` оставляет владение
+markers внутри extension. Local, remote и legacy rollout-reconstruction paths
+используют общий признак только для отделения prompt state от conversation data,
+после чего добавляют актуальный `WorldState` обычным initial-context path.
 
 ### Отклонённые альтернативы
 
@@ -263,6 +356,15 @@ prompt caching. Section snapshot должен подавлять неизмен�
   - `TokenBudget` полностью заменяет context window;
   - первый request нового окна не содержит `<thread_goal_context>` или маркер
     очистки.
+- terminal goal regression для `complete`, `blocked` и `cancel`:
+  - active goal создаётся и становится видимой в следующем sampling;
+  - `update_goal` выполняет выбранный terminal action;
+  - ближайший request получает clearing fragment ровно один раз;
+  - следующий tool follow-up запускает local compaction;
+  - post-compaction request не содержит ни `<thread_goal_context>`, ни clearing
+    marker;
+  - cancel дополнительно проверяет `goal: null`, отсутствие строки в goal store
+    и host clear event.
 - существующие tests `codex-goal-extension` продолжают подтверждать tool, status,
   budget и accounting contracts.
 
@@ -280,7 +382,7 @@ argv хранится как данные `fork-tests.v1`, а не как пол
       "argv": ["just", "test", "-p", "codex-goal-extension"]
     },
     {
-      "purpose": "active and never-active goal world state compaction",
+      "purpose": "active, never-active and terminal goal world state compaction",
       "argv": ["just", "test", "-p", "codex-app-server", "active_goal_world_state"]
     }
   ]
@@ -294,14 +396,39 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 - Режим списка `fork tests` должен обнаружить
   `fork-goal-world-state-compaction`.
 - `fork build-fast` проверяет release-fast сборку после целевых tests.
-- Schema/API generators не требуются: config, app-server protocol и schema не
-  меняются.
+- Schema/API generators не требуются: config, app-server protocol и generated
+  schema не меняются; model tool schema строится непосредственно в goal
+  extension.
 - Полный workspace test suite не является автоматическим требованием этой
   локальной доработки; его запуск требует отдельного решения пользователя.
 
 ### Исторические результаты
 
 2026-07-29:
+
+#### `cancel` и одноразовый terminal context на `0.146.0`
+
+- model tool schema расширена действием `update_goal(status="cancel")`;
+- cancel немедленно учитывает progress, удаляет persisted goal, очищает
+  accounting state, возвращает `goal: null` и отправляет
+  `thread/goal/cleared`; blocked audit к cancel не применяется;
+- WorldState delivery разделена на сохраняемые fragments и items только для
+  ближайшего sampling; clearing после `complete`, `blocked` и `cancel` не
+  записывается в conversation history;
+- первый integration run воспроизвёл отдельную причину возврата terminal goal:
+  прежний standalone active-goal fragment не распознавался как extension
+  context и local compaction переносил его в replacement history как реальную
+  user message;
+- extension API получил общий matcher model-context fragments; goal extension
+  распознаёт собственный XML envelope, а local и remote compaction удаляют его
+  перед добавлением актуального full `WorldState`;
+- `fork tests --mode cards --card fork-goal-world-state-compaction --version
+  0.146.0` — успешно:
+  - `just test -p codex-goal-extension`;
+  - `just test -p codex-app-server active_goal_world_state`;
+  - app-server filter включает regressions для `complete`, `blocked`, `cancel`,
+    active и never-active flows;
+- `fork format --fix` — успешно.
 
 #### Перенос на `0.146.0`
 
@@ -368,13 +495,10 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 
 ### Известные падения и пропуски
 
-- На незавершённой migration map `0.146.0` тесты уровня карточки блокируются до
-  компиляции общей проверкой `migration map ready`, пока соседние карточки имеют
-  незавершённые статусы. Родительский агент должен повторить запуск после
-  завершения прохода по карточкам.
-- Общая проверка formatter блокируется чужими неразрешёнными конфликтами
-  слияния. Родительский агент должен повторить форматирование после их
-  устранения.
+- Прежние блокировки `migration map ready` и formatter были промежуточным
+  состоянием переноса; текущие проверки карточки и форматирования проходят.
+- Полный workspace test suite не запускался без отдельного решения
+  пользователя.
 - Remote compaction не получает отдельный goal-specific test: общий
   initial-context path совпадает с уже используемым extension-owned
   `WorldState`, а отдельные local и `TokenBudget` tests различают summary и
@@ -433,6 +557,10 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 | Continuation prompt не дублирует objective | перенесено в карточку |
 | Goal, созданная в compaction-triggering step, видна следующему sampling | перенесено в карточку |
 | Неактивный status очищает прежний active-goal context | перенесено в карточку |
+| `cancel` немедленно удаляет goal без blocked audit | перенесено в карточку и покрыто backend test |
+| Tool-side cancel отправляет host clear event | перенесено в карточку и покрыто backend/app-server tests |
+| Clearing после `complete`, `blocked` и `cancel` доставляется один раз | перенесено в карточку и покрыто integration tests |
+| Terminal goal context не возвращается после local compaction | перенесено в карточку и покрыто integration tests для трёх terminal actions |
 | Нормализованный `Known(inactive)` не создаёт маркер очистки при обычном tool follow-up | перенесено в карточку и покрыто прямым integration test |
 | Никогда не активная goal не создаёт маркер очистки после compaction | перенесено в карточку и покрыто local/`TokenBudget` tests |
 | API, config и schema остаются неизменными | перенесено в карточку |

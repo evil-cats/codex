@@ -1,3 +1,5 @@
+//! Маршрутизирует extension events в ordered thread notifications app-server.
+
 use std::sync::Arc;
 use std::sync::Weak;
 use std::time::Duration;
@@ -5,6 +7,7 @@ use std::time::Duration;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ThreadGoal;
+use codex_app_server_protocol::ThreadGoalClearedNotification;
 use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::WarningNotification;
 use codex_core::NewThread;
@@ -252,6 +255,33 @@ impl ExtensionEventSink for AppServerExtensionEventSink {
             send_thread_warning(&outgoing, &thread_state_manager, thread_id, message).await;
         });
     }
+
+    fn emit_thread_goal_cleared(&self, thread_id: ThreadId) {
+        if let Some(listener_command_tx) = self
+            .thread_state_manager
+            .current_listener_command_tx(thread_id)
+        {
+            if listener_command_tx
+                .send(ThreadListenerCommand::EmitThreadGoalCleared)
+                .is_ok()
+            {
+                return;
+            }
+            tracing::warn!(
+                "failed to enqueue extension goal clear for {thread_id}: listener command channel is closed"
+            );
+        }
+        let outgoing = Arc::clone(&self.outgoing);
+        tokio::spawn(async move {
+            outgoing
+                .send_server_notification(ServerNotification::ThreadGoalCleared(
+                    ThreadGoalClearedNotification {
+                        thread_id: thread_id.to_string(),
+                    },
+                ))
+                .await;
+        });
+    }
 }
 
 pub(crate) fn guardian_agent_spawner(
@@ -298,7 +328,7 @@ mod tests {
         let thread_state_manager = ThreadStateManager::new();
         let thread_id = ThreadId::default();
         let (listener_command_tx, mut listener_command_rx) = mpsc::unbounded_channel();
-        thread_state_manager.register_listener_command_tx(thread_id, listener_command_tx.clone());
+        thread_state_manager.register_listener_command_tx(thread_id, listener_command_tx);
         let sink = app_server_extension_event_sink(outgoing, thread_state_manager);
 
         sink.emit(thread_goal_updated_event(thread_id, "turn-1"));
@@ -308,9 +338,7 @@ mod tests {
             message: "catalog was shortened".to_string(),
         });
         sink.emit(thread_goal_updated_event(thread_id, "turn-2"));
-        listener_command_tx
-            .send(ThreadListenerCommand::EmitThreadGoalCleared)
-            .expect("listener command channel should be open");
+        sink.emit_thread_goal_cleared(thread_id);
 
         let mut observed = Vec::new();
         for _ in 0..4 {

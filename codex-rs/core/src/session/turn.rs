@@ -1,3 +1,5 @@
+//! Выполняет sampling loop одного turn и доставляет его одноразовый model context.
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -194,10 +196,12 @@ pub(crate) async fn run_turn(
         Err(err) => return Err(err),
     };
     // Keep the exact model-visible state used by this turn and its inline compactions.
-    let (mut world_state, display_roots) = tokio::join!(
+    let (initial_world_state_delivery, display_roots) = tokio::join!(
         sess.record_context_updates_and_set_reference_context_item(first_step_context.as_ref()),
         turn_diff_display_roots(first_step_context.as_ref()),
     );
+    let mut world_state = initial_world_state_delivery.world_state;
+    let mut next_sampling_world_state_items = initial_world_state_delivery.next_sampling_items;
 
     let Some((injection_items, explicitly_enabled_connectors)) = build_skills_and_plugins(
         &sess,
@@ -287,18 +291,21 @@ pub(crate) async fn run_turn(
             )
             .await?;
 
-            world_state = sess
+            let world_state_delivery = sess
                 .record_step_world_state_if_changed(&world_state, step_context.as_ref())
                 .await;
+            world_state = world_state_delivery.world_state;
+            next_sampling_world_state_items.extend(world_state_delivery.next_sampling_items);
 
             // Construct the input that we will send to the model.
-            let sampling_request_input: Vec<ResponseItem> = async {
+            let mut sampling_request_input: Vec<ResponseItem> = async {
                 sess.clone_history()
                     .await
                     .for_prompt(&turn_context.model_info.input_modalities)
             }
             .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
             .await;
+            sampling_request_input.append(&mut next_sampling_world_state_items);
 
             let responses_metadata = turn_context.turn_metadata_state.to_responses_metadata(
                 sess.installation_id.clone(),

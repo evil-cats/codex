@@ -310,7 +310,9 @@ pub(crate) async fn process_compacted_history(
     let (initial_context, world_state_baseline) =
         build_compaction_initial_context(sess, initial_context_injection).await;
 
-    compacted_history.retain(should_keep_compacted_history_item);
+    compacted_history.retain(|item| {
+        should_keep_compacted_history_item(item) && !sess.is_extension_model_context_message(item)
+    });
     (
         insert_initial_context_before_last_real_user_or_summary(compacted_history, initial_context),
         world_state_baseline,
