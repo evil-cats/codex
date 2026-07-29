@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-07-29
+updated: 2026-07-30
 source_scope: hermione-0.145.0..HEAD
 ---
 
@@ -37,7 +37,7 @@ remote compaction не сохраняют такой fragment дословно, 
 | --- | --- |
 | Статус карточки | `active`: доработка поддерживается в fork |
 | Статус реализации | `implemented` |
-| Проверочный статус | `verified`: card tests для active, never-active, `complete`, `blocked` и `cancel` проходят на `0.146.0` |
+| Проверочный статус | `verified`: card tests для active, never-active, `complete`, `blocked` и `cancel`, включая синхронизированные model-visible инструкции о `cancel`, прошли на checkout `0.146.0` |
 | Пользовательская цель | Восстанавливать точную active goal перед первым sampling после compaction |
 | Источник истины | `state_db.thread_goals` |
 | Model-visible механизм | Extension-owned секция `WorldState` |
@@ -79,6 +79,7 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/ext/goal/templates/goals/active_context.md` | Хранит objective и постоянные goal-инварианты |
 | `codex-rs/ext/goal/templates/goals/continuation.md` | Запускает автоматический continuation turn без дублирования objective |
 | `codex-rs/ext/goal/templates/goals/objective_updated.md` | Ссылается на обновлённый objective из `WorldState` |
+| `codex-rs/ext/goal/templates/goals/budget_limit.md` | Разрешает завершить либо отменить уже ограниченную по бюджету goal |
 | `codex-rs/ext/extension-api/src/contributors/world_state.rs` | Помечает diff fragment как предназначенный только для ближайшего sampling |
 | `codex-rs/ext/extension-api/src/contributors.rs` | Даёт extension способ распознать собственный model-context fragment при замене истории |
 | `codex-rs/ext/extension-api/src/capabilities/events.rs` | Даёт extension host-owned канал уведомления об очищенной goal |
@@ -358,6 +359,8 @@ prompt caching. Section snapshot должен подавлять неизмен�
     очистки.
 - terminal goal regression для `complete`, `blocked` и `cancel`:
   - active goal создаётся и становится видимой в следующем sampling;
+  - active-goal context не запрещает немедленный `cancel` и отделяет его от
+    blocked audit;
   - `update_goal` выполняет выбранный terminal action;
   - ближайший request получает clearing fragment ровно один раз;
   - следующий tool follow-up запускает local compaction;
@@ -408,6 +411,16 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 
 #### `cancel` и одноразовый terminal context на `0.146.0`
 
+- повторный статический аудит обнаружил противоречие: model tool schema и
+  executor разрешали немедленный `cancel`, а шаблоны active context,
+  objective update и budget limit всё ещё запрещали `update_goal` до completion
+  либо blocked audit;
+- инструкции в prompt-шаблонах синхронизированы с контрактом `cancel`, а
+  app-server regression дополнительно проверяет наличие инструкции о `cancel` в
+  active-goal context;
+- в one-card проходе card tests не запускались; последующий общий
+  `fork tests --mode cards` прошёл, включая app-server regression для
+  model-visible инструкции о `cancel`;
 - model tool schema расширена действием `update_goal(status="cancel")`;
 - cancel немедленно учитывает progress, удаляет persisted goal, очищает
   accounting state, возвращает `goal: null` и отправляет
@@ -558,6 +571,7 @@ argv хранится как данные `fork-tests.v1`, а не как пол
 | Goal, созданная в compaction-triggering step, видна следующему sampling | перенесено в карточку |
 | Неактивный status очищает прежний active-goal context | перенесено в карточку |
 | `cancel` немедленно удаляет goal без blocked audit | перенесено в карточку и покрыто backend test |
+| Model-visible prompts не запрещают немедленный `cancel` | перенесено в карточку; app-server regression проверяет active-goal context |
 | Tool-side cancel отправляет host clear event | перенесено в карточку и покрыто backend/app-server tests |
 | Clearing после `complete`, `blocked` и `cancel` доставляется один раз | перенесено в карточку и покрыто integration tests |
 | Terminal goal context не возвращается после local compaction | перенесено в карточку и покрыто integration tests для трёх terminal actions |

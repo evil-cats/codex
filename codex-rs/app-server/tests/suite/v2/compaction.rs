@@ -864,6 +864,9 @@ async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) ->
     let terminal_body = terminal.single_request().body_json().to_string();
     assert!(terminal_body.contains("<thread_goal_context>"));
     assert!(terminal_body.contains(ESCAPED_ACTIVE_GOAL_OBJECTIVE));
+    assert!(
+        terminal_body.contains("Cancellation is immediate and does not require the blocked audit.")
+    );
 
     let clearing_body = clearing.single_request().body_json().to_string();
     assert_eq!(

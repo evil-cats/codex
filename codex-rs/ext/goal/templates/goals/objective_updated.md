@@ -9,4 +9,4 @@ Budget:
 
 Adjust the current turn to pursue the updated objective. Avoid continuing work that only served the previous objective unless it also helps the updated objective.
 
-Do not call update_goal unless the updated goal is actually complete.
+Use update_goal only under the completion, blocked-audit, or cancellation conditions in <thread_goal_context>. Cancellation is immediate and does not require the blocked audit.
