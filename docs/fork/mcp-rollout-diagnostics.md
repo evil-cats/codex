@@ -2,7 +2,7 @@
 id: fork-mcp-rollout-diagnostics
 status: reverted
 created: 2026-07-09
-updated: 2026-07-29
+updated: 2026-07-30
 source_scope: discussion-2026-07-09-mcp-transport-closed
 ---
 
@@ -10,9 +10,11 @@ source_scope: discussion-2026-07-09-mcp-transport-closed
 
 ## Обзор
 
-Эта карточка исторически фиксирует fork-доработку Hermione для диагностики и
-восстановления MCP stdio transport после `Transport closed`. Реализация удалена
-из fork, а затронутые owner-файлы возвращены к состоянию `rust-v0.146.0`.
+Эта карточка исторически фиксирует прежнюю объединённую fork-доработку Hermione
+для диагностики и восстановления транспорта MCP stdio после `Transport closed`.
+Диагностическая реализация удалена из fork, а функциональность восстановления
+выделена в отдельную активную карточку
+`docs/fork/mcp-transport-recovery.md`.
 
 | Поле | Значение |
 | --- | --- |
@@ -23,6 +25,7 @@ source_scope: discussion-2026-07-09-mcp-transport-closed
 | Новый сохраняемый элемент | `RolloutItem::McpDiagnostic(McpDiagnosticItem)` |
 | Главное model-visible правило | MCP stderr и recovery diagnostics не должны становиться `ResponseItem` или tool output |
 | Связанная карточка | `docs/fork/mcp-stderr-thread-logs.md` |
+| Новый владелец восстановления | `docs/fork/mcp-transport-recovery.md` |
 | Не входит в границы задачи | Полное перепроектирование `rollout-trace`, перенос всей SQLite log DB в rollout, unbounded stdout/stderr capture |
 
 Исторически `docs/fork/mcp-stderr-thread-logs.md` владела thread-attributed
@@ -37,9 +40,10 @@ stderr в tracing/SQLite log DB, а эта карточка — persisted rollou
 - `RolloutItem::McpDiagnostic`, его protocol-типы, persistence и фильтрация при
   reconstruction удалены;
 - bounded stderr tail, `launch_id` и diagnostic context удалены;
-- recovery после `TransportClosed`/broken pipe, one-shot replay и lazy recovery
-  после idle process exit также удалены; отдельная recovery-карточка пока не
-  создавалась;
+- прежняя связанная с диагностикой реализация восстановления после
+  `TransportClosed`/broken pipe удалена; независимая реализация однократного
+  повтора и ленивого восстановления после завершения процесса в простое теперь
+  принадлежит `docs/fork/mcp-transport-recovery.md`;
 - target-only modules и integration tests удалены, остальные owner-файлы
   восстановлены из `rust-v0.146.0` либо очищены на уровне принадлежащих карточке
   hunks;

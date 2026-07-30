@@ -325,7 +325,7 @@ pub struct ListToolsWithConnectorIdResult {
 /// https://github.com/modelcontextprotocol/rust-sdk
 pub struct RmcpClient {
     state: Mutex<ClientState>,
-    stdio_process: Option<StdioServerProcessHandle>,
+    stdio_process: Mutex<Option<StdioServerProcessHandle>>,
     transport_recipe: TransportRecipe,
     initialize_context: Mutex<Option<InitializeContext>>,
     session_recovery_lock: Semaphore,
@@ -345,7 +345,7 @@ impl RmcpClient {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process: None,
+            stdio_process: Mutex::new(None),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
@@ -368,18 +368,13 @@ impl RmcpClient {
         let transport = Self::create_pending_transport(&transport_recipe)
             .await
             .map_err(io::Error::other)?;
-        let stdio_process = match &transport {
-            PendingTransport::Stdio { transport } => Some(transport.process_handle()),
-            PendingTransport::InProcess { .. }
-            | PendingTransport::StreamableHttp { .. }
-            | PendingTransport::StreamableHttpWithOAuth { .. } => None,
-        };
+        let stdio_process = Self::stdio_process_from_pending_transport(&transport);
 
         Ok(Self {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process,
+            stdio_process: Mutex::new(stdio_process),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
@@ -416,12 +411,23 @@ impl RmcpClient {
             state: Mutex::new(ClientState::Connecting {
                 transport: Some(transport),
             }),
-            stdio_process: None,
+            stdio_process: Mutex::new(None),
             transport_recipe,
             initialize_context: Mutex::new(None),
             session_recovery_lock: Semaphore::new(/*permits*/ 1),
             elicitation_pause_state: ElicitationPauseState::new(),
         })
+    }
+
+    fn stdio_process_from_pending_transport(
+        transport: &PendingTransport,
+    ) -> Option<StdioServerProcessHandle> {
+        match transport {
+            PendingTransport::Stdio { transport } => Some(transport.process_handle()),
+            PendingTransport::InProcess { .. }
+            | PendingTransport::StreamableHttp { .. }
+            | PendingTransport::StreamableHttpWithOAuth { .. } => None,
+        }
     }
 
     /// Perform the initialization handshake with the MCP server.
@@ -758,7 +764,8 @@ impl RmcpClient {
             std::mem::replace(&mut *guard, ClientState::Closed)
         };
 
-        if let Some(process) = &self.stdio_process
+        let stdio_process = self.stdio_process.lock().await.clone();
+        if let Some(process) = &stdio_process
             && let Err(error) = process.terminate().await
         {
             warn!("failed to terminate MCP stdio server process: {error}");
@@ -1001,7 +1008,18 @@ impl RmcpClient {
         F: Fn(Arc<RunningService<RoleClient, ElicitationClientService>>) -> Fut,
         Fut: std::future::Future<Output = std::result::Result<T, rmcp::service::ServiceError>>,
     {
-        let service = self.service().await?;
+        let mut service = self.service().await?;
+        if self
+            .stdio_process
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(StdioServerProcessHandle::is_dead)
+        {
+            self.reinitialize_after_service_failure(&service).await?;
+            service = self.service().await?;
+        }
+
         match Self::run_service_operation_with_transient_retries(
             Arc::clone(&service),
             label,
@@ -1012,8 +1030,11 @@ impl RmcpClient {
         .await
         {
             Ok(result) => Ok(result),
-            Err(error) if Self::is_session_expired_404(&error) => {
-                self.reinitialize_after_session_expiry(&service).await?;
+            Err(error)
+                if Self::is_session_expired_404(&error)
+                    || self.is_recoverable_stdio_transport_error(&error) =>
+            {
+                self.reinitialize_after_service_failure(&service).await?;
                 let recovered_service = self.service().await?;
                 Self::run_service_operation_with_transient_retries(
                     recovered_service,
@@ -1146,7 +1167,24 @@ impl RmcpClient {
             })
     }
 
-    async fn reinitialize_after_session_expiry(
+    fn is_recoverable_stdio_transport_error(&self, error: &ClientOperationError) -> bool {
+        if !matches!(&self.transport_recipe, TransportRecipe::Stdio { .. }) {
+            return false;
+        }
+
+        match error {
+            ClientOperationError::Service(rmcp::service::ServiceError::TransportClosed) => true,
+            ClientOperationError::Service(rmcp::service::ServiceError::TransportSend(error)) => {
+                error
+                    .error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
+            }
+            ClientOperationError::Timeout { .. } | ClientOperationError::Service(_) => false,
+        }
+    }
+
+    async fn reinitialize_after_service_failure(
         &self,
         failed_service: &Arc<RunningService<RoleClient, ElicitationClientService>>,
     ) -> Result<()> {
@@ -1179,6 +1217,7 @@ impl RmcpClient {
             .clone()
             .ok_or_else(|| anyhow!("MCP client cannot recover before initialize succeeds"))?;
         let pending_transport = Self::create_pending_transport(&self.transport_recipe).await?;
+        let stdio_process = Self::stdio_process_from_pending_transport(&pending_transport);
         let (service, oauth_persistor) = self
             .connect_pending_transport_with_initialize_retries(
                 pending_transport,
@@ -1188,14 +1227,16 @@ impl RmcpClient {
             .await?;
 
         {
-            let mut guard = self.state.lock().await;
-            if matches!(*guard, ClientState::Closed) {
+            let mut state = self.state.lock().await;
+            if matches!(*state, ClientState::Closed) {
                 return Err(anyhow!("MCP client is shut down"));
             }
-            *guard = ClientState::Ready {
+            let mut current_stdio_process = self.stdio_process.lock().await;
+            *state = ClientState::Ready {
                 service,
                 oauth: oauth_persistor.clone(),
             };
+            *current_stdio_process = stdio_process;
         }
 
         if let Some(runtime) = oauth_persistor

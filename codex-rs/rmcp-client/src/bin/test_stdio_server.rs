@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
@@ -54,6 +55,9 @@ const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA
 const APP_ONLY_CWD_MARKER_FILE_ENV: &str = "MCP_TEST_APP_ONLY_CWD_MARKER_FILE";
 const DYNAMIC_SERVER_METADATA_ENV: &str = "MCP_TEST_DYNAMIC_SERVER_METADATA";
 const INITIALIZE_BARRIER_FILE_ENV: &str = "MCP_TEST_INITIALIZE_BARRIER_FILE";
+const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
+const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
+const RECOVERY_EXIT_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_EXIT_STATE_FILE";
 
 fn dynamic_server_process_label() -> Option<String> {
     std::env::var_os(DYNAMIC_SERVER_METADATA_ENV)
@@ -121,6 +125,7 @@ impl TestToolServer {
             Self::cwd_tool(),
             Self::sync_tool(),
             Self::sync_readonly_tool(),
+            Self::recovery_probe_tool(),
             Self::image_tool(),
             Self::image_scenario_tool(),
             sandbox_meta_tool,
@@ -286,6 +291,24 @@ impl TestToolServer {
     fn sync_readonly_tool() -> Tool {
         let mut tool = Self::sync_tool();
         tool.name = Cow::Borrowed("sync_readonly");
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        tool
+    }
+
+    fn recovery_probe_tool() -> Tool {
+        #[expect(clippy::expect_used)]
+        let schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }))
+        .expect("recovery probe schema should deserialize");
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("recovery_probe"),
+            Cow::Borrowed("Exercise MCP transport recovery across stdio server launches."),
+            Arc::new(schema),
+        );
         tool.annotations = Some(ToolAnnotations::new().read_only(true));
         tool
     }
@@ -700,6 +723,7 @@ impl ServerHandler for TestToolServer {
                 let args = Self::parse_call_args::<SyncArgs>(&request, "sync_readonly")?;
                 Self::sync_result(args).await
             }
+            "recovery_probe" => Self::recovery_probe_result(),
             other => Err(McpError::invalid_params(
                 format!("unknown tool: {other}"),
                 None,
@@ -818,11 +842,93 @@ impl TestToolServer {
         Ok(Self::structured_result(json!({ "result": "ok" })))
     }
 
+    fn recovery_probe_result() -> Result<CallToolResult, McpError> {
+        if should_close_recovery_transport()? {
+            std::process::exit(86);
+        }
+
+        if write_state_file_once(RECOVERY_EXIT_STATE_FILE_ENV, "process-exit-scheduled")? {
+            tokio::spawn(async {
+                sleep(Duration::from_millis(50)).await;
+                std::process::exit(87);
+            });
+            return Ok(Self::structured_result(
+                json!({ "result": "exit_scheduled" }),
+            ));
+        }
+
+        Ok(Self::structured_result(json!({ "result": "recovered" })))
+    }
+
     fn structured_result(value: serde_json::Value) -> CallToolResult {
         let mut result = CallToolResult::success(Vec::new());
         result.structured_content = Some(value);
         result
     }
+}
+
+/// Поглощает одну настроенную попытку закрытия транспорта, общую для восстановленных запусков.
+fn should_close_recovery_transport() -> Result<bool, McpError> {
+    let Some(state_file) = std::env::var_os(RECOVERY_CLOSE_STATE_FILE_ENV) else {
+        return Ok(false);
+    };
+    let close_count = std::env::var(RECOVERY_CLOSE_COUNT_ENV)
+        .map_err(|error| {
+            McpError::internal_error(format!("missing {RECOVERY_CLOSE_COUNT_ENV}: {error}"), None)
+        })?
+        .parse::<u64>()
+        .map_err(|error| {
+            McpError::internal_error(format!("invalid {RECOVERY_CLOSE_COUNT_ENV}: {error}"), None)
+        })?;
+    let state_file = Path::new(&state_file);
+    let observed = match std::fs::read_to_string(state_file) {
+        Ok(value) => value.trim().parse::<u64>().map_err(|error| {
+            McpError::internal_error(
+                format!(
+                    "invalid recovery state file {}: {error}",
+                    state_file.display()
+                ),
+                None,
+            )
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => {
+            return Err(McpError::internal_error(
+                format!(
+                    "failed to read recovery state file {}: {error}",
+                    state_file.display()
+                ),
+                None,
+            ));
+        }
+    };
+    if observed >= close_count {
+        return Ok(false);
+    }
+    std::fs::write(state_file, (observed + 1).to_string()).map_err(|error| {
+        McpError::internal_error(
+            format!(
+                "failed to write recovery state file {}: {error}",
+                state_file.display()
+            ),
+            None,
+        )
+    })?;
+    Ok(true)
+}
+
+/// Один раз создаёт общий для запусков маркер и сообщает, создал ли его текущий запуск.
+fn write_state_file_once(env_var: &str, marker: &str) -> Result<bool, McpError> {
+    let Ok(path) = std::env::var(env_var) else {
+        return Ok(false);
+    };
+    if Path::new(&path).exists() {
+        return Ok(false);
+    }
+    std::fs::write(&path, marker).map_err(|error| {
+        McpError::internal_error(format!("failed to write {env_var}: {error}"), None)
+    })?;
+    Ok(true)
 }
 
 async fn wait_on_sync_barrier(args: SyncBarrierArgs) -> Result<(), McpError> {

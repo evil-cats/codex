@@ -112,9 +112,20 @@ impl Transport<RoleClient> for StdioServerTransport {
         // Both variants already implement rmcp's transport contract. This
         // wrapper keeps process placement private while leaving rmcp's send
         // semantics unchanged.
-        match &mut self.inner {
+        let send = match &mut self.inner {
             StdioServerTransportInner::Local(transport) => transport.send(item).boxed(),
             StdioServerTransportInner::Executor(transport) => transport.send(item).boxed(),
+        };
+        let process = self.process.clone();
+        async move {
+            let result = send.await;
+            if result
+                .as_ref()
+                .is_err_and(|error| error.kind() == io::ErrorKind::BrokenPipe)
+            {
+                process.mark_dead();
+            }
+            result
         }
     }
 
@@ -122,9 +133,17 @@ impl Transport<RoleClient> for StdioServerTransport {
         // rmcp reads from the same transport shape for both placements. The
         // executor variant turns pushed process-output events back into the
         // line-delimited JSON stream expected by rmcp.
-        match &mut self.inner {
+        let receive = match &mut self.inner {
             StdioServerTransportInner::Local(transport) => transport.receive().boxed(),
             StdioServerTransportInner::Executor(transport) => transport.receive().boxed(),
+        };
+        let process = self.process.clone();
+        async move {
+            let message = receive.await;
+            if message.is_none() {
+                process.mark_dead();
+            }
+            message
         }
     }
 
@@ -228,6 +247,7 @@ pub(crate) struct StdioServerProcessHandle {
 struct StdioServerProcessHandleInner {
     program_name: String,
     kind: StdioServerProcessKind,
+    dead: AtomicBool,
     terminated: AtomicBool,
 }
 
@@ -367,6 +387,7 @@ impl StdioServerProcessHandle {
             inner: Arc::new(StdioServerProcessHandleInner {
                 program_name,
                 kind: StdioServerProcessKind::Local(terminator),
+                dead: AtomicBool::new(false),
                 terminated: AtomicBool::new(false),
             }),
         }
@@ -377,12 +398,22 @@ impl StdioServerProcessHandle {
             inner: Arc::new(StdioServerProcessHandleInner {
                 program_name,
                 kind: StdioServerProcessKind::Executor(process),
+                dead: AtomicBool::new(false),
                 terminated: AtomicBool::new(false),
             }),
         }
     }
 
+    pub(crate) fn is_dead(&self) -> bool {
+        self.inner.dead.load(Ordering::Acquire)
+    }
+
+    fn mark_dead(&self) {
+        self.inner.dead.store(true, Ordering::Release);
+    }
+
     pub(crate) async fn terminate(&self) -> io::Result<()> {
+        self.mark_dead();
         if self.inner.terminated.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
