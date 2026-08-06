@@ -34,6 +34,7 @@ async fn streaming_output_harness() -> anyhow::Result<StreamingOutputHarness> {
     let (exit_tx, exit_rx) = tokio::sync::oneshot::channel::<i32>();
     let spawned = codex_utils_pty::spawn_from_driver(codex_utils_pty::ProcessDriver {
         writer_tx,
+        initial_stdin_tx: None,
         stdout_rx,
         stderr_rx: None,
         exit_rx,

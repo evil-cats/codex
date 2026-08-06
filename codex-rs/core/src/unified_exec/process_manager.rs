@@ -185,6 +185,7 @@ fn exec_server_params_for_request(
     request: &ExecRequest,
     windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
     tty: bool,
+    initial_stdin: Option<&str>,
 ) -> codex_exec_server::ExecParams {
     let (env_policy, env) = exec_server_env_for_request(request);
     let sandbox = request.exec_server_sandbox.clone().map(|mut sandbox| {
@@ -205,6 +206,7 @@ fn exec_server_params_for_request(
         env,
         tty,
         pipe_stdin: false,
+        initial_stdin: initial_stdin.map(str::to_owned),
         arg0: request.arg0.clone(),
         sandbox,
         enforce_managed_network: request.exec_server_enforce_managed_network,
@@ -1038,6 +1040,7 @@ impl UnifiedExecProcessManager {
         exec_server_env_config: Option<ExecServerEnvConfig>,
         windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
         tty: bool,
+        initial_stdin: Option<&str>,
         spawn_lifecycle: SpawnLifecycleHandle,
         environment: &codex_exec_server::Environment,
     ) -> Result<UnifiedExecProcess, ToolError> {
@@ -1054,6 +1057,7 @@ impl UnifiedExecProcessManager {
             &request,
             windows_sandbox_proxy_settings_mode,
             tty,
+            initial_stdin,
             spawn_lifecycle,
             environment,
         )
@@ -1075,6 +1079,7 @@ impl UnifiedExecProcessManager {
         request: &ExecRequest,
         windows_sandbox_proxy_settings_mode: codex_sandboxing::WindowsSandboxProxySettingsMode,
         tty: bool,
+        initial_stdin: Option<&str>,
         mut spawn_lifecycle: SpawnLifecycleHandle,
         environment: &codex_exec_server::Environment,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
@@ -1094,6 +1099,7 @@ impl UnifiedExecProcessManager {
                     request,
                     windows_sandbox_proxy_settings_mode,
                     tty,
+                    initial_stdin,
                 ))
                 .await
                 .map_err(|err| UnifiedExecError::create_process(err.to_string()))?;
@@ -1164,13 +1170,29 @@ impl UnifiedExecProcessManager {
             sandbox: request.sandbox,
             windows_sandbox,
             tty,
-            stdin_open: tty,
+            stdin_open: tty || initial_stdin.is_some(),
             inherited_fds: &inherited_fds,
         })
         .await;
         spawn_lifecycle.after_spawn();
         let spawned =
             spawn_result.map_err(|err| UnifiedExecError::create_process(err.to_string()))?;
+        if let Some(initial_stdin) = initial_stdin {
+            if !initial_stdin.is_empty()
+                && let Err(err) = spawned
+                    .session
+                    .write_initial_stdin(initial_stdin.as_bytes().to_vec())
+                    .await
+            {
+                spawned.session.terminate();
+                return Err(UnifiedExecError::create_process(format!(
+                    "failed to write initial stdin: {err}"
+                )));
+            }
+            if !tty {
+                spawned.session.close_stdin();
+            }
+        }
         UnifiedExecProcess::from_spawned(spawned, request.sandbox, spawn_lifecycle).await
     }
 
@@ -1230,6 +1252,7 @@ impl UnifiedExecProcessManager {
             .await;
         let req = UnifiedExecToolRequest {
             command: request.command.clone(),
+            stdin: request.stdin.clone(),
             shell_type: request.shell_type,
             hook_command: request.hook_command.clone(),
             process_id: request.process_id,

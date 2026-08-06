@@ -36,10 +36,12 @@ pub struct FramedMessage {
     pub message: Message,
 }
 
-/// IPC message variants exchanged between parent and runner.
+/// Варианты IPC-сообщений между родительским процессом и `runner`.
 ///
-/// `SpawnRequest`, `Stdin`, `CloseStdin`, `Resize`, and `Terminate` are parent->runner commands.
-/// `SpawnReady`, `Output`, `Exit`, and `Error` are runner->parent events/results.
+/// `SpawnRequest`, `Stdin`, `InitialStdin`, `CloseStdin`, `Resize` и `Terminate`
+/// являются командами родительского процесса для `runner`. `SpawnReady`,
+/// `InitialStdinResult`, `Output`, `Exit` и `Error` являются ответными событиями
+/// или результатами.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Message {
@@ -47,6 +49,8 @@ pub enum Message {
     SpawnReady { payload: SpawnReady },
     Output { payload: OutputPayload },
     Stdin { payload: StdinPayload },
+    InitialStdin { payload: StdinPayload },
+    InitialStdinResult { payload: InitialStdinResultPayload },
     CloseStdin { payload: EmptyPayload },
     Resize { payload: ResizePayload },
     Exit { payload: ExitPayload },
@@ -101,6 +105,12 @@ pub enum OutputStream {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StdinPayload {
     pub data_b64: String,
+}
+
+/// Результат подтверждаемой записи начального stdin, которую выполнил `runner`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct InitialStdinResultPayload {
+    pub error: Option<String>,
 }
 
 /// PTY resize request sent from parent to runner.
@@ -280,6 +290,34 @@ mod tests {
                 }
             }),
             encoded
+        );
+    }
+
+    #[test]
+    fn initial_stdin_result_round_trips_error() {
+        let msg = FramedMessage {
+            version: IPC_PROTOCOL_VERSION,
+            message: Message::InitialStdinResult {
+                payload: InitialStdinResultPayload {
+                    error: Some("broken pipe".to_string()),
+                },
+            },
+        };
+
+        let mut encoded = Vec::new();
+        write_frame(&mut encoded, &msg).expect("write initial stdin result");
+        let decoded = read_frame(encoded.as_slice())
+            .expect("read initial stdin result")
+            .expect("initial stdin result frame");
+
+        let Message::InitialStdinResult { payload } = decoded.message else {
+            panic!("unexpected message");
+        };
+        assert_eq!(
+            payload,
+            InitialStdinResultPayload {
+                error: Some("broken pipe".to_string()),
+            }
         );
     }
 }

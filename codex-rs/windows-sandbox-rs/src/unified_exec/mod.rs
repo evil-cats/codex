@@ -174,6 +174,8 @@ pub(crate) use backends::windows_common::finish_driver_spawn;
 #[cfg(test)]
 pub(crate) use backends::windows_common::make_runner_resizer;
 #[cfg(test)]
+pub(crate) use backends::windows_common::multiplex_driver_stdin;
+#[cfg(test)]
 pub(crate) use backends::windows_common::start_runner_pipe_writer;
 #[cfg(test)]
 pub(crate) use backends::windows_common::start_runner_stdin_writer;

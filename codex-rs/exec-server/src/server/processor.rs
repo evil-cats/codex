@@ -627,6 +627,7 @@ mod tests {
             env,
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,

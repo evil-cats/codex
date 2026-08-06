@@ -399,6 +399,7 @@ async fn remote_environment_routes_encrypted_exec_server_rpc() -> Result<()> {
             env: HashMap::new(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,

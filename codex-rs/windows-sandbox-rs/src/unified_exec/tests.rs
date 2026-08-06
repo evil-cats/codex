@@ -399,6 +399,7 @@ fn finish_driver_spawn_keeps_stdin_open_when_requested() {
         let spawned = super::finish_driver_spawn(
             ProcessDriver {
                 writer_tx,
+                initial_stdin_tx: None,
                 stdout_rx,
                 stderr_rx: None,
                 exit_rx,
@@ -431,6 +432,7 @@ fn finish_driver_spawn_closes_stdin_when_not_requested() {
         let spawned = super::finish_driver_spawn(
             ProcessDriver {
                 writer_tx,
+                initial_stdin_tx: None,
                 stdout_rx,
                 stderr_rx: None,
                 exit_rx,
@@ -468,9 +470,14 @@ fn runner_stdin_writer_sends_close_stdin_after_input_eof() {
             .expect("create frame file");
         let outbound_tx = super::start_runner_pipe_writer(file);
         let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(1);
+        let (initial_stdin_tx, initial_stdin_rx) = mpsc::channel(1);
+        drop(initial_stdin_tx);
+        let writer_rx = super::multiplex_driver_stdin(writer_rx, initial_stdin_rx);
+        let (_initial_result_tx, initial_result_rx) = std::sync::mpsc::channel();
         let writer_handle = super::start_runner_stdin_writer(
             writer_rx,
             outbound_tx,
+            initial_result_rx,
             /*normalize_newlines*/ false,
             /*stdin_open*/ true,
         );

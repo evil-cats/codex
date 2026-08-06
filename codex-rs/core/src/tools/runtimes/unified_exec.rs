@@ -62,6 +62,7 @@ use tracing::error;
 #[derive(Clone, Debug)]
 pub struct UnifiedExecRequest {
     pub command: Vec<String>,
+    pub stdin: Option<String>,
     pub shell_type: ShellType,
     pub hook_command: String,
     pub process_id: i32,
@@ -310,6 +311,23 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             .as_ref()
             .unwrap_or(session_shell.as_ref());
         let environment_is_remote = req.turn_environment.environment.is_remote();
+        if environment_is_remote && req.stdin.is_some() {
+            let environment_info =
+                req.turn_environment
+                    .environment
+                    .info()
+                    .await
+                    .map_err(|err| {
+                        ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                            "failed to query exec-server capabilities: {err}"
+                        ))))
+                    })?;
+            if !environment_info.capabilities.initial_stdin {
+                return Err(ToolError::Rejected(
+                    "selected exec-server does not support initial stdin".to_string(),
+                ));
+            }
+        }
         let shell_snapshot_location = if environment_is_remote {
             None
         } else {
@@ -467,6 +485,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                             &prepared.exec_request,
                             windows_sandbox_proxy_settings_mode,
                             req.tty,
+                            /*initial_stdin*/ req.stdin.as_deref(),
                             prepared.spawn_lifecycle,
                             req.turn_environment.environment.as_ref(),
                         )
@@ -514,6 +533,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 req.exec_server_env_config.clone(),
                 windows_sandbox_proxy_settings_mode,
                 req.tty,
+                /*initial_stdin*/ req.stdin.as_deref(),
                 Box::new(NoopSpawnLifecycle),
                 req.turn_environment.environment.as_ref(),
             )
@@ -587,6 +607,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exec_command_stdin_is_excluded_from_approval_key() {
+        let manager = UnifiedExecProcessManager::default();
+        let runtime = UnifiedExecRuntime::new(&manager, UnifiedExecShellMode::Direct);
+        let mut request = test_request(
+            SandboxPermissions::UseDefault,
+            ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            },
+        );
+        let without_stdin = runtime.approval_keys(&request);
+        request.stdin = Some("different payload\n".to_string());
+        let with_stdin = runtime.approval_keys(&request);
+
+        assert_eq!(with_stdin, without_stdin);
+    }
+
+    #[tokio::test]
     async fn unified_exec_uses_the_trusted_sandbox_cwd() {
         let cwd_dir = tempdir().expect("create process temp dir");
         let sandbox_dir = tempdir().expect("create sandbox temp dir");
@@ -598,6 +636,7 @@ mod tests {
         let runtime = UnifiedExecRuntime::new(&manager, UnifiedExecShellMode::Direct);
         let request = UnifiedExecRequest {
             command: vec!["pwd".to_string()],
+            stdin: None,
             shell_type: ShellType::Sh,
             hook_command: "pwd".to_string(),
             process_id: 1000,
@@ -700,6 +739,7 @@ mod tests {
             .expect("current dir is absolute");
         UnifiedExecRequest {
             command: vec!["zsh".to_string(), "-c".to_string(), "echo hi".to_string()],
+            stdin: None,
             shell_type: ShellType::Zsh,
             hook_command: "echo hi".to_string(),
             process_id: 1000,

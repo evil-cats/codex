@@ -110,6 +110,7 @@ type ResizeFn = Box<dyn FnMut(TerminalSize) -> anyhow::Result<()> + Send>;
 /// Handle for driving an interactive process (PTY or pipe).
 pub struct ProcessHandle {
     writer_tx: StdMutex<Option<mpsc::Sender<Vec<u8>>>>,
+    initial_stdin_tx: StdMutex<Option<mpsc::Sender<InitialStdinWrite>>>,
     killer: StdMutex<Option<Box<dyn ChildTerminator>>>,
     reader_handle: StdMutex<Option<JoinHandle<()>>>,
     reader_abort_handles: StdMutex<Vec<AbortHandle>>,
@@ -125,6 +126,22 @@ pub struct ProcessHandle {
     resizer: StdMutex<Option<ResizeFn>>,
 }
 
+/// Одна начальная запись в stdin вместе с каналом результата низкоуровневой реализации.
+///
+/// Транспорт процесса с внешним драйвером обрабатывает запрос до возврата из
+/// [`ProcessHandle::write_initial_stdin`].
+pub struct InitialStdinWrite {
+    bytes: Vec<u8>,
+    result_tx: oneshot::Sender<io::Result<()>>,
+}
+
+impl InitialStdinWrite {
+    /// Разделяет запрос на записываемые байты и канал отправки результата.
+    pub fn into_parts(self) -> (Vec<u8>, oneshot::Sender<io::Result<()>>) {
+        (self.bytes, self.result_tx)
+    }
+}
+
 impl fmt::Debug for ProcessHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProcessHandle").finish()
@@ -135,6 +152,7 @@ impl ProcessHandle {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         writer_tx: mpsc::Sender<Vec<u8>>,
+        initial_stdin_tx: Option<mpsc::Sender<InitialStdinWrite>>,
         killer: Box<dyn ChildTerminator>,
         reader_handle: JoinHandle<()>,
         reader_abort_handles: Vec<AbortHandle>,
@@ -147,6 +165,7 @@ impl ProcessHandle {
     ) -> Self {
         Self {
             writer_tx: StdMutex::new(Some(writer_tx)),
+            initial_stdin_tx: StdMutex::new(initial_stdin_tx),
             killer: StdMutex::new(Some(killer)),
             reader_handle: StdMutex::new(Some(reader_handle)),
             reader_abort_handles: StdMutex::new(reader_abort_handles),
@@ -170,6 +189,37 @@ impl ProcessHandle {
         let (writer_tx, writer_rx) = mpsc::channel(1);
         drop(writer_rx);
         writer_tx
+    }
+
+    /// Записывает начальный stdin и ждёт низкоуровневый результат, если реализация
+    /// процесса поддерживает подтверждение.
+    pub async fn write_initial_stdin(&self, bytes: Vec<u8>) -> io::Result<()> {
+        let initial_stdin_tx = self
+            .initial_stdin_tx
+            .lock()
+            .map_err(|_| io::Error::other("failed to lock initial stdin sender"))?
+            .clone();
+        let Some(initial_stdin_tx) = initial_stdin_tx else {
+            return self.writer_sender().send(bytes).await.map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "process stdin writer is closed")
+            });
+        };
+        let (result_tx, result_rx) = oneshot::channel();
+        initial_stdin_tx
+            .send(InitialStdinWrite { bytes, result_tx })
+            .await
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "process initial stdin writer is closed",
+                )
+            })?;
+        result_rx.await.map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "process initial stdin writer stopped before acknowledging the write",
+            )
+        })?
     }
 
     /// True if the child process has exited.
@@ -213,6 +263,9 @@ impl ProcessHandle {
     pub fn close_stdin(&self) {
         if let Ok(mut writer_tx) = self.writer_tx.lock() {
             writer_tx.take();
+        }
+        if let Ok(mut initial_stdin_tx) = self.initial_stdin_tx.lock() {
+            initial_stdin_tx.take();
         }
     }
 
@@ -350,6 +403,7 @@ pub struct SpawnedProcess {
 /// Driver-backed process handles for non-standard spawn backends.
 pub struct ProcessDriver {
     pub writer_tx: mpsc::Sender<Vec<u8>>,
+    pub initial_stdin_tx: Option<mpsc::Sender<InitialStdinWrite>>,
     pub stdout_rx: broadcast::Receiver<Vec<u8>>,
     pub stderr_rx: Option<broadcast::Receiver<Vec<u8>>>,
     pub exit_rx: oneshot::Receiver<i32>,
@@ -362,6 +416,7 @@ pub struct ProcessDriver {
 pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
     let ProcessDriver {
         writer_tx,
+        initial_stdin_tx,
         stdout_rx: stdout_driver_rx,
         stderr_rx: mut stderr_driver_rx,
         exit_rx,
@@ -433,6 +488,7 @@ pub fn spawn_from_driver(driver: ProcessDriver) -> SpawnedProcess {
 
     let handle = ProcessHandle::new(
         writer_tx,
+        initial_stdin_tx,
         Box::new(ClosureTerminator { inner: terminator }),
         reader_handle,
         stderr_reader_handle

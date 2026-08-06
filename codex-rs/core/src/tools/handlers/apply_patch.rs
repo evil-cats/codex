@@ -540,6 +540,12 @@ impl CoreToolRuntime for ApplyPatchHandler {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplyPatchInterceptDisposition {
+    Apply,
+    RejectInitialStdin,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn intercept_apply_patch(
     command: &[String],
@@ -551,6 +557,7 @@ pub(crate) async fn intercept_apply_patch(
     tracker: Option<&SharedTurnDiffTracker>,
     call_id: &str,
     tool_name: &str,
+    disposition: ApplyPatchInterceptDisposition,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
     let sandbox =
         turn.file_system_sandbox_context(/*additional_permissions*/ None, &turn_environment);
@@ -558,6 +565,12 @@ pub(crate) async fn intercept_apply_patch(
         .await
     {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
+            if disposition == ApplyPatchInterceptDisposition::RejectInitialStdin {
+                return Err(FunctionCallError::RespondToModel(
+                    "exec_command cannot combine intercepted apply_patch with `stdin`; omit `stdin` or run a non-intercepted command"
+                        .to_string(),
+                ));
+            }
             let (approval_keys, effective_additional_permissions, file_system_sandbox_policy) =
                 effective_patch_permissions(
                     session.as_ref(),

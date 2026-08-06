@@ -202,12 +202,14 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
             request,
             proxy_settings_mode,
             /*tty*/ true,
+            /*initial_stdin*/ Some("first\nsecond\n"),
         )
     };
     let params = params_for_request(&request);
 
     assert_eq!(params.process_id.as_str(), "123");
     assert_eq!(params.cwd, request.cwd);
+    assert_eq!(params.initial_stdin.as_deref(), Some("first\nsecond\n"));
     assert!(params.enforce_managed_network);
     assert_eq!(params.managed_network, Some(managed_network));
     assert!(params.env_policy.is_some());
@@ -395,6 +397,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
             "-lc".to_string(),
             "echo before".to_string(),
         ],
+        stdin: None,
         shell_type: crate::shell::ShellType::Sh,
         hook_command: "echo before".to_string(),
         process_id: 123,

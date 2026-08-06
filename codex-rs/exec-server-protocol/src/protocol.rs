@@ -105,6 +105,9 @@ pub struct EnvironmentCapabilities {
     /// Whether `exec` accepts instructions for launching an executor-local network proxy.
     #[serde(default)]
     pub network_proxy_launch: bool,
+    /// Показывает, принимает ли `exec` начальный ввод процесса в `ExecParams`.
+    #[serde(default)]
+    pub initial_stdin: bool,
 }
 
 /// Status returned by an initialized exec-server connection.
@@ -136,6 +139,7 @@ impl EnvironmentInfo {
                 .and_then(|cwd| PathUri::from_host_native_path(cwd).ok()),
             capabilities: EnvironmentCapabilities {
                 network_proxy_launch: true,
+                initial_stdin: true,
             },
         }
     }
@@ -177,6 +181,10 @@ pub struct ExecParams {
     /// Keep non-tty stdin writable through `process/write`.
     #[serde(default)]
     pub pipe_stdin: bool,
+    /// Необязательный UTF-8-текст, записываемый до возврата из `exec`.
+    /// После записи non-TTY stdin закрывается.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_stdin: Option<String>,
     /// Optional process-visible argv0 override. Values such as `codex-linux-sandbox` are command
     /// names rather than paths, so this is not a [`PathUri`].
     pub arg0: Option<String>,
@@ -769,6 +777,7 @@ mod tests {
             env: HashMap::new(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: true,
@@ -821,6 +830,60 @@ mod tests {
         let legacy_serialized =
             serde_json::to_value(&legacy).expect("serialize exec params without proxy launch");
         assert!(legacy_serialized.get("networkProxy").is_none());
+    }
+
+    #[test]
+    fn exec_params_initial_stdin_round_trips_and_defaults_for_legacy_requests() {
+        let cwd =
+            PathUri::from_host_native_path(std::env::current_dir().expect("current directory"))
+                .expect("cwd URI");
+        let params = ExecParams {
+            process_id: ProcessId::from("initial-stdin"),
+            argv: vec!["cat".to_string()],
+            cwd,
+            env_policy: None,
+            env: HashMap::new(),
+            tty: false,
+            pipe_stdin: false,
+            initial_stdin: Some("first\nsecond\n".to_string()),
+            arg0: None,
+            sandbox: None,
+            enforce_managed_network: false,
+            managed_network: None,
+            network_proxy: None,
+        };
+
+        let mut serialized = serde_json::to_value(&params).expect("serialize exec params");
+        assert_eq!(serialized["initialStdin"], "first\nsecond\n");
+        let round_trip: ExecParams =
+            serde_json::from_value(serialized.clone()).expect("deserialize exec params");
+        assert_eq!(round_trip, params);
+
+        serialized
+            .as_object_mut()
+            .expect("exec params object")
+            .remove("initialStdin");
+        let legacy: ExecParams =
+            serde_json::from_value(serialized).expect("deserialize legacy exec params");
+        assert_eq!(legacy.initial_stdin, None);
+    }
+
+    #[test]
+    fn environment_capabilities_initial_stdin_round_trips_and_defaults_to_false() {
+        let capabilities = EnvironmentCapabilities {
+            initial_stdin: true,
+            ..Default::default()
+        };
+
+        let serialized = serde_json::to_value(&capabilities).expect("serialize capabilities");
+        assert_eq!(serialized["initialStdin"], true);
+        let round_trip: EnvironmentCapabilities =
+            serde_json::from_value(serialized).expect("deserialize capabilities");
+        assert_eq!(round_trip, capabilities);
+
+        let legacy: EnvironmentCapabilities =
+            serde_json::from_value(serde_json::json!({})).expect("deserialize legacy capabilities");
+        assert_eq!(legacy, EnvironmentCapabilities::default());
     }
 
     #[test]

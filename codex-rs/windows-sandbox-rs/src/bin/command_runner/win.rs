@@ -20,6 +20,7 @@ use codex_windows_sandbox::ErrorStage;
 use codex_windows_sandbox::ExitPayload;
 use codex_windows_sandbox::FramedMessage;
 use codex_windows_sandbox::IPC_PROTOCOL_VERSION;
+use codex_windows_sandbox::InitialStdinResultPayload;
 use codex_windows_sandbox::LocalSid;
 use codex_windows_sandbox::Message;
 use codex_windows_sandbox::OutputPayload;
@@ -47,6 +48,7 @@ use codex_windows_sandbox::token_mode_for_permission_profile;
 use codex_windows_sandbox::write_frame;
 use std::ffi::OsStr;
 use std::fs::File;
+use std::io;
 use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 use std::path::PathBuf;
@@ -419,9 +421,89 @@ fn terminate_job_or_process(job: &JobObject, process: HANDLE, log_dir: Option<&P
     }
 }
 
+/// Полностью записывает буфер в дескриптор Windows и сообщает ошибку или отсутствие прогресса.
+fn write_all_stdin_handle(handle: HANDLE, mut bytes: &[u8]) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let chunk_len = bytes.len().min(u32::MAX as usize);
+        let mut written = 0u32;
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::WriteFile(
+                handle,
+                bytes.as_ptr(),
+                chunk_len as u32,
+                &mut written,
+                ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::from_raw_os_error(
+                unsafe { GetLastError() } as i32
+            ));
+        }
+        if written == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "WriteFile returned success but wrote 0 bytes",
+            ));
+        }
+        bytes = &bytes[written as usize..];
+    }
+    Ok(())
+}
+
+/// Декодирует данные stdin, полностью записывает их и закрывает дескриптор после ошибки.
+fn write_stdin_payload(
+    stdin_handle: &mut Option<HANDLE>,
+    data_b64: &str,
+    log_dir: Option<&Path>,
+) -> io::Result<()> {
+    let bytes = decode_bytes(data_b64)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+    let Some(handle) = *stdin_handle else {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "child stdin handle is closed",
+        ));
+    };
+    let result = write_all_stdin_handle(handle, &bytes);
+    if let Err(err) = &result {
+        log_note(&format!("runner stdin write failed: {err}"), log_dir);
+        unsafe {
+            CloseHandle(handle);
+        }
+        *stdin_handle = None;
+    }
+    result
+}
+
+/// Возвращает родительскому процессу фактический результат начальной записи stdin.
+fn send_initial_stdin_result(
+    pipe_write: &Arc<StdMutex<File>>,
+    result: &io::Result<()>,
+    log_dir: Option<&Path>,
+) {
+    let msg = FramedMessage {
+        version: IPC_PROTOCOL_VERSION,
+        message: Message::InitialStdinResult {
+            payload: InitialStdinResultPayload {
+                error: result.as_ref().err().map(ToString::to_string),
+            },
+        },
+    };
+    if let Ok(mut guard) = pipe_write.lock()
+        && let Err(err) = write_frame(&mut *guard, &msg)
+    {
+        log_note(
+            &format!("runner initial stdin result write failed: {err}"),
+            log_dir,
+        );
+    }
+}
+
 /// Read stdin/terminate frames and forward to the child process.
 fn spawn_input_loop(
     mut reader: File,
+    pipe_write: Arc<StdMutex<File>>,
     stdin_handle: Option<HANDLE>,
     hpc_handle: Arc<StdMutex<Option<HANDLE>>>,
     job: Arc<JobObject>,
@@ -438,60 +520,19 @@ fn spawn_input_loop(
             };
             match msg.message {
                 Message::Stdin { payload } => {
-                    let Ok(bytes) = decode_bytes(&payload.data_b64) else {
-                        continue;
-                    };
-                    if let Some(handle) = stdin_handle {
-                        let mut offset = 0usize;
-                        // `WriteFile` can report success after consuming only part of the buffer
-                        // when the target is a pipe. Treat this like a normal partial write and
-                        // keep advancing until every decoded stdin byte has been forwarded.
-                        //
-                        // If the child closes stdin or the pipe enters an error state, we log
-                        // that fact, close our local HANDLE, and stop trying to forward later
-                        // `Stdin` frames. That prevents silent truncation while also avoiding an
-                        // endless stream of failing writes after the child is already gone.
-                        while offset < bytes.len() {
-                            let chunk = &bytes[offset..];
-                            let chunk_len = chunk.len().min(u32::MAX as usize);
-                            let mut written = 0u32;
-                            let ok = unsafe {
-                                windows_sys::Win32::Storage::FileSystem::WriteFile(
-                                    handle,
-                                    chunk.as_ptr(),
-                                    chunk_len as u32,
-                                    &mut written,
-                                    ptr::null_mut(),
-                                )
-                            };
-                            if ok == 0 {
-                                log_note(
-                                    &format!(
-                                        "runner stdin write failed after {offset} bytes: {}",
-                                        unsafe { GetLastError() }
-                                    ),
-                                    log_dir.as_deref(),
-                                );
-                                unsafe {
-                                    CloseHandle(handle);
-                                }
-                                stdin_handle = None;
-                                break;
-                            }
-                            if written == 0 {
-                                log_note(
-                                    "runner stdin write made no progress; closing child stdin",
-                                    log_dir.as_deref(),
-                                );
-                                unsafe {
-                                    CloseHandle(handle);
-                                }
-                                stdin_handle = None;
-                                break;
-                            }
-                            offset += written as usize;
-                        }
-                    }
+                    let _ = write_stdin_payload(
+                        &mut stdin_handle,
+                        &payload.data_b64,
+                        log_dir.as_deref(),
+                    );
+                }
+                Message::InitialStdin { payload } => {
+                    let result = write_stdin_payload(
+                        &mut stdin_handle,
+                        &payload.data_b64,
+                        log_dir.as_deref(),
+                    );
+                    send_initial_stdin_result(&pipe_write, &result, log_dir.as_deref());
                 }
                 Message::CloseStdin { .. } => {
                     if let Some(handle) = stdin_handle.take() {
@@ -523,6 +564,7 @@ fn spawn_input_loop(
                 Message::SpawnRequest { .. } => {}
                 Message::SpawnReady { .. } => {}
                 Message::Output { .. } => {}
+                Message::InitialStdinResult { .. } => {}
                 Message::Exit { .. } => {}
                 Message::Error { .. } => {}
             }
@@ -639,6 +681,7 @@ pub fn main() -> Result<()> {
 
     let _input_thread = spawn_input_loop(
         pipe_read,
+        Arc::clone(&pipe_write),
         stdin_handle,
         Arc::clone(&hpc_handle),
         Arc::clone(&job),

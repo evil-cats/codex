@@ -1,4 +1,6 @@
+use super::windows_common::DriverStdinWrite;
 use super::windows_common::finish_driver_spawn;
+use super::windows_common::multiplex_driver_stdin;
 use crate::conpty::ConptyInstance;
 use crate::conpty::spawn_conpty_process_as_user;
 use crate::desktop::LaunchDesktop;
@@ -20,12 +22,14 @@ use crate::spawn_prep::prepare_legacy_spawn_context;
 use anyhow::Result;
 use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_pty::InitialStdinWrite;
 use codex_utils_pty::JobObject;
 use codex_utils_pty::ProcessDriver;
 use codex_utils_pty::SpawnedProcess;
 use codex_utils_pty::TerminalSize;
 use codex_utils_pty::WindowsTtyInputNormalizer;
 use std::collections::HashMap;
+use std::io;
 use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
@@ -70,7 +74,7 @@ fn spawn_legacy_process(
     stdin_open: bool,
     stdout_tx: broadcast::Sender<Vec<u8>>,
     stderr_tx: Option<broadcast::Sender<Vec<u8>>>,
-    writer_rx: mpsc::Receiver<Vec<u8>>,
+    writer_rx: mpsc::Receiver<DriverStdinWrite>,
     logs_base_dir: Option<&Path>,
 ) -> Result<LegacyProcessHandles> {
     let (pi, job, output_join, writer_handle, hpc, conpty_owner, desktop) = if tty {
@@ -159,21 +163,38 @@ fn spawn_output_reader(
 
 fn spawn_input_writer(
     input_write: Option<HANDLE>,
-    mut writer_rx: mpsc::Receiver<Vec<u8>>,
+    mut writer_rx: mpsc::Receiver<DriverStdinWrite>,
     normalize_newlines: bool,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let mut windows_input = WindowsTtyInputNormalizer::default();
-        while let Some(bytes) = writer_rx.blocking_recv() {
-            let Some(handle) = input_write else {
-                continue;
+        while let Some(write) = writer_rx.blocking_recv() {
+            let (bytes, result_tx) = match write {
+                DriverStdinWrite::Stream(bytes) => (bytes, None),
+                DriverStdinWrite::Initial(write) => {
+                    let (bytes, result_tx) = write.into_parts();
+                    (bytes, Some(result_tx))
+                }
             };
             let bytes = if normalize_newlines {
                 windows_input.normalize(&bytes)
             } else {
                 bytes
             };
-            if write_all_handle(handle, &bytes).is_err() {
+            let result = input_write.map_or_else(
+                || {
+                    Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "process stdin handle is closed",
+                    ))
+                },
+                |handle| write_all_handle(handle, &bytes),
+            );
+            let failed = result.is_err();
+            if let Some(result_tx) = result_tx {
+                let _ = result_tx.send(result);
+            }
+            if failed {
                 break;
             }
         }
@@ -210,24 +231,29 @@ fn terminate_job_or_process(
     }
 }
 
-fn write_all_handle(handle: HANDLE, mut bytes: &[u8]) -> Result<()> {
+/// Полностью записывает буфер в дескриптор Windows и сообщает точную системную ошибку.
+fn write_all_handle(handle: HANDLE, mut bytes: &[u8]) -> io::Result<()> {
     while !bytes.is_empty() {
+        let chunk_len = bytes.len().min(u32::MAX as usize);
         let mut written = 0u32;
         let ok = unsafe {
             WriteFile(
                 handle,
                 bytes.as_ptr() as *const _,
-                bytes.len() as u32,
+                chunk_len as u32,
                 &mut written,
                 ptr::null_mut(),
             )
         };
         if ok == 0 {
             let err = unsafe { GetLastError() } as i32;
-            return Err(anyhow::anyhow!("WriteFile failed: {err}"));
+            return Err(io::Error::from_raw_os_error(err));
         }
         if written == 0 {
-            anyhow::bail!("WriteFile returned success but wrote 0 bytes");
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "WriteFile returned success but wrote 0 bytes",
+            ));
         }
         bytes = &bytes[written as usize..];
     }
@@ -371,6 +397,8 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     )?;
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (initial_stdin_tx, initial_stdin_rx) = mpsc::channel::<InitialStdinWrite>(1);
+    let writer_rx = multiplex_driver_stdin(writer_rx, initial_stdin_rx);
     let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);
     let stderr_rx = if tty {
         None
@@ -461,6 +489,7 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
 
     let driver = ProcessDriver {
         writer_tx,
+        initial_stdin_tx: Some(initial_stdin_tx),
         stdout_rx,
         stderr_rx: stderr_rx.map(|(_tx, rx)| rx),
         exit_rx,

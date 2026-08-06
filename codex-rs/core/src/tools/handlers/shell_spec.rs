@@ -34,6 +34,13 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
             JsonSchema::string(Some("Shell command to execute.".to_string())),
         ),
         (
+            "stdin".to_string(),
+            JsonSchema::string(Some(
+                "Optional UTF-8 text to write to the process standard input immediately after launch. Use it for data that would otherwise require a separate shell producer or pipeline. No newline is added. With tty=false, stdin is closed after the text is written; with tty=true, the session stays open for later write_stdin calls."
+                    .to_string(),
+            )),
+        ),
+        (
             "workdir".to_string(),
             JsonSchema::string(Some(
                 "Working directory for the command. Defaults to the turn cwd."

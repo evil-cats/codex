@@ -143,6 +143,7 @@ async fn remote_sandboxed_process_preserves_custom_arg0() -> Result<()> {
             ]),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: Some("custom-arg0".to_string()),
             sandbox: Some(sandbox),
             enforce_managed_network: false,
@@ -171,6 +172,7 @@ async fn assert_exec_process_starts_and_exits(use_remote: bool) -> Result<()> {
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -232,6 +234,7 @@ async fn remote_process_keeps_sandbox_helper_visible_with_restricted_reads() -> 
             env: HashMap::from([("PATH".to_string(), std::env::var("PATH")?)]),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: Some(sandbox),
             enforce_managed_network: false,
@@ -304,6 +307,7 @@ async fn remote_tty_process_uses_configured_sandbox_helper_with_hostile_path() -
             )]),
             tty: true,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: Some(sandbox),
             enforce_managed_network: false,
@@ -356,6 +360,7 @@ async fn remote_process_preserves_empty_workspace_roots() -> Result<()> {
             env: HashMap::new(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: Some(sandbox),
             enforce_managed_network: false,
@@ -501,6 +506,7 @@ async fn assert_exec_process_streams_output(use_remote: bool) -> Result<()> {
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -536,6 +542,7 @@ async fn assert_exec_process_pushes_events(use_remote: bool) -> Result<()> {
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -587,6 +594,7 @@ async fn assert_exec_process_replays_events_after_close(use_remote: bool) -> Res
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -639,6 +647,7 @@ async fn assert_exec_process_retains_output_after_exit_until_streams_close(
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -716,6 +725,7 @@ async fn assert_exec_process_write_then_read(use_remote: bool) -> Result<()> {
             env: Default::default(),
             tty: true,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -757,6 +767,7 @@ async fn assert_exec_process_write_then_read_without_tty(use_remote: bool) -> Re
             env: Default::default(),
             tty: false,
             pipe_stdin: true,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -774,6 +785,195 @@ async fn assert_exec_process_write_then_read_without_tty(use_remote: bool) -> Re
     let actual = collect_process_output_from_reads(process, wake_rx).await?;
 
     assert_eq!(actual, ("from-stdin:hello\n".to_string(), Some(0), true));
+    Ok(())
+}
+
+/// Проверяет точную передачу начального stdin и EOF для локальной или удалённой реализации.
+async fn assert_exec_process_initial_stdin_and_eof(use_remote: bool) -> Result<()> {
+    let context = create_process_context(use_remote).await?;
+    let process_id = "proc-initial-stdin".to_string();
+    let initial_stdin =
+        "qn: \"QUALIFIED NAME\"\nadd:\n  - \"ADDED CHILD QN\"\ndel:\n  - \"REMOVED CHILD QN\"\n";
+    let session = context
+        .backend
+        .start(ExecParams {
+            process_id: process_id.clone().into(),
+            argv: vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat".to_string(),
+            ],
+            cwd: PathUri::from_host_native_path(std::env::current_dir()?)?,
+            env_policy: /*env_policy*/ None,
+            env: Default::default(),
+            tty: false,
+            pipe_stdin: false,
+            initial_stdin: Some(initial_stdin.to_string()),
+            arg0: None,
+            sandbox: None,
+            enforce_managed_network: false,
+            managed_network: None,
+            network_proxy: None,
+        })
+        .await?;
+    assert_eq!(session.process.process_id().as_str(), process_id);
+
+    let StartedExecProcess { process, .. } = session;
+    let wake_rx = process.subscribe_wake();
+    let actual = collect_process_output_from_reads(process, wake_rx).await?;
+
+    assert_eq!(actual, (initial_stdin.to_string(), Some(0), true));
+    Ok(())
+}
+
+/// Проверяет, что пустой начальный stdin всё равно закрывается и формирует EOF.
+async fn assert_exec_process_initial_stdin_empty_stream_sends_eof(use_remote: bool) -> Result<()> {
+    let context = create_process_context(use_remote).await?;
+    let process_id = "proc-empty-initial-stdin".to_string();
+    let session = context
+        .backend
+        .start(ExecParams {
+            process_id: process_id.clone().into(),
+            argv: vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "if IFS= read -r line; then printf 'read:%s\\n' \"$line\"; else printf 'eof\\n'; fi"
+                    .to_string(),
+            ],
+            cwd: PathUri::from_host_native_path(std::env::current_dir()?)?,
+            env_policy: /*env_policy*/ None,
+            env: Default::default(),
+            tty: false,
+            pipe_stdin: false,
+            initial_stdin: Some(String::new()),
+            arg0: None,
+            sandbox: None,
+            enforce_managed_network: false,
+            managed_network: None,
+            network_proxy: None,
+        })
+        .await?;
+    assert_eq!(session.process.process_id().as_str(), process_id);
+
+    let StartedExecProcess { process, .. } = session;
+    let wake_rx = process.subscribe_wake();
+    let actual = collect_process_output_from_reads(process, wake_rx).await?;
+
+    assert_eq!(actual, ("eof\n".to_string(), Some(0), true));
+    Ok(())
+}
+
+/// Проверяет сохранение открытого TTY после передачи начального stdin.
+async fn assert_exec_process_initial_stdin_keeps_tty_open(use_remote: bool) -> Result<()> {
+    let context = create_process_context(use_remote).await?;
+    let process_id = "proc-tty-initial-stdin".to_string();
+    let session = context
+        .backend
+        .start(ExecParams {
+            process_id: process_id.clone().into(),
+            argv: vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "IFS= read -r first; printf 'first:%s\\n' \"$first\"; IFS= read -r second; printf 'second:%s\\n' \"$second\""
+                    .to_string(),
+            ],
+            cwd: PathUri::from_host_native_path(std::env::current_dir()?)?,
+            env_policy: /*env_policy*/ None,
+            env: Default::default(),
+            tty: true,
+            pipe_stdin: false,
+            initial_stdin: Some("one\n".to_string()),
+            arg0: None,
+            sandbox: None,
+            enforce_managed_network: false,
+            managed_network: None,
+            network_proxy: None,
+        })
+        .await?;
+    assert_eq!(session.process.process_id().as_str(), process_id);
+
+    let write_response = session.process.write(b"two\n".to_vec()).await?;
+    assert_eq!(write_response.status, WriteStatus::Accepted);
+    let StartedExecProcess { process, .. } = session;
+    let wake_rx = process.subscribe_wake();
+    let (output, exit_code, closed) = collect_process_output_from_reads(process, wake_rx).await?;
+
+    assert!(
+        output.contains("first:one"),
+        "unexpected output: {output:?}"
+    );
+    assert!(
+        output.contains("second:two"),
+        "unexpected output: {output:?}"
+    );
+    assert_eq!(exit_code, Some(0));
+    assert!(closed);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+/// Проверяет, что данные из начального stdin не обходят файловые ограничения sandbox процесса.
+async fn assert_exec_process_initial_stdin_respects_filesystem_sandbox() -> Result<()> {
+    if let Some(warning) = codex_sandboxing::system_bwrap_warning(&PermissionProfile::read_only()) {
+        eprintln!("skipping bwrap test: {warning}");
+        return Ok(());
+    }
+
+    let context = create_process_context(/*use_remote*/ true).await?;
+    let workspace = TempDir::new()?;
+    let denied_file = workspace.path().join("stdin-sandbox-denied.txt");
+    let cwd = PathUri::from_host_native_path(workspace.path())?;
+    let policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::Minimal,
+            },
+            access: FileSystemAccessMode::Read,
+            missing_path_behavior: None,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+            },
+            access: FileSystemAccessMode::Read,
+            missing_path_behavior: None,
+        },
+    ]);
+    let sandbox = FileSystemSandboxContext::from_permission_profile_with_cwd(
+        PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted),
+        cwd.clone(),
+    );
+    let session = context
+        .backend
+        .start(ExecParams {
+            process_id: ProcessId::from("proc-initial-stdin-sandbox"),
+            argv: vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "IFS= read -r target; if { printf forbidden >\"$target\"; } 2>/dev/null; then printf 'wrote\\n'; else printf 'denied\\n'; fi"
+                    .to_string(),
+            ],
+            cwd,
+            env_policy: /*env_policy*/ None,
+            env: HashMap::from([("PATH".to_string(), std::env::var("PATH")?)]),
+            tty: false,
+            pipe_stdin: false,
+            initial_stdin: Some(format!("{}\n", denied_file.to_string_lossy())),
+            arg0: None,
+            sandbox: Some(sandbox),
+            enforce_managed_network: false,
+            managed_network: None,
+            network_proxy: None,
+        })
+        .await?;
+    let (stdout, _stderr, exit_code, closed) =
+        collect_process_output_from_events(session.process).await?;
+
+    assert_eq!(
+        (stdout, exit_code, closed),
+        ("denied\n".to_string(), Some(0), true)
+    );
+    assert!(!denied_file.exists());
     Ok(())
 }
 
@@ -808,6 +1008,7 @@ async fn assert_remote_windows_sandbox_process_write() -> Result<()> {
             env: Default::default(),
             tty: false,
             pipe_stdin: true,
+            initial_stdin: None,
             arg0: None,
             sandbox: Some(sandbox),
             enforce_managed_network: false,
@@ -853,6 +1054,7 @@ async fn assert_exec_process_rejects_write_without_pipe_stdin(use_remote: bool) 
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -891,6 +1093,7 @@ async fn assert_exec_process_signal_interrupts_process(use_remote: bool) -> Resu
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -948,6 +1151,7 @@ async fn assert_exec_process_signal_reports_unsupported_on_windows(use_remote: b
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -992,6 +1196,7 @@ async fn assert_exec_process_preserves_queued_events_before_subscribe(
             env: Default::default(),
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -1054,6 +1259,7 @@ async fn remote_exec_process_recovers_after_transport_disconnect() -> Result<()>
             ]),
             tty: false,
             pipe_stdin: true,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -1233,6 +1439,40 @@ async fn exec_process_write_then_read(use_remote: bool) -> Result<()> {
 #[serial_test::serial(remote_exec_server)]
 async fn exec_process_write_then_read_without_tty(use_remote: bool) -> Result<()> {
     assert_exec_process_write_then_read_without_tty(use_remote).await
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[cfg_attr(not(unix), ignore = "Unix-only exec-server process test")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial_test::serial(remote_exec_server)]
+async fn exec_process_initial_stdin_and_eof(use_remote: bool) -> Result<()> {
+    assert_exec_process_initial_stdin_and_eof(use_remote).await
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[cfg_attr(not(unix), ignore = "Unix-only exec-server process test")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial_test::serial(remote_exec_server)]
+async fn exec_process_initial_stdin_empty_stream_sends_eof(use_remote: bool) -> Result<()> {
+    assert_exec_process_initial_stdin_empty_stream_sends_eof(use_remote).await
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[cfg_attr(not(unix), ignore = "Unix-only exec-server process test")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial_test::serial(remote_exec_server)]
+async fn exec_process_initial_stdin_keeps_tty_open(use_remote: bool) -> Result<()> {
+    assert_exec_process_initial_stdin_keeps_tty_open(use_remote).await
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial_test::serial(remote_exec_server)]
+async fn exec_process_initial_stdin_respects_filesystem_sandbox() -> Result<()> {
+    assert_exec_process_initial_stdin_respects_filesystem_sandbox().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

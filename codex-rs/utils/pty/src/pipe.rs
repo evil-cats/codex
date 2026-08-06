@@ -18,6 +18,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::process::ChildTerminator;
+use crate::process::InitialStdinWrite;
 use crate::process::ProcessHandle;
 use crate::process::ProcessSignal;
 use crate::process::SpawnedProcess;
@@ -213,19 +214,51 @@ async fn spawn_process_with_stdin_mode(
     let stderr = child.stderr.take();
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (initial_stdin_tx, mut initial_stdin_rx) = mpsc::channel::<InitialStdinWrite>(1);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(128);
-    let writer_handle = if let Some(stdin) = stdin {
-        tokio::spawn(async move {
-            let mut writer = stdin;
-            while let Some(bytes) = writer_rx.recv().await {
-                let _ = writer.write_all(&bytes).await;
-                let _ = writer.flush().await;
-            }
-        })
+    let (writer_handle, initial_stdin_tx) = if let Some(stdin) = stdin {
+        (
+            tokio::spawn(async move {
+                let mut writer = stdin;
+                let mut writer_open = true;
+                let mut initial_stdin_open = true;
+                while writer_open || initial_stdin_open {
+                    tokio::select! {
+                        bytes = writer_rx.recv(), if writer_open => {
+                            if let Some(bytes) = bytes {
+                                let _ = writer.write_all(&bytes).await;
+                                let _ = writer.flush().await;
+                            } else {
+                                writer_open = false;
+                            }
+                        }
+                        request = initial_stdin_rx.recv(), if initial_stdin_open => {
+                            let Some(request) = request else {
+                                initial_stdin_open = false;
+                                continue;
+                            };
+                            let (bytes, result_tx) = request.into_parts();
+                            let result = async {
+                                writer.write_all(&bytes).await?;
+                                writer.flush().await
+                            }
+                            .await;
+                            let failed = result.is_err();
+                            let _ = result_tx.send(result);
+                            if failed {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }),
+            Some(initial_stdin_tx),
+        )
     } else {
         drop(writer_rx);
-        tokio::spawn(async {})
+        drop(initial_stdin_rx);
+        (tokio::spawn(async {}), None)
     };
 
     let stdout_handle = stdout.map(|stdout| {
@@ -290,6 +323,7 @@ async fn spawn_process_with_stdin_mode(
 
     let handle = ProcessHandle::new(
         writer_tx,
+        initial_stdin_tx,
         Box::new(PipeChildTerminator {
             #[cfg(windows)]
             windows: windows_terminator,

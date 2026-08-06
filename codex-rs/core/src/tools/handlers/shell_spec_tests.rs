@@ -14,7 +14,7 @@ fn has_parameter(tool: &ToolSpec, parameter_name: &str) -> bool {
 }
 
 #[test]
-fn exec_command_tool_matches_expected_spec() {
+fn exec_command_stdin_tool_matches_expected_spec() {
     let tool = create_exec_command_tool(CommandToolOptions {
         allow_login_shell: true,
         exec_permission_approvals_enabled: false,
@@ -39,6 +39,13 @@ fn exec_command_tool_matches_expected_spec() {
         (
             "cmd".to_string(),
             JsonSchema::string(Some("Shell command to execute.".to_string())),
+        ),
+        (
+            "stdin".to_string(),
+            JsonSchema::string(Some(
+                "Optional UTF-8 text to write to the process standard input immediately after launch. Use it for data that would otherwise require a separate shell producer or pipeline. No newline is added. With tty=false, stdin is closed after the text is written; with tty=true, the session stays open for later write_stdin calls."
+                    .to_string(),
+            )),
         ),
         (
             "workdir".to_string(),

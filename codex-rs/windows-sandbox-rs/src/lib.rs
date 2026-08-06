@@ -207,6 +207,10 @@ pub use ipc_framed::FramedMessage;
 #[cfg(target_os = "windows")]
 pub use ipc_framed::IPC_PROTOCOL_VERSION;
 #[cfg(target_os = "windows")]
+/// Данные результата подтверждаемой записи начального stdin в протоколе
+/// привилегированного `runner`.
+pub use ipc_framed::InitialStdinResultPayload;
+#[cfg(target_os = "windows")]
 pub use ipc_framed::Message;
 #[cfg(target_os = "windows")]
 pub use ipc_framed::OutputPayload;

@@ -79,6 +79,23 @@ const EXITED_PROCESS_RETENTION: Duration = Duration::from_millis(25);
 #[cfg(not(test))]
 const EXITED_PROCESS_RETENTION: Duration = Duration::from_secs(30);
 
+/// Передаёт начальный stdin и завершает процесс, если низкоуровневая запись
+/// закончилась ошибкой.
+async fn write_initial_stdin(
+    session: &ExecCommandSession,
+    initial_stdin: &str,
+) -> std::io::Result<()> {
+    if !initial_stdin.is_empty()
+        && let Err(err) = session
+            .write_initial_stdin(initial_stdin.as_bytes().to_vec())
+            .await
+    {
+        session.terminate();
+        return Err(err);
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct RetainedOutputChunk {
     seq: u64,
@@ -325,7 +342,7 @@ impl LocalProcess {
             sandbox: prepared.sandbox,
             windows_sandbox: prepared.windows_sandbox_spawn_request(),
             tty: params.tty,
-            stdin_open: params.tty || params.pipe_stdin,
+            stdin_open: params.tty || params.pipe_stdin || params.initial_stdin.is_some(),
             inherited_fds: &[],
         })
         .await;
@@ -342,6 +359,24 @@ impl LocalProcess {
                 return Err(internal_error(err.to_string()));
             }
         };
+
+        if let Some(initial_stdin) = params.initial_stdin.as_ref() {
+            if let Err(err) = write_initial_stdin(&spawned.session, initial_stdin).await {
+                let mut process_map = self.inner.processes.lock().await;
+                if matches!(
+                    process_map.get(&process_id),
+                    Some(ProcessEntry::Starting(current)) if Arc::ptr_eq(current, &start)
+                ) {
+                    process_map.remove(&process_id);
+                }
+                return Err(internal_error(format!(
+                    "failed to write initial process stdin: {err}"
+                )));
+            }
+            if !params.tty {
+                spawned.session.close_stdin();
+            }
+        }
 
         let output_notify = Arc::new(Notify::new());
         let (wake_tx, _wake_rx) = watch::channel(0);
@@ -1056,6 +1091,7 @@ mod tests {
     use opentelemetry_sdk::metrics::data::AggregatedMetrics;
     use opentelemetry_sdk::metrics::data::MetricData;
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::AtomicBool;
     #[cfg(not(target_os = "windows"))]
     use tokio::io::AsyncReadExt;
     #[cfg(not(target_os = "windows"))]
@@ -1082,6 +1118,7 @@ mod tests {
             env,
             tty: false,
             pipe_stdin: false,
+            initial_stdin: None,
             arg0: None,
             sandbox: None,
             enforce_managed_network: false,
@@ -1759,6 +1796,7 @@ mod tests {
 
         codex_utils_pty::spawn_from_driver(ProcessDriver {
             writer_tx,
+            initial_stdin_tx: None,
             stdout_rx,
             stderr_rx: Some(stderr_rx),
             exit_rx,
@@ -1767,6 +1805,37 @@ mod tests {
             resizer: None,
         })
         .session
+    }
+
+    #[tokio::test]
+    async fn initial_stdin_write_failure_terminates_process() {
+        let (writer_tx, writer_rx) = mpsc::channel(1);
+        drop(writer_rx);
+        let (_stdout_tx, stdout_rx) = tokio::sync::broadcast::channel(1);
+        let (_stderr_tx, stderr_rx) = tokio::sync::broadcast::channel(1);
+        let (_exit_tx, exit_rx) = oneshot::channel();
+        let terminated = Arc::new(AtomicBool::new(false));
+        let terminated_for_callback = Arc::clone(&terminated);
+        let session = codex_utils_pty::spawn_from_driver(ProcessDriver {
+            writer_tx,
+            initial_stdin_tx: None,
+            stdout_rx,
+            stderr_rx: Some(stderr_rx),
+            exit_rx,
+            terminator: Some(Box::new(move || {
+                terminated_for_callback.store(true, Ordering::Release);
+            })),
+            writer_handle: None,
+            resizer: None,
+        })
+        .session;
+
+        let error = write_initial_stdin(&session, "cannot be delivered")
+            .await
+            .expect_err("closed writer must reject initial stdin");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+        assert!(terminated.load(Ordering::Acquire));
     }
 
     async fn read_process_until_change(

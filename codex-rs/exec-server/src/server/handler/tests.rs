@@ -35,6 +35,7 @@ fn exec_params_with_argv(process_id: &str, argv: Vec<String>) -> ExecParams {
         env: inherited_path_env(),
         tty: false,
         pipe_stdin: false,
+        initial_stdin: None,
         arg0: None,
         sandbox: None,
         enforce_managed_network: false,

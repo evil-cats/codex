@@ -8,6 +8,7 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::apply_granted_turn_permissions;
+use crate::tools::handlers::apply_patch::ApplyPatchInterceptDisposition;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
 use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
@@ -241,6 +242,7 @@ impl ExecCommandHandler {
         let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
 
         let ExecCommandArgs {
+            stdin,
             tty,
             yield_time_ms,
             max_output_tokens,
@@ -311,7 +313,7 @@ impl ExecCommandHandler {
             }
         };
 
-        if let Some(output) = intercept_apply_patch(
+        let intercepted = intercept_apply_patch(
             &command,
             &cwd,
             fs.as_ref(),
@@ -321,9 +323,21 @@ impl ExecCommandHandler {
             Some(&tracker),
             &context.call_id,
             "exec_command",
+            if stdin.is_some() {
+                ApplyPatchInterceptDisposition::RejectInitialStdin
+            } else {
+                ApplyPatchInterceptDisposition::Apply
+            },
         )
-        .await?
-        {
+        .await;
+        let intercepted = match intercepted {
+            Ok(intercepted) => intercepted,
+            Err(err) => {
+                manager.release_process_id(process_id).await;
+                return Err(err);
+            }
+        };
+        if let Some(output) = intercepted {
             manager.release_process_id(process_id).await;
             return Ok(boxed_tool_output(ExecCommandToolOutput {
                 event_call_id: String::new(),
@@ -346,6 +360,7 @@ impl ExecCommandHandler {
             .exec_command(
                 ExecCommandRequest {
                     command,
+                    stdin,
                     shell_type,
                     hook_command: hook_command.clone(),
                     process_id,

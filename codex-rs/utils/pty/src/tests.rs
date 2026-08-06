@@ -1,12 +1,20 @@
 use std::collections::HashMap;
+use std::io;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicBool;
 
 use pretty_assertions::assert_eq;
 
 use crate::ProcessDriver;
+use crate::ProcessHandle;
+use crate::ProcessSignal;
 use crate::SpawnedProcess;
 use crate::TerminalSize;
 use crate::combine_output_receivers;
+use crate::process::ChildTerminator;
+use crate::process::InitialStdinWrite;
 use crate::spawn_from_driver;
 use crate::spawn_pipe_process;
 use crate::spawn_pipe_process_no_stdin;
@@ -15,6 +23,57 @@ use crate::spawn_pty_process;
 #[cfg(windows)]
 #[path = "windows_tests.rs"]
 mod windows_tests;
+
+struct NoopTerminator;
+
+impl ChildTerminator for NoopTerminator {
+    fn signal(&mut self, _signal: ProcessSignal) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn initial_stdin_write_reports_backend_failure() {
+    let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel(1);
+    let (initial_stdin_tx, mut initial_stdin_rx) =
+        tokio::sync::mpsc::channel::<InitialStdinWrite>(1);
+    let writer_handle = tokio::spawn(async move {
+        let request = initial_stdin_rx
+            .recv()
+            .await
+            .expect("initial stdin request");
+        let (_bytes, result_tx) = request.into_parts();
+        let _ = result_tx.send(Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "forced initial stdin failure",
+        )));
+    });
+    let handle = ProcessHandle::new(
+        writer_tx,
+        Some(initial_stdin_tx),
+        Box::new(NoopTerminator),
+        tokio::spawn(async {}),
+        Vec::new(),
+        writer_handle,
+        tokio::spawn(std::future::pending()),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(StdMutex::new(None)),
+        /*pty_handles*/ None,
+        /*resizer*/ None,
+    );
+
+    let error = handle
+        .write_initial_stdin(b"payload".to_vec())
+        .await
+        .expect_err("backend error must reach the caller");
+
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(error.to_string(), "forced initial stdin failure");
+}
 
 fn find_python() -> Option<String> {
     for candidate in ["python3", "python"] {
@@ -608,6 +667,7 @@ async fn driver_backed_process_can_expose_split_stdout_and_stderr() -> anyhow::R
 
     let spawned = spawn_from_driver(ProcessDriver {
         writer_tx,
+        initial_stdin_tx: None,
         stdout_rx: stdout_driver_rx,
         stderr_rx: Some(stderr_driver_rx),
         exit_rx,
@@ -660,6 +720,7 @@ async fn driver_backed_process_can_resize_via_resizer_hook() -> anyhow::Result<(
     let size_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(size_tx)));
     let spawned = spawn_from_driver(ProcessDriver {
         writer_tx,
+        initial_stdin_tx: None,
         stdout_rx: stdout_driver_rx,
         stderr_rx: None,
         exit_rx,
@@ -705,6 +766,7 @@ async fn driver_backed_process_drains_output_that_arrives_after_exit_signal() ->
 
     let spawned = spawn_from_driver(ProcessDriver {
         writer_tx,
+        initial_stdin_tx: None,
         stdout_rx: stdout_driver_rx,
         stderr_rx: None,
         exit_rx,

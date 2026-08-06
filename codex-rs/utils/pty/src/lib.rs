@@ -15,6 +15,8 @@ pub const DEFAULT_OUTPUT_BYTES_CAP: usize = 1024 * 1024;
 pub use pipe::spawn_process as spawn_pipe_process;
 /// Spawn a non-interactive process using regular pipes, but close stdin immediately.
 pub use pipe::spawn_process_no_stdin as spawn_pipe_process_no_stdin;
+/// Подтверждаемый запрос начального stdin для транспортов процесса с внешним драйвером.
+pub use process::InitialStdinWrite;
 /// Driver-backed process adapter used by integrations with their own process transport.
 pub use process::ProcessDriver;
 /// Handle for interacting with a spawned process (PTY or pipe).

@@ -29,6 +29,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::process::ChildTerminator;
+use crate::process::InitialStdinWrite;
 use crate::process::ProcessHandle;
 use crate::process::ProcessSignal;
 use crate::process::PtyHandles;
@@ -179,6 +180,7 @@ async fn spawn_process_portable(
     let killer = child.clone_killer();
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (initial_stdin_tx, mut initial_stdin_rx) = mpsc::channel::<InitialStdinWrite>(1);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (_stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(1);
     let mut reader = pair.master.try_clone_reader()?;
@@ -207,13 +209,40 @@ async fn spawn_process_portable(
         async move {
             #[cfg(windows)]
             let mut windows_input = crate::WindowsTtyInputNormalizer::default();
-            while let Some(bytes) = writer_rx.recv().await {
-                #[cfg(windows)]
-                let bytes = windows_input.normalize(&bytes);
-                let mut guard = writer.lock().await;
-                use std::io::Write;
-                let _ = guard.write_all(&bytes);
-                let _ = guard.flush();
+            let mut writer_open = true;
+            let mut initial_stdin_open = true;
+            while writer_open || initial_stdin_open {
+                tokio::select! {
+                    bytes = writer_rx.recv(), if writer_open => {
+                        if let Some(bytes) = bytes {
+                            #[cfg(windows)]
+                            let bytes = windows_input.normalize(&bytes);
+                            let mut guard = writer.lock().await;
+                            use std::io::Write;
+                            let _ = guard.write_all(&bytes);
+                            let _ = guard.flush();
+                        } else {
+                            writer_open = false;
+                        }
+                    }
+                    request = initial_stdin_rx.recv(), if initial_stdin_open => {
+                        let Some(request) = request else {
+                            initial_stdin_open = false;
+                            continue;
+                        };
+                        let (bytes, result_tx) = request.into_parts();
+                        #[cfg(windows)]
+                        let bytes = windows_input.normalize(&bytes);
+                        let mut guard = writer.lock().await;
+                        use std::io::Write;
+                        let result = guard.write_all(&bytes).and_then(|()| guard.flush());
+                        let failed = result.is_err();
+                        let _ = result_tx.send(result);
+                        if failed {
+                            break;
+                        }
+                    }
+                }
             }
         }
     });
@@ -246,6 +275,7 @@ async fn spawn_process_portable(
 
     let handle = ProcessHandle::new(
         writer_tx,
+        Some(initial_stdin_tx),
         Box::new(PtyChildTerminator {
             killer,
             #[cfg(unix)]
@@ -343,6 +373,7 @@ async fn spawn_process_preserving_fds(
     let process_group_id = child.id();
 
     let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (initial_stdin_tx, mut initial_stdin_rx) = mpsc::channel::<InitialStdinWrite>(1);
     let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(128);
     let (_stderr_tx, stderr_rx) = mpsc::channel::<Vec<u8>>(1);
     let mut reader = master.try_clone()?;
@@ -368,11 +399,36 @@ async fn spawn_process_preserving_fds(
     let writer_handle: JoinHandle<()> = tokio::spawn({
         let writer = Arc::clone(&writer);
         async move {
-            while let Some(bytes) = writer_rx.recv().await {
-                let mut guard = writer.lock().await;
-                use std::io::Write;
-                let _ = guard.write_all(&bytes);
-                let _ = guard.flush();
+            let mut writer_open = true;
+            let mut initial_stdin_open = true;
+            while writer_open || initial_stdin_open {
+                tokio::select! {
+                    bytes = writer_rx.recv(), if writer_open => {
+                        if let Some(bytes) = bytes {
+                            let mut guard = writer.lock().await;
+                            use std::io::Write;
+                            let _ = guard.write_all(&bytes);
+                            let _ = guard.flush();
+                        } else {
+                            writer_open = false;
+                        }
+                    }
+                    request = initial_stdin_rx.recv(), if initial_stdin_open => {
+                        let Some(request) = request else {
+                            initial_stdin_open = false;
+                            continue;
+                        };
+                        let (bytes, result_tx) = request.into_parts();
+                        let mut guard = writer.lock().await;
+                        use std::io::Write;
+                        let result = guard.write_all(&bytes).and_then(|()| guard.flush());
+                        let failed = result.is_err();
+                        let _ = result_tx.send(result);
+                        if failed {
+                            break;
+                        }
+                    }
+                }
             }
         }
     });
@@ -404,6 +460,7 @@ async fn spawn_process_preserving_fds(
 
     let handle = ProcessHandle::new(
         writer_tx,
+        Some(initial_stdin_tx),
         Box::new(RawPidTerminator { process_group_id }),
         reader_handle,
         Vec::new(),

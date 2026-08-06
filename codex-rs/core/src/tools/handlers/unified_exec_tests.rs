@@ -233,6 +233,55 @@ async fn shell_mode_for_environment_uses_direct_mode_for_remote_environments() -
     Ok(())
 }
 
+#[test]
+fn exec_command_stdin_parses_json_escapes_as_text() -> anyhow::Result<()> {
+    let json = serde_json::json!({
+        "cmd": "cat",
+        "stdin": "first\nsecond\tvalue\r\n",
+    })
+    .to_string();
+
+    let args: ExecCommandArgs = parse_arguments(&json)?;
+
+    assert_eq!(args.stdin.as_deref(), Some("first\nsecond\tvalue\r\n"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn exec_command_stdin_is_excluded_from_hook_payload_and_survives_rewrite() {
+    let payload = ToolPayload::Function {
+        arguments: serde_json::json!({
+            "cmd": "cat",
+            "stdin": "first\nsecond\n",
+        })
+        .to_string(),
+    };
+    let invocation = invocation_for_payload("exec_command", "call-stdin", payload).await;
+    let handler = ExecCommandHandler::default();
+
+    assert_eq!(
+        handler.pre_tool_use_payload(&invocation),
+        Some(crate::tools::registry::PreToolUsePayload {
+            tool_name: HookToolName::bash(),
+            tool_input: serde_json::json!({ "command": "cat" }),
+        })
+    );
+
+    let updated = handler
+        .with_updated_hook_input(
+            invocation,
+            serde_json::json!({ "command": "printf rewritten" }),
+        )
+        .expect("hook rewrite should succeed");
+    let ToolPayload::Function { arguments } = updated.payload else {
+        panic!("exec_command should remain a function payload");
+    };
+    let args: ExecCommandArgs =
+        parse_arguments(&arguments).expect("rewritten arguments should parse");
+    assert_eq!(args.cmd, "printf rewritten");
+    assert_eq!(args.stdin.as_deref(), Some("first\nsecond\n"));
+}
+
 #[tokio::test]
 async fn exec_command_pre_tool_use_payload_uses_raw_command() {
     let payload = ToolPayload::Function {

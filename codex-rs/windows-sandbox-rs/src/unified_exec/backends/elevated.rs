@@ -1,5 +1,6 @@
 use super::windows_common::finish_driver_spawn;
 use super::windows_common::make_runner_resizer;
+use super::windows_common::multiplex_driver_stdin;
 use super::windows_common::start_runner_pipe_writer;
 use super::windows_common::start_runner_stdin_writer;
 use super::windows_common::start_runner_stdout_reader;
@@ -18,6 +19,7 @@ use crate::spawn_prep::prepare_elevated_spawn_context_for_permissions;
 use anyhow::Result;
 use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_pty::InitialStdinWrite;
 use codex_utils_pty::ProcessDriver;
 use codex_utils_pty::SpawnedProcess;
 use std::collections::HashMap;
@@ -190,6 +192,8 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
     let (pipe_write, pipe_read) = transport.into_files();
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (initial_stdin_tx, initial_stdin_rx) = mpsc::channel::<InitialStdinWrite>(1);
+    let writer_rx = multiplex_driver_stdin(writer_rx, initial_stdin_rx);
     let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);
     let stderr_rx = if tty {
         None
@@ -197,9 +201,16 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
         Some(broadcast::channel::<Vec<u8>>(256))
     };
     let (exit_tx, exit_rx) = oneshot::channel::<i32>();
+    let (initial_result_tx, initial_result_rx) = std::sync::mpsc::channel();
 
     let outbound_tx = start_runner_pipe_writer(pipe_write);
-    let writer_handle = start_runner_stdin_writer(writer_rx, outbound_tx.clone(), tty, stdin_open);
+    let writer_handle = start_runner_stdin_writer(
+        writer_rx,
+        outbound_tx.clone(),
+        initial_result_rx,
+        tty,
+        stdin_open,
+    );
     let terminator = {
         let outbound_tx = outbound_tx.clone();
         Some(Box::new(move || {
@@ -216,12 +227,14 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated_for_permission_profil
         pipe_read,
         stdout_tx,
         stderr_rx.as_ref().map(|(tx, _rx)| tx.clone()),
+        initial_result_tx,
         exit_tx,
     );
 
     Ok(finish_driver_spawn(
         ProcessDriver {
             writer_tx,
+            initial_stdin_tx: Some(initial_stdin_tx),
             stdout_rx,
             stderr_rx: stderr_rx.map(|(_tx, rx)| rx),
             exit_rx,
