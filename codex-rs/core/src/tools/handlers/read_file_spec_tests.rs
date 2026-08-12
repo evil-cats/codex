@@ -27,6 +27,15 @@ fn read_file_tool_declares_core_arguments_without_token_limit() {
     assert!(tool.description.contains("instead of shell readers"));
     assert!(tool.description.contains("Continue using rg/rg --files"));
     assert!(tool.description.contains("complete=yes/no"));
+    assert!(tool.description.contains("Status: already_in_context"));
+    assert!(
+        tool.description
+            .contains("one earlier content-bearing output")
+    );
+    assert!(
+        tool.description
+            .contains("do not assemble it from partial overlaps")
+    );
 }
 
 #[test]

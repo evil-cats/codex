@@ -4,7 +4,11 @@
 //! `PathUri` выбранного environment и читает обычный текстовый UTF-8 файл через
 //! его filesystem с действующими sandbox-ограничениями. Формирование диапазона,
 //! metadata полноты и усечение по целым строкам остаются локальным контрактом
-//! этого обработчика.
+//! этого обработчика. Перед выдачей содержимого обработчик также проверяет,
+//! сохранился ли один полностью покрывающий output в активном model context.
+
+#[path = "read_file_context.rs"]
+mod read_file_context;
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -20,6 +24,11 @@ use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_utils_output_truncation::approx_token_count;
+use read_file_context::ReadFileContextIndex;
+use read_file_context::ReadFileContextRequest;
+use read_file_context::ReadFileSource;
+use read_file_context::find_context_coverage;
+use read_file_context::render_already_in_context;
 use serde::Deserialize;
 
 pub struct ReadFileHandler {
@@ -84,8 +93,10 @@ impl ReadFileHandler {
         invocation: ToolInvocation,
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let ToolInvocation {
+            session,
             turn,
             step_context,
+            call_id,
             payload,
             ..
         } = invocation;
@@ -129,15 +140,13 @@ impl ReadFileHandler {
             .await
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
-                    "unable to locate file at `{}`: {error}",
-                    model_visible_path
+                    "unable to locate file at `{model_visible_path}`: {error}"
                 ))
             })?;
 
         if !metadata.is_file {
             return Err(FunctionCallError::RespondToModel(format!(
-                "read_file path `{}` is not a regular file",
-                model_visible_path
+                "read_file path `{model_visible_path}` is not a regular file"
             )));
         }
 
@@ -146,11 +155,46 @@ impl ReadFileHandler {
             .await
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
-                    "unable to read UTF-8 text file at `{}`: {error}",
-                    model_visible_path
+                    "unable to read UTF-8 text file at `{model_visible_path}`: {error}"
                 ))
             })?;
-        let output = read_file_output(&args, &content, turn.config.read_file_content_max_tokens)?;
+        let lines = split_lines_preserving_endings(&content);
+        let requested_range = normalize_range(&args, lines.len())?;
+        let current_source =
+            ReadFileSource::new(turn_environment.environment_id.clone(), path_uri.clone());
+        let context_index = session
+            .services
+            .thread_extension_data
+            .get_or_init(ReadFileContextIndex::default);
+        let history = session
+            .clone_history()
+            .await
+            .for_prompt(&turn.model_info.input_modalities);
+        context_index.synchronize(&history);
+        let contextual_output = if let Some(requested_range) = requested_range {
+            let request = ReadFileContextRequest {
+                args: &args,
+                source: current_source.clone(),
+                lines: &lines,
+                requested_range,
+            };
+            let coverage = find_context_coverage(&history, &request, &context_index);
+            coverage.map(|coverage| render_already_in_context(&args, requested_range, &coverage))
+        } else {
+            None
+        };
+        let output = contextual_output.map_or_else(
+            || {
+                fresh_read_file_output(
+                    &args,
+                    &lines,
+                    requested_range,
+                    turn.config.read_file_content_max_tokens,
+                )
+            },
+            Ok,
+        )?;
+        context_index.record(call_id, current_source);
 
         Ok(boxed_tool_output(FunctionToolOutput::from_text(
             output,
@@ -172,8 +216,18 @@ fn read_file_output(
 ) -> Result<String, FunctionCallError> {
     let lines = split_lines_preserving_endings(content);
     let requested_range = normalize_range(args, lines.len())?;
-    let returned = select_returned_range(&lines, requested_range, content_max_tokens)?;
-    Ok(render_output(args, &lines, requested_range, returned))
+    fresh_read_file_output(args, &lines, requested_range, content_max_tokens)
+}
+
+/// Строит обычный content-bearing output после нормализации диапазона.
+fn fresh_read_file_output(
+    args: &ReadFileArgs,
+    lines: &[&str],
+    requested_range: Option<LineRange>,
+    content_max_tokens: usize,
+) -> Result<String, FunctionCallError> {
+    let returned = select_returned_range(lines, requested_range, content_max_tokens)?;
+    Ok(render_output(args, lines, requested_range, returned))
 }
 
 fn normalize_range(
@@ -288,14 +342,21 @@ fn render_output(
         return output;
     };
 
-    if args.line_numbers {
-        for line_number in range.start..=range.end {
-            output.push_str(&format!("{} | {}", line_number, lines[line_number - 1]));
-        }
-    } else {
-        output.push_str(&raw_lines_content(lines, range.start, range.end));
+    output.push_str(&render_lines_content(lines, range, args.line_numbers));
+
+    output
+}
+
+/// Рендерит только содержимое диапазона в точности так, как его видит модель.
+fn render_lines_content(lines: &[&str], range: LineRange, line_numbers: bool) -> String {
+    if !line_numbers {
+        return raw_lines_content(lines, range.start, range.end);
     }
 
+    let mut output = String::new();
+    for line_number in range.start..=range.end {
+        output.push_str(&format!("{} | {}", line_number, lines[line_number - 1]));
+    }
     output
 }
 

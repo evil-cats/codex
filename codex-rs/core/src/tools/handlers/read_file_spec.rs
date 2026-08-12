@@ -1,4 +1,4 @@
-//! Responses API tool definition for reading UTF-8 text files.
+//! Описание Responses API tool для чтения текстовых UTF-8 файлов.
 
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -15,7 +15,11 @@ nl, head, or tail. Continue using rg/rg --files for search and discovery. The \
 result includes total/requested/returned line metadata and complete=yes/no; \
 content may be shortened only by dropping whole trailing lines to fit the \
 configured content token limit. If complete=no, continue with another range \
-before treating the requested content as fully read.";
+before treating the requested content as fully read. A repeated read may return \
+Status: already_in_context with CoveredBy when one earlier content-bearing output \
+still present in the active model context fully covers the unchanged requested \
+text. Otherwise the complete newly requested file or range is returned normally; \
+do not assemble it from partial overlaps or multiple earlier outputs.";
 
 pub fn create_read_file_tool(include_environment_id: bool) -> ToolSpec {
     let mut properties = BTreeMap::from([

@@ -106,6 +106,8 @@ mod prompt_cache_key;
 mod prompt_caching;
 mod prompt_debug_tests;
 mod quota_exceeded;
+#[cfg(not(target_os = "windows"))]
+mod read_file_context;
 mod realtime_conversation;
 mod realtime_initial_items;
 mod remote_env;
