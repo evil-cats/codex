@@ -2,8 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-07-29
-source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
+updated: 2026-08-13
 ---
 
 # Environment context: `project_name`
@@ -12,19 +11,6 @@ source_scope: 67319964b1090368a256b2cb50bc4d4ea44f3630..working-tree
 
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет видимое модели
 имя проекта в `<environment_context>` через тег `<project_name>`.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Пользовательская цель | Показывать в `environment_context` тот же смысловой `project-name`, который уже можно отображать в `status_line` |
-| Видимый модели тег | `<project_name>...</project_name>` |
-| Источник значения | первый workspace root основного окружения из `TurnEnvironmentSnapshot::primary()` |
-| Формат значения | имя последнего компонента первого workspace root, с резервом в виде полного пути |
-| Основной файл | `codex-rs/core/src/context/world_state/environment.rs` |
-| Вспомогательный файл | `codex-rs/core/src/context/environment_context.rs` |
-| Тестовый файл | `codex-rs/core/src/context/world_state/environment_render_tests.rs` |
-| Локальный режим | локально только разработка, поиск и `diff`; Rust-сборка и тесты выполняются на `f-ms-dev` |
-| Удаленный checkout | `slader@f-ms-dev:/home/slader/Projects/codex` |
 
 ## Зачем это нужно
 
@@ -74,8 +60,7 @@ TUI уже умеет показывать `project-name` в поверхнос�
 2. `RenderedEnvironments` переносит это поле в рендеримый фрагмент, чтобы полный
    render и diff-render использовали один порядок вывода.
 3. `EnvironmentsSnapshot` переносит это поле в сохраненный базовый снимок
-   world-state, чтобы `rust-v0.143.0` сравнивал значение через новую
-   snapshot-модель.
+   world-state, чтобы значение участвовало в текущей snapshot-модели diff.
 4. В отрендеренном `<environment_context>` при наличии значения появляется строка:
 
    ```xml
@@ -129,11 +114,11 @@ TUI уже умеет показывать `project-name` в поверхнос�
 нельзя: core используется не только в terminal UI, а видимый модели context
 должен собираться в одном месте независимо от интерфейса.
 
-Начиная с `rust-v0.145.0`, живые рабочие корни принадлежат объектам
-`TurnEnvironment`, выбранным для хода. `TurnEnvironmentSnapshot::primary()` дает
-основное готовое окружение, а его `TurnEnvironment::workspace_roots()` уже
-используется рядом для `FileSystemContext`, поэтому тот же срез корней подходит
-как источник имени проекта.
+Живые рабочие корни принадлежат объектам `TurnEnvironment`, выбранным для хода.
+`TurnEnvironmentSnapshot::primary()` даёт основное готовое окружение, а его
+`TurnEnvironment::workspace_roots()` уже используется рядом для
+`FileSystemContext`, поэтому тот же срез корней подходит как источник имени
+проекта.
 
 ### Почему берется первый workspace root
 
@@ -155,7 +140,7 @@ TUI уже умеет показывать `project-name` в поверхнос�
 взять `workspace_roots`, а если их нет, существующая логика резервного перехода
 на `cwd` сохраняет работоспособность.
 
-## Пошаговое воспроизведение
+## Порядок повторения при переносе
 
 ### 1. Расширить `EnvironmentsState`
 
@@ -284,10 +269,10 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
 потому что значение должно проходить XML-escaping так же, как другие текстовые
 элементы.
 
-### 7. Разрешить перенос после upstream-реорганизации
+### 7. Сохранить текущую границу world-state
 
-В `rust-v0.143.0` рендеринг `<environment_context>`, видимого модели, находится в
-`world_state/environment.rs`, а `environment_context.rs` остается владельцем
+Рендеринг `<environment_context>`, видимого модели, находится в
+`world_state/environment.rs`, а `environment_context.rs` остаётся владельцем
 общих `FileSystemContext`, `NetworkContext` и XML helper-функций.
 
 При разрешении конфликта нельзя возвращать старую структуру `EnvironmentContext`
@@ -298,167 +283,23 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
 
 ## Проверки
 
-### Смысловое покрытие
-
-Обязательное покрытие этой карточки:
-
-- `serialize_environment_context_with_project_name`:
-  - создает `EnvironmentsState` через тестовый helper `environment_state(...)`;
-  - вручную ставит `context.project_name = Some("repo & docs".to_string())`;
-  - ожидает строку `<project_name>repo &amp; docs</project_name>`;
-  - проверяет порядок: после `shell`, перед `current_date`.
-- `turn_context_item_project_name_uses_workspace_root_name`:
-  - задает `cwd = /repo/nested`;
-  - задает `workspace_roots = Some(vec![/repo])`;
-  - создает context через `EnvironmentsState::from_turn_context_item(...)`;
-  - проверяет, что отрендеренный context содержит
-    `<project_name>repo</project_name>`;
-  - тем самым подтверждает, что используется workspace root, а не имя последнего
-    компонента `cwd`.
-- `diff_environment_context_includes_changed_project_name`:
-  - создает `before` через `EnvironmentsState::from_turn_context_item(...)` с
-    root `/old-repo`;
-  - создает `after` из `before.clone()` и меняет `project_name` на
-    `Some("new-repo")`;
-  - создает предыдущий snapshot через `WorldStateSection::snapshot(&before)`;
-  - вызывает `WorldStateSection::render_diff(...)` с
-    `PreviousSectionState::Known(&previous)`;
-  - проверяет наличие `<project_name>new-repo</project_name>`;
-  - проверяет отсутствие `<project_name>old-repo</project_name>`.
-
-Существующие тесты для восстановления `filesystem` остаются важными, потому что
-новая логика переиспользует тот же `workspace_roots_from_turn_context_item`.
-
-### Владелец исполняемой карты
-
-Проверки уровня карточки запускает skill-owned команда `fork tests`.
-Карточка не является нормативным runbook запуска `just` или `cargo`: внутренние
-argv хранятся только как данные для `fork tests` в блоке `fork-tests.v1` ниже.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "environment context",
+      "purpose": "project name в полном environment context, replay, snapshot и diff",
       "argv": ["just", "test", "-p", "codex-core", "environment_context"]
     }
   ]
 }
 ```
 
-### Дополнительные gates
+## Риски и ограничения
 
-- Доработка меняет видимый модели контекст в `codex-core`, поэтому
-  регрессионное покрытие уровня карточки принадлежит `fork tests` и блоку
-  `fork-tests.v1`.
-- Схема `Config`, протокол app-server и внешние API не меняются; отдельные
-  проверки генераторов schema/API для этой карточки не требуются.
-- TUI-поверхности не меняются; проверка snapshots для `codex-tui` не требуется.
-- `fork format`, широкий `fork tests` и `fork build-fast` относятся к общему
-  проверочному проходу родительского агента, а не к runbook этой карточки.
-- Локальный checkout в историческом описании использовался для разработки,
-  чтения и проверки diff; сборка и Rust-тесты в старом workflow выполнялись на
-  `f-ms-dev`. Текущие запуски должны проходить через skill-owned workflow, если
-  родительский агент решит их выполнять.
-
-### Исторические результаты
-
-Историческая карточка фиксировала следующие команды для повторения. Они
-сохранены как подтверждение старого workflow и не являются текущим нормативным
-runbook запуска. Пути в этом блоке относятся к первоначальной раскладке до
-upstream-переноса рендеринга environment context в `world_state/environment.rs`:
-
-```bash
-git diff --check -- \
-  codex-rs/core/src/context/environment_context.rs \
-  codex-rs/core/src/context/environment_context_tests.rs
-
-rg -n "project_name|effective_workspace_roots|workspace_roots_from_turn_context_item" \
-  codex-rs/core/src/context/environment_context.rs \
-  codex-rs/core/src/context/environment_context_tests.rs
-```
-
-Исторический блок для `f-ms-dev` фиксировал Rust-форматирование, сборку и
-тесты на удаленном checkout:
-
-```bash
-ssh slader@f-ms-dev 'git -C /home/slader/Projects/codex diff --check -- codex-rs/core/src/context/environment_context.rs codex-rs/core/src/context/environment_context_tests.rs'
-
-ssh slader@f-ms-dev 'cd /home/slader/Projects/codex/codex-rs && just fmt'
-
-ssh slader@f-ms-dev 'cd /home/slader/Projects/codex/codex-rs && just test -p codex-core environment_context'
-```
-
-Старый блок дополнительно фиксировал условное действие для `cargo-nextest` на
-`f-ms-dev`:
-
-```bash
-cargo install --locked cargo-nextest
-```
-
-Для полного теста crate старая карточка фиксировала remote test environment:
-
-```bash
-ssh slader@f-ms-dev 'cd /home/slader/Projects/codex && scripts/test-remote-env.sh'
-```
-
-Старая инструкция также указывала: если полный тест crate нужен для
-дополнительной уверенности, использовать remote test environment, затем выполнить
-`just test -p codex-core` с переменными из вывода `scripts/test-remote-env.sh`.
-
-Проверки, выполненные для первоначального переноса этой доработки:
-
-| Проверка | Где | Результат |
-| --- | --- | --- |
-| `git diff --check` для двух измененных core-файлов | локально | passed |
-| `git diff --check` для двух измененных core-файлов | `f-ms-dev` | passed |
-| SHA256 измененных файлов local vs remote | локально и `f-ms-dev` | совпали |
-| `just fmt` | локально и `f-ms-dev` | часть Rust formatter прошла, общая команда завершалась ошибкой из-за отсутствующего `uv` |
-| `just test -p codex-core environment_context` | `f-ms-dev` | passed, 22 tests passed |
-| `bench-smoke` после узкого теста | `f-ms-dev` | passed |
-| `just test -p codex-core` без remote env | `f-ms-dev` | failed из-за не связанной с доработкой тестовой инфраструктуры |
-| `just test -p codex-core` с remote env | `f-ms-dev` | failed из-за не связанной с доработкой тестовой инфраструктуры |
-
-SHA256 контрольные суммы измененных файлов:
-
-| Файл | SHA256 |
-| --- | --- |
-| `codex-rs/core/src/context/environment_context.rs` | `2d0e9c481b5f6caef44254cf743c41b0b2e17a88f964d72e292501a07beb556c` |
-| `codex-rs/core/src/context/environment_context_tests.rs` | `25b1120b741406cc08f0f40925049ec22efa11432f78bd4fede5d318dbe6a6bc` |
-
-Причины падения полных тестов crate на `f-ms-dev` были инфраструктурными и не
-относились к этой доработке:
-
-- `test_stdio_server` binary не найден;
-- `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`;
-- request-permissions/network-denial remote exec failures.
-
-После запуска remote env очистка проверена командой:
-
-```bash
-docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
-```
-
-Команда не вернула контейнеров `codex-remote-test-env`.
-
-### Известные падения и пропуски
-
-- Локальная Rust-сборка и локальные Rust-тесты не выполнялись: исторический
-  локальный checkout использовался только для разработки, чтения и проверки
-  diff.
-- Форматирование repo recipe в историческом запуске проходило часть Rust
-  formatter, но общий шаг завершался ошибкой из-за отсутствующего `uv`.
-- Полный crate-level проход на `f-ms-dev` с remote env и без него падал по
-  инфраструктурным причинам, не связанным с этой доработкой:
-  - `test_stdio_server` binary не найден;
-  - `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`;
-  - request-permissions/network-denial remote exec failures.
-- Установка `cargo-nextest` была зафиксирована в старой карточке только как
-  условие для узкого теста при отсутствии инструмента на `f-ms-dev`; это не
-  является отдельным текущим gate карточки.
-
-## Ограничения и граничные случаи
+### Ограничения и граничные случаи
 
 - `project_name` является подсказкой, а не источником прав доступа. Реальные
   writable/read-only roots по-прежнему задаются в `filesystem`.
@@ -474,7 +315,7 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 - Не менять написание тега на `<project-name>`: это нарушит стиль соседних
   структурированных полей.
 
-## Риски
+### Риски
 
 - Если будущий рефакторинг изменит выбор основного `TurnEnvironment` или
   `TurnEnvironment::workspace_roots()`, нужно проверить, что `project_name` и
@@ -487,69 +328,3 @@ docker ps --format "{{.Names}}" | grep codex-remote-test-env || true
 - Если `WorldStateSection::render_diff(...)` начнет исключать неизменившиеся
   значения turn context, нужно отдельно проверить, должен ли `project_name`
   оставаться в теле обновления.
-
-## Аудит миграции `rust-v0.144.6`
-
-Проверка после слияния `rust-v0.144.6` не потребовала изменений Rust-кода:
-
-| Область | Результат |
-| --- | --- |
-| Вычисление project name | сохранено: берется имя последнего компонента первого `effective_workspace_roots`, причем `project_name` и filesystem используют один снимок roots |
-| Видимый модели контракт | сохранено: `project_name` участвует в полном render, snapshot и diff и выводится как `<project_name>` перед `current_date` |
-| Экранирование и резервное значение | сохранено: значение проходит через `push_xml_escaped_text`; для пути без последнего компонента используется полный путь через `to_string_lossy()` |
-| Регрессионное покрытие | сохранены `serialize_environment_context_with_project_name`, `turn_context_item_project_name_uses_workspace_root_name` и `diff_environment_context_includes_changed_project_name` |
-
-Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
-Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
-проход.
-
-## Аудит миграции `rust-v0.145.0`
-
-Upstream перенес владение живыми workspace roots из `Config` в объекты
-`TurnEnvironment`, выбранные для хода, и изменил тип roots для рендеринга с
-`AbsolutePathBuf` на `PathUri`. При разрешении конфликта контракт перенесён на
-новую архитектуру:
-
-| Область | Результат |
-| --- | --- |
-| Источник живого project name | первый workspace root из `TurnEnvironmentSnapshot::primary()` |
-| Согласованность с filesystem | `project_name` и `FileSystemContext` используют один срез `TurnEnvironment::workspace_roots()` |
-| Совместимое восстановление | roots из `TurnContextItem` преобразуются в `PathUri` один раз перед вычислением `project_name` и filesystem |
-| Формат и diff | сохранены `<project_name>`, XML escaping, snapshot и сравнение при `render_diff(...)` |
-| Регрессионное покрытие | сохранены три обязательных теста и блок `fork-tests.v1` |
-
-Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
-Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
-проход.
-
-## Аудит миграции `rust-v0.146.0`
-
-Проверка после слияния `rust-v0.146.0` не потребовала изменений Rust-кода:
-
-| Область | Результат |
-| --- | --- |
-| Источник project name | сохранён: используется первый workspace root из основного `TurnEnvironment` |
-| Согласованность с filesystem | `project_name` и `FileSystemContext` по-прежнему строятся из одного снимка roots |
-| Формат и восстановление | сохранены `<project_name>`, XML escaping, replay, snapshot и diff |
-| Регрессионное покрытие | сохранены три обязательных теста и блок `fork-tests.v1` |
-
-Добавленное upstream поле `missing_path_behavior: None` в тестовой функции
-`workspace_write_permission_profile_with_private_denials()` относится к форме
-`FileSystemSandboxEntry` и не меняет контракт `project_name`.
-
-Тесты, сборка, генераторы и форматирование в one-card проходе не запускались.
-Узкий тест из `fork-tests.v1` и общие gates выполняет родительский проверочный
-проход.
-
-## Проверка покрытия
-
-| Требование | Статус | Где покрыто |
-| --- | --- | --- |
-| Добавить видимый модели project name | перенесено | `EnvironmentsState.project_name` и `RenderedEnvironments::body(...)` |
-| Использовать тот же смысл, что `status_line` `project-name` | перенесено | имя последнего компонента первого workspace root основного `TurnEnvironment` |
-| Не связывать core с TUI | перенесено | источник `TurnEnvironmentSnapshot::primary()` |
-| Не расширять protocol без нужды | перенесено | восстановление из `TurnContextItem.workspace_roots` |
-| Сохранять XML escaping | перенесено | `push_optional_element`, `push_xml_escaped_text` и test с `repo & docs` |
-| Проверить workspace root вместо `cwd` | перенесено | `turn_context_item_project_name_uses_workspace_root_name` |
-| Проверить diff при смене проекта | перенесено | `EnvironmentsSnapshot` и `diff_environment_context_includes_changed_project_name` |
-| Собирать и тестировать не локально, а на `f-ms-dev` | перенесено | `## Проверки`, исторические результаты и известные пропуски |

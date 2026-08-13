@@ -2,8 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-07-29
-source_scope: rust-v0.137.0..HEAD
+updated: 2026-08-13
 ---
 
 # Terminal title: `session-label`
@@ -13,16 +12,6 @@ source_scope: rust-v0.137.0..HEAD
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет статический
 label в terminal title TUI через config key `tui.terminal_title_label` и item
 `session-label`.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Основной commit | `268bf4302 Add session label to terminal title` |
-| Migration repair | `46cdb741f Fix Hermione 0.137 release-fast build` |
-| Config key | `[tui].terminal_title_label` |
-| Terminal title item | `session-label` |
-| Пример Hermione config | `terminal_title_label = "hermione"` и `terminal_title = ["session-label", "project-name", "run-state"]` |
-| Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
 ## Зачем это нужно
 
@@ -111,7 +100,15 @@ items вроде project name, current dir или run state не всегда п
     `tui_terminal_title_label: None`, поскольку sample не получает значение
     через общий config loading.
 
-## Пошаговое воспроизведение
+## Архитектурное решение
+
+Config layer владеет optional label, типизированные TUI items проводят его в
+selector preview и terminal title, а `terminal_title.rs` централизованно
+владеет санитизацией и OSC I/O. App lifecycle переносит кэш между `ChatWidget`
+и очищает управляемый title при завершении. Недоверенный текст из config никогда
+не обходит общий sanitizer.
+
+## Порядок повторения при переносе
 
 ### 1. Добавить config field
 
@@ -227,78 +224,14 @@ TerminalTitleItem::SessionLabel => {
 
 ## Проверки
 
-### Смысловое покрытие
-
-Проверочное покрытие этой карточки должно подтверждать:
-
-- Слой config/TOML принимает опциональный ключ `[tui].terminal_title_label`.
-- Effective `Config` сохраняет значение как `tui_terminal_title_label`; это
-  отдельный обязательный слой, потому что при merge `0.137.0` поле однажды
-  потерялось именно там.
-- Тест `load_config_resolves_tui_terminal_title_label` проверяет, что значение
-  `[tui].terminal_title_label` доходит до effective `Config`.
-- Элемент `session-label` для terminal title доступен в selector, preview model и
-  runtime-рендеринге.
-- Если значение config отсутствует, сегмент не выводится; если значение есть, строка
-  обрезается через `ChatWidget::truncate_terminal_title_part(..., 24)`.
-- Значение label из config не обходит общий безопасный путь terminal title:
-  итоговая строка санитизируется непосредственно перед OSC-записью.
-- Lifecycle terminal title сохраняет cache/clear contract:
-  - одинаковый title повторно не записывается;
-  - пустой настроенный список очищает ранее управляемый title;
-  - `NoVisibleContent` после санитизации также очищает ранее управляемый title;
-  - cache обновляется только после успешного результата `Applied`.
-- `App::replace_chat_widget` сохраняет `last_terminal_title` при смене thread,
-  чтобы новый `ChatWidget` продолжал владеть уже записанным OSC title без лишней
-  последовательности очистки и записи.
-- Тест `terminal_title_can_include_configured_session_label`:
-  - создаёт `ChatWidget`;
-  - ставит `chat.config.tui_terminal_title_label = Some("hermione")`;
-  - ставит `tui_terminal_title = ["session-label", "project-name", "run-state"]`;
-  - вызывает `refresh_terminal_title`;
-  - ожидает:
-
-    ```text
-     hermione | project | Ready
-     ```
-
-- Тест `terminal_title_omits_absent_session_label_and_truncates_configured_value`
-  проверяет, что отсутствующий label пропускается, а настроенное значение
-  ограничивается 24 символами.
-- Тест `empty_terminal_title_selection_clears_cached_title` проверяет очистку
-  кэша ранее управляемого title при пустом списке configured items.
-- Snapshot-тесты показывают новый item `session-label` в selector.
-- Unit tests в `codex-rs/tui/src/terminal_title.rs` проверяют удаление
-  управляющих и невидимых/bidi codepoints, ограничение длины и OSC 0 с
-  terminator `BEL`.
-- `set_terminal_title` и `clear_terminal_title` проверяют terminal support через
-  `stdout().is_terminal()`; `SetWindowTitle` объявляет ANSI support на Windows.
-- `App::drop` вызывает `clear_managed_terminal_title`; lifecycle намеренно
-  очищает управляемый title, но не пытается восстановить предыдущий.
-- Config-тесты обновлены с `terminal_title_label: None` в expected defaults.
-- `codex-thread-manager-sample` компилируется с
-  `tui_terminal_title_label: None` при ручной инициализации `Config`.
-- `codex-rs/core/config.schema.json` содержит schema для
-  `terminal_title_label` после обновления config types.
-
-### Владелец исполняемой карты
-
-Регрессионным покрытием уровня карточки владеет skill-owned command `fork tests`.
-Внутренний argv для этой карточки живет в блоке `fork-tests.v1` ниже и является
-данными исполняемой карты, а не нормативной командой запуска из карточки.
-
-Идентификатор карточки для фильтрации и отчета `fork tests`:
-`fork-terminal-title-session-label`.
-
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "config terminal title label",
+      "purpose": "config loading и schema optional terminal session label",
       "argv": [
         "just",
         "test",
@@ -308,112 +241,22 @@ TerminalTitleItem::SessionLabel => {
       ]
     },
     {
-      "purpose": "terminal title",
+      "purpose": "санитизация, кэширование, lifecycle и selector snapshots terminal title",
       "argv": ["just", "test", "-p", "codex-tui", "terminal_title"]
     },
     {
-      "purpose": "thread manager sample config initializer",
+      "purpose": "sample Config явно инициализирует terminal title label",
       "argv": ["just", "test", "-p", "codex-thread-manager-sample", "--no-tests=pass"]
     }
   ]
 }
 ```
 
-### Дополнительные gates
+Дополнительно обязателен `fork generators`. Если selector UI меняется, нужно также обновить и проверить перечисленные в порядке переноса snapshot-файлы.
 
-- `fork generators` требуется, когда перенос этой карточки меняет config type
-  или schema artifact; исторический внутренний argv для этого gate сохранен в
-  `Исторические результаты`.
-- Snapshot review/accept требуется, если UI-вывод в selector snapshots меняется
-  намеренно. Затронутые snapshot-файлы перечислены в разделе
-  `Пошаговое воспроизведение`.
-- Быстрая release-сборка относится к общему fork gate после переноса карточек;
-  исторический argv из старой карточки сохранен в `Исторические результаты`.
-- Статический поиск `terminal_title_label|session-label|SessionLabel` и
-  проверка пробелов и чистоты diff сохраняются как диагностические проверки из
-  старой карточки, а не как канонический runbook текущей карточки.
+## Риски и ограничения
 
-### Исторические результаты
-
-- Исторически TUI-покрытие уровня карточки фиксировалось целевыми тестами
-  terminal title в `codex-tui`; текущая исполняемая карта сохраняет внутренний argv
-  `["just", "test", "-p", "codex-tui", "terminal_title"]` в
-  `fork-tests.v1`.
-- После merge `rust-v0.144.5` статическая сверка подтвердила, что этот test
-  target включает проверку контракта настроенного session label и
-  низкоуровневые unit tests санитизации и кодирования OSC в
-  `terminal_title.rs`.
-- После merge `rust-v0.144.6` статическая сверка подтвердила сохранность config
-  plumbing, derivation и truncation `session-label`, общего безопасного OSC
-  path, terminal support, cache/clear lifecycle, очистки на `App::drop` и пяти
-  selector snapshots. Upstream diff `rust-v0.144.5..rust-v0.144.6` не меняет
-  owner-файлы этой карточки.
-- После merge `rust-v0.145.0` статическая сверка подтвердила сохранность обоих
-  config-слоёв, runtime-рендеринга и preview `session-label`, ограничения label
-  до 24 символов, общего безопасного OSC path, cache/clear lifecycle, очистки
-  на `App::drop` и пяти selector snapshots. Upstream diff
-  `rust-v0.144.6..rust-v0.145.0` меняет `config/src/types.rs`, config schema,
-  config tests, effective config и `tui/src/app.rs`, но merge сохранил контракт
-  карточки без конфликтов в её owner-файлах.
-- После merge `rust-v0.146.0` аудит исходников
-  `rust-v0.145.0..rust-v0.146.0` не нашёл изменений символов реализации terminal
-  title или пяти selector snapshots. Upstream меняет общие config-файлы,
-  `thread-manager-sample/src/main.rs` и `tui/src/app/session_lifecycle.rs`, но
-  текущее объединённое дерево сохраняет оба config-слоя, schema, отображение
-  `session-label` в selector, preview и runtime, ограничение label до 24
-  символов, безопасный путь OSC, контракт
-  кэширования и очистки, передачу `last_terminal_title` при замене `ChatWidget`,
-  ручную инициализацию `Config` в `codex-thread-manager-sample`, очистку на
-  `App::drop` и всё snapshot-покрытие карточки. Неразрешённые блоки конфликта
-  слияния в `app/session_lifecycle.rs` находятся вне передачи terminal title и
-  этой карточкой не изменялись и не добавлялись в индекс Git.
-- В one-card проходе после merge `rust-v0.146.0`
-  `fork tests --mode list --card docs/fork/terminal-title-session-label.md`
-  распознал три проверки карточки, а `fork cards validate` проверил 25 карточек
-  без ошибок.
-- В том же one-card проходе запуск уровня карточки через
-  `fork tests --mode cards --card docs/fork/terminal-title-session-label.md
-  --version 0.146.0` остановился на проверке `migration map ready`: эта карточка
-  оставалась `inProgress`, а другие записи карты ещё имели статус `pending`.
-  Внутренние проверки `codex-core`, `codex-tui` и
-  `codex-thread-manager-sample` не выполнялись; их должен запустить общий
-  проверочный проход после финализации статусов карточек.
-- Зафиксированное ожидаемое runtime-значение для настроенного session label:
-
-  ```text
-  hermione | project | Ready
-  ```
-
-- Исторически слой config/schema проверялся обновлением
-  `codex-rs/core/config.schema.json` после изменения config type; старая карточка
-  фиксировала внутренний argv `just write-config-schema`.
-- Исторически config tests были обновлены с `terminal_title_label: None` в
-  expected defaults.
-- Исторически TUI snapshot-покрытие показывало новый item `session-label` в
-  вариантах selector popup.
-- Старая карточка также сохраняла локальные диагностические команды:
-  `rg -n "terminal_title_label|session-label|SessionLabel" codex-rs` и
-  `git diff --check`.
-- Датированных логов, exit codes или сохраненных путей к логам исходная карточка
-  не фиксировала.
-
-### Известные падения и пропуски
-
-- Checkpoint перед карточкой был пропущен по явному разрешению пользователя от
-  2026-06-08; это исторический skip, а не текущий блокер.
-- Известный сценарий отказа при миграции: при merge `0.137.0`
-  `Tui.terminal_title_label` существовал, но effective `Config` потерял поле.
-  Будущие переносы должны проверять оба слоя.
-- В исходной карточке не было зафиксированных активных красных результатов для
-  terminal title tests, config tests, генерации schema или snapshot review.
-- В one-card проходе после merge `rust-v0.144.5` project-level проверки не
-  запускались по контракту подагента; их должен выполнить общий проверочный
-  проход через skill-owned `fork tests` и при необходимости `fork generators`.
-- В one-card проходе после merge `rust-v0.144.6` tests, build, generators,
-  format, fix и markdownlint не запускались по явному ограничению задачи; их
-  должен выполнить общий проверочный проход.
-
-## Ограничения
+### Ограничения
 
 - `session-label` должен быть optional item: если config value absent, segment
   omitted, а не rendered as empty string.
@@ -425,7 +268,7 @@ TerminalTitleItem::SessionLabel => {
   и удаление управляющих/bidi символов принадлежат общему
   `terminal_title::set_terminal_title`.
 
-## Риски
+### Риски
 
 - Проверка только `config/src/types.rs` недостаточна. При merge `0.137.0`
   `Tui.terminal_title_label` существовал, но effective `Config` потерял поле.
@@ -437,20 +280,3 @@ TerminalTitleItem::SessionLabel => {
   `terminal_title.rs`.
 - Изменение clear/cache lifecycle может оставить stale title или вызвать
   повторные OSC-записи, даже если сам `SessionLabel` продолжает компилироваться.
-
-## Проверка покрытия
-
-| Пункт | Статус | Где отражено |
-| --- | --- | --- |
-| Добавить `[tui].terminal_title_label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
-| Добавить item `session-label` | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки` |
-| Прокинуть значение в effective `Config` | перенесено в карточку | `Итоговый контракт`, `Проверки`, `Риски` |
-| Сохранить ручную инициализацию `Config` в `codex-thread-manager-sample` | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Исторические результаты` |
-| Проверить рендеринг `hermione`, `project`, `Ready` | перенесено в карточку | `Проверки` |
-| Сохранить общий escaping значения label из config перед OSC | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Ограничения` |
-| Сохранить clear/cache lifecycle terminal title | перенесено в карточку | `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Риски` |
-| Сохранить `last_terminal_title` при замене `ChatWidget` | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Пошаговое воспроизведение`, `Проверки`, `Исторические результаты` |
-| Сохранить terminal support и очистку при завершении `App` без ложного обещания restore | перенесено в карточку | `Карта файлов`, `Итоговый контракт`, `Проверки`, `Исторические результаты` |
-| Сохранить владельца `fork tests` и блок `fork-tests.v1` | перенесено в карточку | `Проверки` |
-| Сохранить исторические команды и результаты проверок | перенесено в карточку | `Проверки` |
-| Зафиксировать migration gotcha из `0.137.0` | перенесено в карточку | `Пошаговое воспроизведение`, `Проверки`, `Риски` |

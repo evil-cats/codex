@@ -555,16 +555,31 @@ class MigrationMapTests(unittest.TestCase):
                     )
 
 
+class RetiredCommandTests(unittest.TestCase):
+    def test_parser_rejects_retired_source_coverage_command(self) -> None:
+        parser = fork_cli.build_parser()
+
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
+            with unittest.mock.patch("sys.stderr", stderr):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["check-source-coverage"])
+
+
 class CardValidationTests(unittest.TestCase):
     def write_card(
         self,
         *,
         transfer_body: str = "1. Проверь owner-файлы и перенеси контракт.",
-        historical_results: str = (
-            "| `just test -p codex-core read_file` | `passed` | Исторический запуск |"
+        architecture_section: str = textwrap.dedent(
+            """\
+            ## Архитектурное решение
+
+            Handler и исполняемая карта разделены.
+            """
         ),
-        owner_detail: str = "`fork tests` владеет запуском; внутренние argv не являются runbook.",
+        checks_intro: str = "Исполняемая карта проверяет runtime-контракт.",
         fork_tests_block: str = FORK_TESTS_BLOCK,
+        extra_sections: str = "",
     ) -> Path:
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
@@ -595,69 +610,153 @@ class CardValidationTests(unittest.TestCase):
 
                 Контракт сохраняется.
 
+                {{architecture_section}}
+
                 ## Порядок повторения при переносе
 
                 {{transfer_body}}
 
                 ## Проверки
 
-                ### Смысловое покрытие
-
-                | Контракт | Обязательность | Где покрывается |
-                | --- | --- | --- |
-                | Runtime-контракт | `required` | `read_file` |
-
-                ### Владелец исполняемой карты
-
-                {{owner_detail}}
+                {{checks_intro}}
 
                 {{fork_tests_block}}
 
-                ### Дополнительные gates
-
-                `not-applicable`: дополнительных gates нет.
-
-                ### Исторические результаты
-
-                | Проверка | Результат | Примечание |
-                | --- | --- | --- |
-                {{historical_results}}
-
-                ### Известные падения и пропуски
-
-                Нет.
-
                 ## Риски и ограничения
 
-                Нет.
+                Постоянные ограничения описаны здесь.
 
-                ## Проверка покрытия
-
-                | Смысловой пункт | Статус | Где покрыто |
-                | --- | --- | --- |
-                | Контракт | `перенесено в карточку` | `Итоговый контракт` |
+                {{extra_sections}}
                 """
         )
         path.write_text(
             template.replace("{{transfer_body}}", transfer_body)
-            .replace("{{owner_detail}}", owner_detail)
+            .replace("{{architecture_section}}", architecture_section)
+            .replace("{{checks_intro}}", checks_intro)
             .replace("{{fork_tests_block}}", fork_tests_block)
-            .replace("{{historical_results}}", historical_results),
+            .replace("{{extra_sections}}", extra_sections),
             encoding="utf-8",
         )
         return path
 
-    def test_allows_historical_command_results(self) -> None:
+    def test_accepts_minimal_current_state_card(self) -> None:
         errors = fork_cli.strict_card_validation_errors(self.write_card())
 
         self.assertEqual(errors, [])
 
+    def test_accepts_manual_test_exception_with_reason(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                checks_intro=(
+                    "manual-required: Поведение подтверждается интерактивно в TUI."
+                ),
+                fork_tests_block="",
+            )
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_rejects_missing_test_map_without_exception(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(fork_tests_block="")
+        )
+
+        self.assertTrue(
+            any("no fork-tests.v1 block and no" in error for error in errors),
+            errors,
+        )
+
+    def test_rejects_manual_test_exception_without_reason(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(
+                checks_intro="manual-required:",
+                fork_tests_block="",
+            )
+        )
+
+        self.assertTrue(
+            any("no fork-tests.v1 block and no" in error for error in errors),
+            errors,
+        )
+
+    def test_requires_architectural_decision_section(self) -> None:
+        errors = fork_cli.strict_card_validation_errors(
+            self.write_card(architecture_section="")
+        )
+
+        self.assertIn(
+            "missing owner-card section group: Архитектурное решение",
+            errors,
+        )
+
+    def test_rejects_noncanonical_owner_card_section_aliases(self) -> None:
+        aliases = (
+            "## Карта файлов и смысл правок",
+            "## Контракт внутренних документов",
+            "## Пошаговое воспроизведение",
+            "## Риски",
+            "## Примеры поведения",
+        )
+
+        for alias in aliases:
+            with self.subTest(alias=alias):
+                errors = fork_cli.strict_card_validation_errors(
+                    self.write_card(
+                        extra_sections=f"{alias}\n\nНеканонический раздел."
+                    )
+                )
+
+                self.assertTrue(
+                    any(
+                        "unexpected owner-card section is not allowed" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_rejects_legacy_owner_card_sections(self) -> None:
+        legacy_sections = (
+            "Согласованные решения:",
+            "Отклоненные альтернативы:",
+            "## Отклонённые альтернативы",
+            "### Смысловое покрытие",
+            "## Ожидаемое покрытие diff",
+            "### Исторические результаты",
+            "## Исторические lint-заметки",
+            "## Цепочка коммитов",
+            "## Commit chain",
+            "### Известные падения и пропуски",
+            "## Runtime, сборка и установка",
+            "## Выполнение, сборка и установка",
+            "## Проверка покрытия",
+            "## Аудит миграции `rust-v0.146.0`",
+            "## Миграция на `0.146.0`",
+            "## Migration repair: `0.146.0`",
+            "## Migration check: `0.146.0`",
+        )
+
+        for section in legacy_sections:
+            with self.subTest(section=section):
+                errors = fork_cli.strict_card_validation_errors(
+                    self.write_card(
+                        extra_sections=f"{section}\n\nУстаревшее содержимое."
+                    )
+                )
+
+                self.assertTrue(
+                    any(
+                        "legacy owner-card section is not allowed" in error
+                        for error in errors
+                    ),
+                    errors,
+                )
+
     def test_rejects_local_log_artifact_in_active_card(self) -> None:
         errors = fork_cli.strict_card_validation_errors(
             self.write_card(
-                historical_results=(
-                    "| `fork build-fast` | `passed` | Wrapper-log: "
-                    "`target/fork-migration/build-logs/build-fast.log` |"
+                checks_intro=(
+                    "Wrapper-log: "
+                    "`target/fork-migration/build-logs/build-fast.log`."
                 )
             )
         )
@@ -746,11 +845,11 @@ class CardValidationTests(unittest.TestCase):
             errors,
         )
 
-    def test_rejects_internal_fork_argv_in_checks_owner(self) -> None:
+    def test_rejects_command_runbook_in_checks(self) -> None:
         errors = fork_cli.strict_card_validation_errors(
             self.write_card(
-                owner_detail=(
-                    "`fork tests` владеет запуском через "
+                checks_intro=(
+                    "Запусти "
                     "`fork tests --mode cards --card fork-core-read-file-tool`."
                 )
             )
@@ -759,7 +858,6 @@ class CardValidationTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "runbook command leakage in `Проверки`" in error
-                and "Исторические результаты" in error
                 for error in errors
             ),
             errors,

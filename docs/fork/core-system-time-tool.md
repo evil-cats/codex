@@ -2,8 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-07-29
-source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
+updated: 2026-08-13
 ---
 
 # Утилитарный core tool `get_system_time`
@@ -13,31 +12,6 @@ source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет
 `get_system_time`: встроенный core tool для получения текущего времени host без
 запуска shell-команды `date`.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Имя tool | `get_system_time` |
-| Crate | `codex-core` |
-| Основной обработчик | `codex-rs/core/src/tools/handlers/system_time.rs` |
-| Описание tool | `codex-rs/core/src/tools/handlers/system_time_spec.rs` |
-| Регистрация | `codex-rs/core/src/tools/spec_plan.rs` |
-| Встроенный формат | `%H:%M` |
-| Встроенный offset | `local` |
-| Ответ по умолчанию | только поле `formatted` |
-| Полный ответ | `full: true` |
-| Карта prompt tool | `codex-rs/core/tests/suite/prompt_caching.rs` |
-| Удаленный host сборки | `f-ms-dev:/home/slader/Projects/codex` |
-
-Главное runtime-поведение:
-
-- вызов `{}` возвращает короткий JSON вида `{"formatted":"23:16"}`;
-- `format` принимает синтаксис `chrono` strftime, например `%H:%M`;
-- `offset` по умолчанию равен `local` и означает локальное время host system;
-- `offset` также принимает `utc`, `+HH:MM` и `-HH:MM`;
-- IANA timezone names вроде `Europe/Moscow` не поддерживаются;
-- `full: true` добавляет формат, выбранный offset, фактический offset и
-  timestamp metadata.
 
 ## Зачем это нужно
 
@@ -54,24 +28,6 @@ source_scope: 8fd6a41731b52d7aeee0eb369603404ccbc2e2fa..HEAD
 `get_system_time` делает это отдельным типизированным tool. Самый частый случай
 остается коротким и дешевым: получить форматированное локальное время host одной строкой.
 Расширенные поля доступны, но только по явному `full: true`.
-
-## Согласованные решения
-
-Эта доработка выросла из обсуждения API для системного времени. В карточке
-нельзя терять следующие решения, потому что именно они задают поведение tool.
-
-| Пункт | Итоговое решение | Причина |
-| --- | --- | --- |
-| Путь к времени | Добавить core tool, а не использовать shell `date` | Время суток является частым малошумным запросом и должно быть доступно без shell |
-| Основной режим | По умолчанию брать локальное время host | Чаще всего нужен именно ответ "сколько времени здесь", без ручного offset |
-| Имя параметра зоны | Использовать `offset`, а не `timezone` | API не обещает IANA timezone database; `offset` честно описывает поддержанные значения |
-| Встроенное значение `offset` | `local` | Модель может вызвать `{}` и получить локальное время host |
-| Формат | `chrono` strftime string | Позволяет передать `%H:%M` и получить строку вида `23:16`; формат стандартен для Rust-кода с `chrono` |
-| Встроенный формат | `%H:%M` | Самый частый пользовательский вопрос требует часы и минуты |
-| Краткость ответа | `full` по умолчанию `false` | Не засорять модельный контекст timestamp-полями, когда нужна только строка времени |
-| Полный ответ | `full: true` | Явный флаг нужен для диагностики, timestamp и timezone-sensitive сценариев |
-| IANA зоны | Не поддерживать `Europe/Moscow` и похожие имена | Без отдельной базы timezone это был бы ложный контракт |
-| Remote build | На `f-ms-dev` только сборка, исходники правятся локально | Удаленный checkout должен получать локальный patch, а не становиться вторым местом правки |
 
 ## Карта файлов
 
@@ -166,7 +122,7 @@ Output schema задается через `oneOf`:
 У этой модели есть важное следствие: `rfc3339` и `utc_rfc3339` в full response
 относятся к одному sampled instant, а не к двум независимым чтениям времени.
 
-## Примеры поведения
+### Примеры поведения
 
 Значения времени ниже иллюстративные: при живом вызове меняются timestamp и
 строки времени. Формы JSON и наборы полей являются частью контракта.
@@ -338,19 +294,6 @@ Tool будет часто вызываться ради одной строки
 понадобятся IANA зоны, это должна быть отдельная доработка с явным owner для
 данных timezone, тестов и правил обновления.
 
-## Отклоненные альтернативы
-
-| Альтернатива | Почему отклонена |
-| --- | --- |
-| Продолжать использовать shell `date` | Слишком широкий инструмент для частого простого запроса; шумнее для model context |
-| Параметр `timezone` | Обещает IANA timezone behavior, которого нет в текущей реализации |
-| UTC по умолчанию | Хуже совпадает с пользовательским вопросом о текущем локальном времени |
-| Всегда возвращать полный объект | Засоряет context timestamp-полями в самом частом сценарии |
-| Флаг `verbose` | Не так точно описывает форму ответа, как `full` |
-| Поддержать `Europe/Moscow` без timezone database | Создало бы ложную точность и неясное обслуживание DST/исторических правил |
-| Добавить config key для default timezone | Не нужно для host-local helper; расширило бы schema и migration scope |
-| Добавить новый crate | Для одного core tool handler это увеличило бы связующий код больше, чем уменьшило бы связанность |
-
 ## Порядок повторения при переносе
 
 Используй этот порядок при переносе на новый upstream checkout или при
@@ -377,57 +320,21 @@ Tool будет часто вызываться ради одной строки
     default short output, `full: true`, strftime formatting, `utc`
     case-insensitive parsing, fixed offset parsing, rejection для
     `Europe/Moscow`, invalid strftime format, short/full output schema.
-11. Создать или обновить карточку `docs/fork/core-system-time-tool.md` в том же
-    commit, что и кодовая доработка.
-12. Перед удаленной сборкой синхронизировать `f-ms-dev` как build host: чистый
-    checkout, `pull`/`fetch`, локальный patch, затем проверка списка файлов.
-13. Выполнить targeted tests, форматирование и release-fast сборку по текущему
-    repo workflow.
-14. После установки бинаря проверить живой tool вызовом `{}` и убедиться, что
-    ответ содержит только `formatted`.
 
 ## Проверки
 
-### Смысловое покрытие
-
-| Согласованный или реализованный пункт | Статус | Где покрыт |
-| --- | --- | --- |
-| Нужен API системного времени без shell `date` | перенесено в карточку | `Зачем это нужно`, `Итоговый контракт` |
-| Чаще всего нужен форматированный local time | перенесено в карточку | `Согласованные решения`, `Почему local по умолчанию` |
-| `offset` по умолчанию равен `local` | перенесено в карточку | `Tool spec`, tests `defaults_to_local_offset_and_short_time_format` |
-| Функция должна брать host local time, если offset не передан | перенесено в карточку | `Выбор времени`, handler `Local::now()` |
-| Формат должен принимать `%H:%M` | перенесено в карточку | `Tool spec`, `Примеры поведения`, tests для strftime |
-| По умолчанию ответ должен содержать только `formatted` | перенесено в карточку | `Примеры поведения`, runtime-проверка `{"formatted":"00:45"}` |
-| `full: true` возвращает metadata | перенесено в карточку | `Полный ответ`, tests `full_response_includes_metadata` |
-| IANA timezone names не поддерживаются | перенесено в карточку | `Неподдержанная IANA timezone`, tests `rejects_iana_timezone_names` |
-| `utc` и fixed offset поддерживаются | перенесено в карточку | `UTC`, `Fixed offset`, tests `utc_offset_is_case_insensitive`, `parses_fixed_offsets` |
-| Invalid format должен быть model-facing error | перенесено в карточку | `Ошибочный формат`, tests `rejects_invalid_format_strings` |
-| Новый tool должен попадать в prompt tool list | перенесено в карточку | `Карта файлов`, `prompt_tools_are_consistent_across_requests` |
-| Новые source-файлы должны участвовать в diff-based workflow | перенесено в карточку | `Порядок повторения при переносе`; git rulebook также уточнен вне этой карточки |
-| Remote `f-ms-dev` является только build host | перенесено в карточку | `Согласованные решения`, `Исторические результаты` |
-| Full `codex-core` suite не была зеленой | перенесено в карточку | `Исторические результаты`, известные remote infra/sandbox падения |
-| Config schema не меняется | не применимо | Tool не добавляет config key |
-| App-server API не меняется | не применимо | Tool регистрируется только как core utility tool |
-| TUI не меняется | не применимо | Нет отдельной UI-поверхности |
-| Открытые вопросы по текущему контракту | open question | Возможная будущая поддержка IANA zones и совместимость `oneOf` schema |
-
-### Владелец исполняемой карты
-
-Card-level проверки этой карточки запускает skill-owned команда `fork tests`.
-Внутренние argv и назначение targeted проверок живут только в блоке
-`fork-tests.v1` ниже; они не являются нормативным runbook для ручного запуска
-внутренних команд.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "system time",
+      "purpose": "format, offset, full output и ошибки get_system_time",
       "argv": ["just", "test", "-p", "codex-core", "system_time"]
     },
     {
-      "purpose": "prompt tool cache",
+      "purpose": "direct core tool остаётся доступным в cached tool set",
       "argv": [
         "just",
         "test",
@@ -439,196 +346,6 @@ Card-level проверки этой карточки запускает skill-o
   ]
 }
 ```
-
-### Дополнительные gates
-
-Дополнительных card-specific gates поверх `fork tests` эта карточка не вводит.
-В общем миграционном проходе родительский агент отвечает за строгую валидацию
-карточек и любые более широкие fork gates через skill-owned workflow.
-
-Эта доработка не меняет зависимости, config schema, app-server protocol, TUI или
-snapshot-поверхности, поэтому соответствующие gates намеренно не добавляются к
-исполняемой карте этой карточки.
-
-### Исторические результаты
-
-Проверки ниже уже выполнялись для исходной реализации этой доработки. Они
-сохранены как исторический результат и не являются инструкцией запускать прямые
-`just`/`cargo` команды при текущей миграции.
-
-| Проверка | Где запускалась | Результат | Что подтверждает |
-| --- | --- | --- | --- |
-| `git diff --check` | local | пройдено | Diff не содержит whitespace errors |
-| `cargo fmt -- --config imports_granularity=Item` | local | пройдено, stable rustfmt печатает warning про nightly-only option | Rust formatting применен к измененным Rust-файлам |
-| `just fmt` | local | завершилось ошибкой из-за отсутствующего `uv` для Python SDK/scripts; Rust formatter внутри recipe отработал | Rust часть форматирования прошла, общий recipe уперся в локальную Python-зависимость |
-| `just test -p codex-core system_time` | `f-ms-dev` | пройдено, 9 tests | Handler/spec tests для новой функции проходят |
-| `just test -p codex-core prompt_tools_are_consistent_across_requests` | `f-ms-dev` | пройдено, 1 test | Новый tool стабилен в списке prompt tools |
-| `just test -p codex-core` | `f-ms-dev` | скомпилировалось, затем завершилось ошибкой на 66 existing remote-infra/sandbox tests | Full suite был попробован, но не является сигналом regression этой доработки |
-| `just build-fast-release` | `f-ms-dev` | пройдено, `codex-cli 0.137.0+hermione` | Release-fast binary собирается с новым tool |
-
-### Миграция на `rust-v0.144.4`
-
-Первый проход теста на уровне карточки
-`prompt_tools_are_consistent_across_requests` завершился ошибкой после того, как
-upstream добавил `read_file` в базовый список инструментов при наличии среды
-выполнения. Оба запроса в этом тесте используют один `TestCodex` с одной средой
-выполнения, а `add_core_utility_tools(...)` регистрирует `ReadFileHandler` при
-`environment_mode.has_environment()`. Поэтому `read_file` должен стабильно
-присутствовать в обоих запросах; ожидаемый список синхронизирован с текущей
-регистрацией. Повторный проход проверки карточки остается за родительским агентом
-и на момент обновления карточки еще не подтвержден.
-
-Удаленная сборка выполнялась на `f-ms-dev` в
-`/home/slader/Projects/codex`. В этом workflow remote является только host
-сборки: исходники приводятся к чистой базе и получают patch из локального diff.
-
-Release-fast artifact:
-
-| Поле | Значение |
-| --- | --- |
-| Удаленный artifact | `/home/slader/Projects/codex/codex-rs/target/release-fast/codex` |
-| Локальная временная копия | `/tmp/codex-hermione-release-fast` |
-| Установленный binary | `/home/slader/.local/bin/codex-hermione` |
-| Проверка версии | `codex-cli 0.137.0+hermione` |
-| SHA256 | `4ff2589b432d352b867d81fc59c06c14cda97948b1ccc57fc9aa324fe7a3f5f4` |
-
-Установка выполнялась атомарно: temp binary копировался как
-`/home/slader/.local/bin/codex-hermione.new`, затем заменял установленный
-`codex-hermione` через `mv -f`.
-
-Живая проверка после перезапуска бинаря:
-
-Вход:
-
-```json
-{}
-```
-
-Ответ:
-
-```json
-{"formatted":"00:45"}
-```
-
-Эта проверка подтверждает именно краткий default output. Она не проверяет все
-ветки `offset` и `full`; для них есть unit tests.
-
-### Миграция на `rust-v0.144.5`
-
-После merge `rust-v0.144.5` owner-файлы и runtime/tool-spec контракт
-`get_system_time` сохранились без изменений: handler и spec подключены через
-`handlers/mod.rs`, `SystemTimeHandler` остается в базовом наборе
-`add_core_utility_tools(...)`, а prompt-cache expectation содержит
-`get_system_time` вместе с актуальным `read_file`.
-
-В текущем upstream-коде также присутствует feature-gated tool
-`clock.curr_time`. Он не заменяет эту fork-доработку: feature
-`current_time_reminder` по умолчанию выключен, tool возвращает только UTC в
-фиксированном формате и не поддерживает контракт `format`/`offset`/`full`.
-Имена tools различаются, поэтому регистрационного конфликта нет.
-
-Миграционный проход ограничен source-level сверкой owner-файлов, runtime,
-unit-test и tool-spec контрактов. Targeted tests, форматирование, генераторы и
-другие project-level проверки подагент не запускал; они остаются за общим
-проверочным проходом родительского агента через skill-owned workflow.
-
-### Миграция на `rust-v0.144.6`
-
-После merge `rust-v0.144.6` owner-файлы и контракт `get_system_time` сохранились
-без изменений. Handler и spec по-прежнему подключены через `handlers/mod.rs`,
-`SystemTimeHandler` без feature gate входит в базовый набор
-`add_core_utility_tools(...)`, а prompt-cache expectation содержит
-`get_system_time`.
-
-Runtime-контракт также не изменился: `local` использует `chrono::Local::now()`,
-`utc` и fixed offset используют `Utc::now()`, а полный ответ строится из одного
-sampled instant. На всех поддерживаемых платформах выбор host-local offset
-остается ответственностью `chrono`; UTC и fixed offset не зависят от локальной
-timezone host.
-
-Соседний upstream tool `clock.curr_time` по-прежнему не заменяет
-`get_system_time`: он регистрируется только при включенной feature
-`current_time_reminder`, которая по умолчанию выключена, возвращает только UTC
-в фиксированном формате и не поддерживает параметры `format`, `offset` и
-`full`. Имена tools различаются, поэтому регистрационного конфликта нет.
-
-Прямой scoped diff `rust-v0.144.5..rust-v0.144.6` не показал изменений в
-соседних поверхностях регистрации, prompt-cache expectation, реализации
-`clock.curr_time` и default feature state. Миграционный аудит ограничен
-source-level сверкой owner-файлов, runtime, platform behavior, unit-test и
-tool-spec контрактов. Targeted tests, форматирование, генераторы и другие
-project-level проверки подагент не запускал; они остаются за общим проверочным
-проходом родительского агента через skill-owned workflow.
-
-### Миграция на `rust-v0.145.0`
-
-После merge `rust-v0.145.0` собственные handler/spec/test-файлы и runtime-
-контракт `get_system_time` сохранились без изменений. `handlers/mod.rs`
-по-прежнему подключает оба модуля и экспортирует `SystemTimeHandler`, а
-`add_core_utility_tools(...)` без feature gate добавляет handler сразу после
-`PlanHandler`. Prompt-cache expectation содержит `get_system_time`, и
-`codex-core` продолжает использовать `chrono` с feature `serde`.
-
-В `spec_plan.rs` остался merge-конфликт, относящийся к добавленному upstream
-Guardian early-return в `add_tool_sources(...)`. Строки импорта и регистрации
-`SystemTimeHandler` находятся вне конфликтного участка и сохранены. Подагент
-этой карточки не разрешал чужой конфликт и не добавлял `spec_plan.rs` в index;
-его разрешение остается за владельцем соответствующей карточки или
-родительским агентом.
-
-Соседний upstream tool `clock.curr_time` не заменяет `get_system_time`: он
-по-прежнему регистрируется только при включенной feature
-`current_time_reminder`, которая имеет `default_enabled: false`, и не реализует
-параметры `format`, `offset` и `full` этой fork-доработки.
-
-Миграционный аудит ограничен source-level сверкой owner-файлов, runtime,
-tool-spec, unit-test и prompt-cache контрактов. Targeted tests,
-форматирование, генераторы и другие project-level проверки подагент не
-запускал; они остаются за общим проверочным проходом родительского агента через
-skill-owned workflow.
-
-### Миграция на `rust-v0.146.0`
-
-После merge `rust-v0.146.0` собственные файлы handler, spec и tests, а также
-runtime-контракт `get_system_time` сохранились без изменений. `handlers/mod.rs`
-по-прежнему подключает оба модуля и экспортирует `SystemTimeHandler`,
-`add_core_utility_tools(...)` без feature gate добавляет handler в базовый набор,
-а ожидаемый список инструментов в prompt-cache test содержит
-`get_system_time`. `codex-core` продолжает использовать зависимость workspace
-`chrono` с feature `serde`.
-
-Соседний upstream tool `clock.curr_time` не заменяет `get_system_time`: он
-регистрируется только при включенной feature `current_time_reminder`, которая
-остается выключенной по умолчанию, возвращает только UTC в фиксированном формате
-и не поддерживает параметры `format`, `offset` и `full`.
-
-В `codex-rs/Cargo.toml` остался не относящийся к этой карточке merge-конфликт
-версии workspace между `0.145.0` и `0.146.0`. Строки workspace-зависимости
-`chrono` и core feature `serde` находятся вне конфликтного участка и сохранены.
-Подагент этой карточки не разрешал чужой конфликт и не добавлял
-`codex-rs/Cargo.toml` в index.
-
-Миграционный аудит ограничен source-level сверкой owner-файлов,
-runtime-контракта, tool spec, unit tests, prompt-cache и состояния feature по
-умолчанию. Targeted tests, форматирование, генераторы и другие project-level
-проверки подагент не запускал; они остаются за общим проверочным проходом
-родительского агента через skill-owned workflow.
-
-### Известные падения и пропуски
-
-- Full `codex-core` suite на `f-ms-dev` не считается зеленым результатом:
-  известные падения относились к существующим remote infra/sandbox условиям,
-  включая `bwrap` loopback, missing `test_stdio_server`, `tool_search` mocks и
-  sandbox/permission suites. Их нельзя переписывать как regression этой
-  доработки или как зеленую проверку.
-- Исторический локальный форматирующий recipe завершался ошибкой из-за
-  отсутствующего `uv` для Python SDK/scripts; Rust formatter внутри recipe при
-  этом отработал.
-- Живая runtime-проверка после установки покрывала только default-вызов `{}` и
-  short output `formatted`. Ветки `offset`, `full`, invalid format и IANA
-  rejection покрываются targeted tests, а не live smoke.
-- Config schema, app-server API, TUI и snapshots намеренно не проверялись для
-  этой доработки, потому что соответствующие поверхности не менялись.
 
 ## Риски и ограничения
 
@@ -647,31 +364,3 @@ runtime-контракта, tool spec, unit tests, prompt-cache и состоя�
 - Если понадобится IANA timezone support, нельзя расширять `offset` молча:
   нужна отдельная доработка с timezone database owner, tests и обновленной
   карточкой.
-
-## Проверка покрытия
-
-Эта итоговая owner-card section group сохранена отдельно от раздела `Проверки`,
-потому что ее наличие является структурным контрактом active fork-карточки.
-Детальное смысловое покрытие также оставлено в `Проверки` ->
-`Смысловое покрытие`.
-
-| Согласованный или реализованный пункт | Статус | Где покрыт |
-| --- | --- | --- |
-| Нужен API системного времени без shell `date` | перенесено в карточку | `Зачем это нужно`, `Итоговый контракт` |
-| Чаще всего нужен форматированный local time | перенесено в карточку | `Согласованные решения`, `Почему local по умолчанию` |
-| `offset` по умолчанию равен `local` | перенесено в карточку | `Tool spec`, tests `defaults_to_local_offset_and_short_time_format` |
-| Функция должна брать host local time, если offset не передан | перенесено в карточку | `Выбор времени`, handler `Local::now()` |
-| Формат должен принимать `%H:%M` | перенесено в карточку | `Tool spec`, `Примеры поведения`, tests для strftime |
-| По умолчанию ответ должен содержать только `formatted` | перенесено в карточку | `Примеры поведения`, runtime-проверка `{"formatted":"00:45"}` |
-| `full: true` возвращает metadata | перенесено в карточку | `Полный ответ`, tests `full_response_includes_metadata` |
-| IANA timezone names не поддерживаются | перенесено в карточку | `Неподдержанная IANA timezone`, tests `rejects_iana_timezone_names` |
-| `utc` и fixed offset поддерживаются | перенесено в карточку | `UTC`, `Fixed offset`, tests `utc_offset_is_case_insensitive`, `parses_fixed_offsets` |
-| Invalid format должен быть model-facing error | перенесено в карточку | `Ошибочный формат`, tests `rejects_invalid_format_strings` |
-| Новый tool должен попадать в prompt tool list | перенесено в карточку | `Карта файлов`, `prompt_tools_are_consistent_across_requests` |
-| Новые source-файлы должны участвовать в diff-based workflow | перенесено в карточку | `Порядок повторения при переносе`; git rulebook также уточнен вне этой карточки |
-| Remote `f-ms-dev` является только build host | перенесено в карточку | `Согласованные решения`, `Исторические результаты` |
-| Full `codex-core` suite не была зеленой | перенесено в карточку | `Исторические результаты`, известные remote infra/sandbox падения |
-| Config schema не меняется | не применимо | Tool не добавляет config key |
-| App-server API не меняется | не применимо | Tool регистрируется только как core utility tool |
-| TUI не меняется | не применимо | Нет отдельной UI-поверхности |
-| Открытые вопросы по текущему контракту | open question | Возможная будущая поддержка IANA zones и совместимость `oneOf` schema |

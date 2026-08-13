@@ -2,8 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-07-29
-source_scope: rust-v0.137.0..HEAD
+updated: 2026-08-13
 ---
 
 # Developer instructions files
@@ -14,15 +13,6 @@ source_scope: rust-v0.137.0..HEAD
 config key `developer_instructions_files`. Он позволяет хранить длинные
 developer instructions в отдельных Markdown-файлах и подключать их к
 `developer_instructions` в заданном порядке.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Основной commit | `d976b54ed Support developer instructions files` |
-| Текущая база проверки | `rust-v0.146.0`, ветка `hermione-0.146.0` |
-| Config key | `developer_instructions_files` |
-| Тип | `Vec<AbsolutePathBuf>` |
-| Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
 ## Зачем это нужно
 
@@ -95,7 +85,15 @@ Inline `developer_instructions` неудобен для больших profile-d
    построении начального контекста становится секцией model-visible сообщения с
    ролью `developer`.
 
-## Пошаговое воспроизведение
+## Архитектурное решение
+
+Config loader владеет нормализацией путей, а сборка `Config` — последовательным
+чтением и объединением секций. Готовая строка попадает в модель через
+существующий путь developer message, поэтому downstream runtime не знает,
+сколько файлов было источником. Runtime override останавливает чтение файлов до
+I/O: явно переданные инструкции нельзя неожиданно дополнять конфигурацией.
+
+## Порядок повторения при переносе
 
 ### 1. Добавить поле в TOML config
 
@@ -182,208 +180,27 @@ let developer_instructions = developer_instructions.or_else(|| {
 Schema должна показывать `developer_instructions_files` как array со значениями
 paths и default `[]`.
 
-## Ожидаемое покрытие diff
-
-Покрытие, которое должно быть в diff:
-
-- Парсинг TOML:
-  - `developer_instructions_files = ["<abs-a>", "<abs-b>"]` десериализуется в
-    `ConfigToml.developer_instructions_files`.
-- Нормализация относительных путей:
-  - относительные элементы массива становятся абсолютными относительно базового
-    каталога config-файла.
-- Сборка runtime-значения:
-  - `developer_instructions_files_are_appended_in_order` проверяет inline-секцию,
-    первый файл и второй файл, соединённые через `\n\n`.
-  - `developer_instructions_files_skip_empty_files_with_warning` проверяет, что
-    пустой файл пропущен, непустой файл добавлен, а предупреждение запуска
-    содержит путь пустого файла.
-  - `developer_instructions_files_reject_missing_file` проверяет `NotFound` и
-    префикс текста ошибки с путем отсутствующего файла.
-  - `developer_instructions_override_skips_files` проверяет, что runtime override
-    `developer_instructions` не читает файлы из config и возвращает
-    переданное override-значение как итоговые developer instructions.
-- Model-visible контракт:
-  - `includes_developer_instructions_message_in_request` проверяет, что уже
-    собранное `Config.developer_instructions` присутствует в developer message
-    исходящего запроса;
-  - `developer_instructions_files_are_loaded_into_developer_message_in_order`
-    создаёт `config.toml` и два реальных Markdown-файла в тестовом home, загружает
-    Codex обычным путём загрузки config и проверяет точный объединённый текст в
-    исходящем developer message.
-- Ограничение размера:
-  - `ExecutorFileSystem::read_file_text` читает файл целиком;
-  - сборка `developer_instructions` и `build_developer_update_item` не применяют
-    жёсткий предел для fork;
-  - это существующий общий вопрос `session/context aggregation`, а не регрессия
-    слияния `rust-v0.144.6` и не блокирующее условие текущей карточки;
-  - локальная ошибка или усечение недопустимы без общей политики, потому что
-    могут потерять profile-defining rules.
-
 ## Проверки
 
-### Смысловое покрытие
-
-Покрытие уровня карточки должно подтверждать весь контракт
-`developer_instructions_files`:
-
-- парсинг TOML: `developer_instructions_files = ["<abs-a>", "<abs-b>"]`
-  десериализуется в `ConfigToml.developer_instructions_files`;
-- нормализация относительных путей: относительные элементы массива становятся
-  абсолютными относительно базового каталога config-файла;
-- сборка runtime-значения: inline-секция, первый файл и второй файл добавляются
-  в порядке списка config и соединяются через `\n\n`;
-- пустой файл пропускается, непустой файл добавляется, а предупреждение запуска
-  содержит путь пустого файла;
-- отсутствующий файл возвращает `NotFound`, а текст ошибки содержит путь и
-  исходную ошибку;
-- runtime override `developer_instructions` не читает файлы из config и
-  возвращает переданное override-значение;
-- schema artifact показывает `developer_instructions_files` как array со
-  значениями paths и default `[]`.
-- итоговое `Config.developer_instructions` попадает в model-visible сообщение с
-  ролью `developer`;
-- `developer_instructions_files_are_loaded_into_developer_message_in_order`
-  проверяет сквозной путь от реальных файлов в test home до точного текста
-  исходящего developer message.
-
-### Открытый вопрос вне области карточки
-
-- Owner scope: `session/context aggregation`.
-- `codex-rs/core/src/session/mod.rs` агрегирует developer instructions вместе с
-  permissions, collaboration, skills и другими sections в один model-visible
-  item.
-- Проверенный родительским проходом профиль Hermione занимает около 51 KB ещё
-  до добавления остальных секций агрегированного developer item.
-- Общий жёсткий предел и политика превышения должны проектироваться для всего
-  агрегированного item, а не локально для `developer_instructions_files`.
-- Локальная ошибка или усечение в этой карточке могли бы сломать действующие
-  большие профили и молча потерять profile-defining rules, поэтому вопрос
-  оставлен открытым и не блокирует миграцию `rust-v0.144.6`.
-
-### Владелец исполняемой карты
-
-Проверки уровня карточки запускает skill-owned command `fork tests`. Карточка
-хранит машиночитаемый блок `fork-tests.v1`; внутренние `argv` ниже являются
-данными для `fork tests`, а не пользовательским runbook прямого запуска.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "developer instructions",
+      "purpose": "ordered merge, override precedence, warnings, errors и developer-message delivery",
       "argv": ["just", "test", "-p", "codex-core", "developer_instructions"]
     }
   ]
 }
 ```
 
-### Дополнительные gates
+Дополнительно обязателен `fork generators`, поскольку доработка меняет `ConfigToml` и config schema.
 
-- Обновление schema для `codex-rs/core/config.schema.json` принадлежит
-  `fork generators`.
-- Регрессионное покрытие уровня карточки принадлежит skill-owned владельцу
-  `fork tests`; фильтр карточки и внутренние `argv` задаются skill-owned
-  workflow и блоком `fork-tests.v1`.
-- Проверка сборки в общем fork-проходе принадлежит `fork build-fast`.
-- Проверка формы и owner artifact карточки принадлежит `fork cards validate`.
-- Ручные audit-подсказки старого текста (`git diff --check` и поиск
-  `developer_instructions_files` по `codex-rs`) не являются заменой
-  skill-owned gates.
+## Риски и ограничения
 
-### Исторические результаты
-
-В первоначальном проходе 2026-06-08 карточка создана без запуска тестов,
-отладочных команд и без локального Rust/Cargo/`just`.
-
-В миграционном проходе 2026-06-19 карточка сверена с текущей рабочей копией без
-запуска сборки, тестов, генераторов, форматирования или `fix` по ограничению
-основного агента. Для закрытия пробела покрытия добавлен тест
-`developer_instructions_override_skips_files`, но он не запускался в этом
-подагентском проходе.
-
-В миграционном проходе 2026-07-05 для `rust-v0.142.5` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Усилены проверки в
-`developer_instructions_files_skip_empty_files_with_warning` и
-`developer_instructions_files_reject_missing_file`: предупреждение сверяется с
-полным текстом и путем пустого файла, а ошибка отсутствующего файла - с
-префиксом сообщения, включающим путь.
-
-В миграционном проходе 2026-07-08 для `rust-v0.143.0` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Реализация в owner-файлах уже
-сохраняет контракт карточки; кодовых правок не потребовалось.
-
-В миграционном проходе 2026-07-10 для `rust-v0.144.1` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Реализация в owner-файлах уже
-сохраняет контракт карточки; кодовых правок не потребовалось.
-
-В миграционном проходе 2026-07-14 для `rust-v0.144.4` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Реализация в owner-файлах уже
-сохраняет контракт карточки; кодовых правок не потребовалось.
-
-В миграционном проходе 2026-07-16 для `rust-v0.144.5` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Реализация в owner-файлах уже
-сохраняет контракт карточки; кодовых правок не потребовалось.
-
-В миграционном проходе 2026-07-18 для `rust-v0.144.6` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Upstream diff
-`rust-v0.144.5..rust-v0.144.6` не изменил owner-файлы карточки. Парсинг,
-нормализация путей, порядок секций, warning/error, runtime override, schema и
-передача итогового значения в developer message сохранились. Аудит выявил два
-вопроса. Относящийся к карточке пробел регрессионного покрытия закрыт тестом
-`developer_instructions_files_are_loaded_into_developer_message_in_order`.
-Отсутствие общего жёсткого предела переклассифицировано в open question с owner
-scope `session/context aggregation`: это существующий сквозной контракт, а не
-регрессия слияния `rust-v0.144.6`.
-
-В миграционном проходе 2026-07-21 для `rust-v0.145.0` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Поле `ConfigToml`, нормализация
-путей, порядок секций, поведение предупреждения и ошибки, runtime override,
-артефакт schema и передача итогового значения в сообщение роли `developer`
-сохранились. В
-`codex-rs/core/tests/suite/client.rs` разрешён относящийся к карточке конфликт:
-сквозной тест сохранён вместе с новым именем соседнего Azure-теста из upstream.
-Независимый конфликт в `codex-rs/core/src/config/mod.rs` не относится к
-`developer_instructions_files` и оставлен родительскому проходу.
-
-В миграционном проходе 2026-07-29 для `rust-v0.146.0` карточка сверена с текущей
-рабочей копией без запуска сборки, тестов, генераторов, форматирования или
-`fix` по ограничению подагентского запуска. Поле `ConfigToml`, нормализация
-путей, порядок секций, поведение предупреждения и ошибки, runtime override,
-артефакт schema и передача итогового значения в сообщение роли `developer`
-сохранились. В owner-файлах карточки конфликтных маркеров нет; кодовых правок не
-потребовалось.
-
-Старый текст карточки называл прямые команды `just write-config-schema` и
-`just build-fast-release` как маршрут повторения на `f-ms-dev` при разрешении
-пользователя. После перехода на skill-owned workflow они сохранены только как
-исторический след прежнего runbook: актуальные владельцы этих проверок -
-`fork generators` и `fork build-fast`.
-
-### Известные падения и пропуски
-
-- Тесты, сборка, генераторы, форматирование и `fix` не запускались в текущем
-  подагентском проходе.
-- Тест `developer_instructions_override_skips_files`, добавленный в
-  миграционном проходе 2026-06-19, не запускался в том подагентском проходе.
-- Известных зафиксированных падений для этой карточки нет; оставшийся риск -
-  schema artifact может устареть, если после изменения `ConfigToml` не пройти
-  `fork generators`.
-- Общий жёсткий предел отсутствует при сборке агрегированного model-visible
-  developer item. Это open question владельца `session/context aggregation`, а
-  не пропуск текущей миграции в области карточки.
-- Новый сквозной тест добавлен, но не запускался по ограничению подагентского
-  прохода.
-
-## Ограничения
+### Ограничения
 
 - Не читать files, если `developer_instructions` уже передан как runtime
   override сверху. Это важно для tests, app-server или surfaces, которые
@@ -395,7 +212,7 @@ scope `session/context aggregation`: это существующий сквоз�
 - Не менять `model_instructions_file`: это отдельная base instructions
   surface, а не developer surface.
 
-## Риски
+### Риски
 
 - Порядок файлов является частью контракта. Сортировка списка или чтение через
   unordered collection сломают profile layering.
@@ -409,17 +226,3 @@ scope `session/context aggregation`: это существующий сквоз�
 - Молчаливое усечение для profile-defining rules недопустимо; политику ошибки,
   разбиения или другой bounded representation нужно согласовать в owner scope
   `session/context aggregation`.
-
-## Проверка покрытия
-
-| Пункт | Статус | Где отражено |
-| --- | --- | --- |
-| Добавить top-level `developer_instructions_files` | перенесено | "Итоговый контракт", "Пошаговое воспроизведение" |
-| Сохранить inline `developer_instructions` первой секцией | перенесено | "Итоговый контракт" |
-| Читать файлы в заданном порядке | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
-| Empty file как warning | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
-| Missing file как error | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
-| Не читать files при runtime override | перенесено | "Итоговый контракт", "Ограничения", "Ожидаемое покрытие diff" |
-| Передать итоговое значение в developer message | перенесено | "Итоговый контракт", "Ожидаемое покрытие diff" |
-| Ограничить размер агрегированного model-visible item | оставлено как open question | "Открытый вопрос вне области карточки", "Известные падения и пропуски", "Риски" |
-| Покрыть путь files -> исходящий developer message одним регрессионным тестом | перенесено | `developer_instructions_files_are_loaded_into_developer_message_in_order`, "Ожидаемое покрытие diff" |

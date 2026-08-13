@@ -17,9 +17,6 @@ description: >-
 `docs/fork/*.md`, одноразовых карт `docs/fork/migration/<version>.json`,
 parent/subagent flow и skill-owned scripts.
 
-Switch выполнен после structural coverage gate, независимого semantic audit без
-блокирующих P0/P1 findings и явного подтверждения пользователя.
-
 ## Владение командами
 
 В fork-scope skill-owned CLI является единственным интерфейсом запуска workflow
@@ -41,7 +38,6 @@ skill-owned command; если его нет, обновляй skill-owned workfl
 - Роль подагента одной карточки: `references/subagent-one-card.md`.
 - Локальный checkout без host-specific зависимости: `references/local-development.md`.
 - Проверки, генераторы, тесты и сборка: `references/checks-and-gates.md`.
-- Доказательство переноса из retired legacy sources: `references/source-coverage.md`.
 
 ## Skill-owned scripts
 
@@ -53,7 +49,6 @@ skill-owned command; если его нет, обновляй skill-owned workfl
 
 Начальные команды:
 
-- `fork check-source-coverage`
 - `fork render-subagent-prompt`
 - `fork cards list`
 - `fork cards validate`

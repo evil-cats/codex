@@ -27,31 +27,10 @@ import migration_map as migration_map_model
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
-SOURCE_COVERAGE = SKILL_ROOT / "references" / "source-coverage.md"
 FORK_TESTS_SCHEMA = "fork-tests.v1"
-
-OPEN_STATUSES = (
-    "draft",
-    "pending",
-    "требует проверки",
-)
-
-COVERAGE_ROW_STATUSES = (
-    "перенесено",
-    "перенесено с нормализацией",
-    "не переносится",
-)
-
-RETIRED_LEGACY_SCRIPTS = (
-    "scripts/fork-migration/remote-prepare-host.sh",
-    "scripts/fork-migration/remote-apply-patch.sh",
-    "scripts/fork-migration/remote-tests.sh",
-    "scripts/fork-migration/remote-build-fast.sh",
-)
 
 REQUIRED_FILES = (
     "SKILL.md",
-    "references/source-coverage.md",
     "references/fork-rules.md",
     "references/fork-card-contract.md",
     "references/parent-migration.md",
@@ -68,7 +47,6 @@ REQUIRED_FILES = (
 
 SKILL_MARKDOWN = (
     "SKILL.md",
-    "references/source-coverage.md",
     "references/fork-rules.md",
     "references/fork-card-contract.md",
     "references/parent-migration.md",
@@ -81,69 +59,58 @@ SKILL_MARKDOWN = (
 
 TRANSFER_SECTION_ALIASES = (
     "Порядок повторения при переносе",
-    "Пошаговое воспроизведение",
-    "Пошаговое воспроизведение доработки",
-    "Порядок реализации",
 )
 
 CHECKS_SECTION_ALIASES = (
     "Проверки",
-    "Проверки для будущего переноса",
-    "Исторические проверки",
-    "Регрессионное покрытие",
-    "Регрессионное покрытие в diff",
 )
 
 NORMATIVE_COMMAND_SECTION_GROUPS = (
     ("Порядок повторения при переносе", TRANSFER_SECTION_ALIASES),
 )
 
-CARD_REQUIRED_SECTION_GROUPS = (
-    ("Обзор", ("Обзор",)),
-    ("Зачем это нужно", ("Зачем это нужно",)),
-    ("Карта файлов", ("Карта файлов", "Карта файлов и смысл правок")),
-    (
-        "Итоговый контракт",
-        (
-            "Итоговый контракт",
-            "Принятый контракт",
-            "Контракт внутренних документов",
-        ),
-    ),
-    (
-        "Порядок повторения при переносе",
-        TRANSFER_SECTION_ALIASES,
-    ),
-    (
-        "Проверки",
-        CHECKS_SECTION_ALIASES,
-    ),
-    (
-        "Риски и ограничения",
-        (
-            "Риски и ограничения",
-            "Риски",
-            "Ограничения",
-            "Ограничения и gates",
-        ),
-    ),
-    (
-        "Проверка покрытия",
-        (
-            "Проверка покрытия",
-            "Сводка покрытия",
-            "Регрессионное покрытие",
-            "Регрессионное покрытие в diff",
-        ),
-    ),
+CARD_REQUIRED_SECTIONS = (
+    "Обзор",
+    "Зачем это нужно",
+    "Карта файлов",
+    "Итоговый контракт",
+    "Архитектурное решение",
+    "Порядок повторения при переносе",
+    "Проверки",
+    "Риски и ограничения",
 )
 
-STRICT_CHECK_SUBSECTIONS = (
+CARD_REQUIRED_SECTION_GROUPS = tuple(
+    (section, (section,)) for section in CARD_REQUIRED_SECTIONS
+)
+
+CARD_ALLOWED_TOP_LEVEL_SECTIONS = (*CARD_REQUIRED_SECTIONS, "Открытые вопросы")
+
+LEGACY_OWNER_CARD_SECTIONS = (
+    "Согласованные решения",
+    "Отклоненные альтернативы",
+    "Отклонённые альтернативы",
     "Смысловое покрытие",
-    "Владелец исполняемой карты",
-    "Дополнительные gates",
+    "Ожидаемое покрытие diff",
     "Исторические результаты",
+    "Исторические lint-заметки",
+    "Цепочка коммитов",
+    "Commit chain",
     "Известные падения и пропуски",
+    "Runtime, сборка и установка",
+    "Выполнение, сборка и установка",
+    "Проверка покрытия",
+)
+
+LEGACY_OWNER_CARD_HEADING_PREFIXES = (
+    "Аудит миграции ",
+    "Миграция на ",
+    "Migration repair:",
+    "Migration check:",
+)
+
+MANUAL_TEST_EXCEPTION_RE = re.compile(
+    r"`?(?:manual-required|not-applicable)`?\s*:\s*\S"
 )
 
 COMMAND_RUNBOOK_RE = re.compile(
@@ -776,30 +743,13 @@ def run_preconditions(
     return 0
 
 
-def current_legacy_scripts(repo_root: Path) -> list[str]:
+def legacy_script_paths(repo_root: Path) -> list[str]:
+    """Возвращает старые fork-migration scripts, которые не должны появляться снова."""
+
     scripts_dir = repo_root / "scripts/fork-migration"
     if not scripts_dir.exists():
         return []
     return sorted(str(path.relative_to(repo_root)) for path in scripts_dir.glob("*.sh"))
-
-
-def legacy_script_rows(text: str) -> dict[str, tuple[str, str, str]]:
-    rows = {}
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("| `scripts/fork-migration/"):
-            continue
-
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if len(cells) < 4:
-            continue
-
-        script = cells[0].strip("`")
-        command = cells[1].strip("`")
-        status = cells[2].strip("`")
-        note = cells[3]
-        rows[script] = (command, status, note)
-    return rows
 
 
 def heading_names(path: Path) -> list[str]:
@@ -854,23 +804,6 @@ def section_text_for_aliases(
 
 def subsection_text(section: str, heading: str) -> str:
     return section_text(section, heading, level=3)
-
-
-def remove_subsection(section: str, heading: str) -> str:
-    marker = "###"
-    pattern = re.compile(
-        rf"^{re.escape(marker)}\s+{re.escape(heading)}\s*$",
-        re.MULTILINE,
-    )
-    match = pattern.search(section)
-    if not match:
-        return section
-
-    next_match = re.search(
-        rf"^{re.escape(marker)}\s+", section[match.end() :], re.MULTILINE
-    )
-    end = match.end() + next_match.start() if next_match else len(section)
-    return section[: match.start()] + section[end:]
 
 
 def command_runbook_errors(section_name: str, section: str) -> list[str]:
@@ -992,76 +925,6 @@ def card_tests_for_filters(
     return tests, None
 
 
-def status_count(text: str, status: str) -> int:
-    return len(re.findall(rf"\|\s*{re.escape(status)}\s*\|", text))
-
-
-def cmd_check_source_coverage(args: argparse.Namespace) -> int:
-    path = Path(args.path).resolve() if args.path else SOURCE_COVERAGE
-    if not path.exists():
-        print(f"ERROR: missing coverage file: {path}", file=sys.stderr)
-        return 2
-
-    repo_root = find_repo_root()
-    text = read_text(path)
-    counts = {status: status_count(text, status) for status in OPEN_STATUSES}
-    placeholder_count = len(re.findall(r"\b(?:TODO|FIXME|TBD)\b", text))
-    missing_targets = []
-
-    for rel in REQUIRED_FILES:
-        if not (SKILL_ROOT / rel).exists():
-            missing_targets.append(rel)
-
-    rows = legacy_script_rows(text)
-    current_scripts = current_legacy_scripts(repo_root)
-    missing_current_scripts = [
-        script for script in current_scripts if script not in rows
-    ]
-    missing_retired_scripts = [
-        script for script in RETIRED_LEGACY_SCRIPTS if script not in rows
-    ]
-    invalid_script_rows = []
-
-    for script, (command, status, note) in rows.items():
-        if status not in COVERAGE_ROW_STATUSES:
-            invalid_script_rows.append(f"{script}: invalid status: {status}")
-        if status != "не переносится" and command in ("", "-", "не переносится"):
-            invalid_script_rows.append(f"{script}: missing skill command")
-        if status == "не переносится" and len(note.strip()) < 20:
-            invalid_script_rows.append(f"{script}: missing non-transfer rationale")
-
-    print(f"COVERAGE: {path}")
-    for status, count in counts.items():
-        print(f"{status}: {count}")
-    print(f"placeholder_markers: {placeholder_count}")
-    print(f"missing_targets: {len(missing_targets)}")
-    for rel in missing_targets:
-        print(f"missing: {rel}")
-    print(f"missing_current_legacy_scripts: {len(missing_current_scripts)}")
-    for script in missing_current_scripts:
-        print(f"missing_legacy_script_row: {script}")
-    print(f"missing_retired_legacy_scripts: {len(missing_retired_scripts)}")
-    for script in missing_retired_scripts:
-        print(f"missing_retired_script_row: {script}")
-    print(f"invalid_script_rows: {len(invalid_script_rows)}")
-    for error in invalid_script_rows:
-        print(f"invalid_script_row: {error}")
-
-    if args.strict and (
-        any(counts.values())
-        or placeholder_count
-        or missing_targets
-        or missing_current_scripts
-        or missing_retired_scripts
-        or invalid_script_rows
-    ):
-        print("RESULT: blocked")
-        return 1
-
-    print("RESULT: ok" if not args.strict else "RESULT: structural-strict-ok")
-    return 0
-
-
 def cmd_render_subagent_prompt(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     card = Path(args.card)
@@ -1151,37 +1014,42 @@ def strict_card_validation_errors(path: Path) -> list[str]:
     if not card_id:
         errors.append("active card missing frontmatter id")
 
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped_line = line.strip()
+        if line.startswith("## "):
+            top_level_section = line[3:].strip()
+            if top_level_section not in CARD_ALLOWED_TOP_LEVEL_SECTIONS:
+                errors.append(
+                    "unexpected owner-card section is not allowed at line "
+                    f"{line_number}: {top_level_section}"
+                )
+        is_heading = re.match(r"^#{2,6}\s+", stripped_line) is not None
+        section_name = re.sub(r"^#{2,6}\s+", "", stripped_line).removesuffix(":")
+        is_legacy_heading = is_heading and section_name.startswith(
+            LEGACY_OWNER_CARD_HEADING_PREFIXES
+        )
+        if section_name in LEGACY_OWNER_CARD_SECTIONS or is_legacy_heading:
+            errors.append(
+                "legacy owner-card section is not allowed at line "
+                f"{line_number}: {section_name}"
+            )
+
     checks_heading, checks = section_text_for_aliases(text, CHECKS_SECTION_ALIASES)
     if not checks:
         errors.append("active card missing strict `Проверки` section")
         return errors
 
-    for subsection in STRICT_CHECK_SUBSECTIONS:
-        if not subsection_text(checks, subsection):
-            errors.append(
-                f"active card missing strict `Проверки` subsection: {subsection}"
-            )
-
-    owner = subsection_text(checks, "Владелец исполняемой карты")
-    has_fork_tests_owner = "`fork tests`" in owner or "fork tests" in owner
-    has_manual_exception = "`manual-required`" in owner or "`not-applicable`" in owner
     card_level_tests, card_test_errors = card_tests_in_card(path)
     errors.extend(card_test_errors)
     has_card_tests = bool(card_level_tests)
-    if has_card_tests and not has_fork_tests_owner:
-        errors.append(
-            "fork-tests.v1 block exists but `Владелец исполняемой карты` "
-            "does not name `fork tests`"
-        )
+    has_manual_exception = MANUAL_TEST_EXCEPTION_RE.search(checks) is not None
     if not has_card_tests and not has_manual_exception:
         errors.append(
             "active card has no fork-tests.v1 block and no "
-            "`manual-required`/`not-applicable` exception"
+            "`manual-required`/`not-applicable` exception with a reason"
         )
 
-    normative_checks = remove_subsection(checks, "Исторические результаты")
-    for error in command_runbook_errors(checks_heading, normative_checks):
-        errors.append(f"{error} outside `Исторические результаты`")
+    errors.extend(command_runbook_errors(checks_heading, checks))
 
     for group_name, aliases in NORMATIVE_COMMAND_SECTION_GROUPS:
         heading, section = section_text_for_aliases(text, aliases)
@@ -1272,6 +1140,9 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         if not (SKILL_ROOT / rel).exists():
             failures.append(f"missing required file: {rel}")
 
+    for path in legacy_script_paths(repo_root):
+        failures.append(f"retired legacy script still exists: {path}")
+
     for path in (SKILL_ROOT / "scripts").glob("*"):
         if path.is_file() and path.name != "fork_cli.py":
             text = read_text(path)
@@ -1344,12 +1215,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         )
         if result != 0:
             return result
-
-    coverage_args = argparse.Namespace(path=None, strict=args.strict_coverage)
-    coverage_result = cmd_check_source_coverage(coverage_args)
-    if coverage_result != 0:
-        session.write("source coverage is not strict-clean\n")
-        return session.fail(label="source coverage")
 
     return session.ok()
 
@@ -1628,11 +1493,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    coverage = sub.add_parser("check-source-coverage")
-    coverage.add_argument("--path")
-    coverage.add_argument("--strict", action="store_true")
-    coverage.set_defaults(func=cmd_check_source_coverage)
-
     render = sub.add_parser("render-subagent-prompt")
     render.add_argument("--repo-root")
     render.add_argument("--branch", required=True)
@@ -1664,7 +1524,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Select markdown/check scope. --skill-only is an alias for --scope skill.",
     )
-    preflight.add_argument("--strict-coverage", action="store_true")
     preflight.set_defaults(func=cmd_preflight)
 
     fmt = sub.add_parser("format")

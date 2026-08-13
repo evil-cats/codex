@@ -2,8 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-07-29
-source_scope: discussion-2026-06-21
+updated: 2026-08-13
 ---
 
 # Spill-файлы для длинного output `exec_command`
@@ -15,30 +14,6 @@ source_scope: discussion-2026-06-21
 финальный `exit_code`, и захваченный output больше настроенного inline-лимита,
 Codex должен сохранить захваченный output в файл, а модели передать короткий
 excerpt и путь к файлу.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Область MVP | Только immediate-finished unified `exec_command` |
-| Не входит в MVP | `write_stdin`, polling long-running process, interactive PTY/SSH, отказ sandbox-политики, MCP tools, code mode, legacy shell |
-| Новый config key | `[tools.exec].inline_output_max_tokens` |
-| Встроенное значение | `1000` approximate tokens |
-| Что лимитирует key | Только excerpt command output, не metadata wrapper |
-| Место файла | `<codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log` |
-| Содержимое файла | `ExecCommandToolOutput.raw_output` как retained captured bytes |
-| Старый общий лимит | `tool_output_token_limit` не переиспользуется |
-| Усечение excerpt | Текущий `formatted_truncate_text(..., TruncationPolicy::Tokens(limit))` |
-
-Главный контракт:
-
-- короткий output остается в текущем формате и не создает файл;
-- длинный захваченный output сохраняется в Codex-owned artifact file;
-- модель получает `Output exceeded inline limit of <limit> tokens.`,
-  `Output saved to: <path>` и `Output excerpt:`;
-- `SandboxDenied` не проходит через цепочку spill и остается обычным
-  ограниченным `Output:`;
-- в model-visible тексте не используется слово `full`;
-- обычный output не получает объяснение про внутренний `1 MiB` capture cap.
 
 ## Зачем это нужно
 
@@ -65,70 +40,36 @@ excerpt и путь к файлу.
 Это сохраняет bounded context, не переписывает историю, не раздувает prompt
 cache и дает более удобный путь восстановления деталей для больших build/test/search logs.
 
-## Согласованные решения
+## Карта файлов
 
-| Пункт | Решение | Причина |
-| --- | --- | --- |
-| Область MVP | Только immediate-finished `exec_command` | Это исходная ветка поведения: команда завершилась до `yield_time_ms`, есть финальный `exit_code`, нет live `process_id` |
-| Ветка long-running process | Не менять в MVP | `write_stdin`, polling и interactive sessions имеют отдельный жизненный цикл и требуют отдельного дизайна |
-| `SandboxDenied` | Не проводить через цепочку spill | Если sandbox запретил действие, этот результат не должен создавать Codex-owned output artifact |
-| Граница захвата | Работать после существующего unified exec capture buffer | `1 MiB` retained/captured cap уже существует и считается нормальной границей MVP |
-| "Full output" | Не писать `full` в model-visible тексте | Файл содержит retained/captured output, а не обязательно весь stdout/stderr процесса до capture cap |
-| `1 MiB` cap в тексте | Не объяснять модели в обычном случае | Модель никогда не получала больше этого cap; постоянная оговорка будет шумом |
-| Условие spill | `approx_token_count(raw_output) > inline_output_max_tokens` | Настройка относится к command output excerpt |
-| Config key | Добавить новый `[tools.exec].inline_output_max_tokens` | Существующий `tool_output_token_limit` является общим механизмом truncation и не должен смешиваться с exec spill behavior |
-| Встроенное значение | `1000` approximate tokens | Дает маленький model-visible excerpt по умолчанию |
-| Бюджет metadata | Не вычитать из `inline_output_max_tokens` | Лимит относится к stdout/stderr excerpt, metadata wrapper идет отдельно |
-| Усечение excerpt | Переиспользовать текущий truncator | Текущий код уже сохраняет начало и конец и вставляет marker в середину |
-| `Output excerpt:` | Использовать только в spill-case | При наличии saved file inline часть становится excerpt относительно файла |
-| Формулировка пути | `Output saved to: <path>` | Коротко, без обещания `full` и без внутренних подробностей capture buffer |
-| Расположение файла | `codex_home/exec_outputs/<thread_id>/...` | Не загрязняет workspace, лучше переживает resume, чем обычный `/tmp` |
-| Имя файла | Только sanitized ids | Команду нельзя класть в filename: она может быть длинной, нестабильной или содержать секреты |
-| Побочные эффекты | Не писать файл внутри `response_text()` | `response_text()` может вызываться для preview/model response; запись файла должна быть одноразовой до render |
-| Ошибка записи файла | Не превращать успешную команду в failed tool call | Команда уже завершилась; model-facing response должен дать warning и excerpt |
+| Файл | Роль |
+| --- | --- |
+| `codex-rs/config/src/config_toml.rs` | Добавить `ToolsToml.exec` и новый TOML struct для `[tools.exec]` |
+| `codex-rs/core/src/config/mod.rs` | Провести effective config value в `Config` и выставить default `1000` |
+| `codex-rs/core/config.schema.json` | Сгенерированный schema artifact для нового key `[tools.exec].inline_output_max_tokens` |
+| `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Передать обычный exec request в process manager и оставить `SandboxDenied` вне цепочки spill |
+| `codex-rs/core/src/unified_exec/mod.rs` | Добавить request/result поля или helper types для exec output spill |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch записать `raw_output` в файл при превышении лимита |
+| `codex-rs/core/src/tools/context.rs` | Отрендерить spill metadata, `Output saved to` и `Output excerpt` для `ExecCommandToolOutput` |
+| `codex-rs/utils/path-utils/src/lib.rs` | При необходимости добавить atomic bytes write helper |
+| `codex-rs/core/src/tools/context_tests.rs` | Проверить model-visible formatting для spill и non-spill cases |
+| `codex-rs/core/src/unified_exec/*tests.rs` | Проверить immediate-finished branch, отсутствие spill для running process и запись файла |
+| `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
+| `docs/fork/exec-command-output-spill-files.md` | Owner handoff этой fork-доработки |
 
-## Текущее поведение
+Намеренно не меняется в MVP:
 
-Для unified `exec_command` текущий поток такой:
-
-```text
-exec_command(...)
-  -> process завершается до yield_time_ms или остается running
-  -> process_manager собирает retained bytes из OutputBuffer
-  -> строит ExecCommandToolOutput
-  -> ExecCommandToolOutput::response_text()
-  -> FunctionCallOutput(call_id=..., output=<response_text>)
-  -> conversation history
-  -> следующий model request
-```
-
-`ExecCommandToolOutput::response_text()` сейчас добавляет metadata wrapper:
-
-```text
-Chunk ID: <chunk_id>
-Wall time: <seconds> seconds
-Process exited with code <exit_code>
-Original token count: <approx_count>
-Output:
-<possibly truncated command output>
-```
-
-Если command output больше текущего model output limit, секция `Output:`
-получает результат `formatted_truncate_text(...)`:
-
-```text
-Output:
-Total output lines: <line_count>
-
-<начало реального вывода>
-…<removed_count> tokens truncated…
-<конец реального вывода>
-```
-
-Отдельного поля с количеством токенов после truncation нет.
-`Original token count` означает approximate token count до inline truncation
-для захваченного output. Факт truncation модель видит по marker-у внутри
-`Output:`.
+| Зона | Почему не меняется |
+| --- | --- |
+| `write_stdin` | Polling long-running process имеет отдельный жизненный цикл |
+| Interactive PTY/SSH | Сессия может жить долго и требует отдельного решения по partial chunks |
+| MCP tool outputs | Другая tool surface и другой shape результата |
+| Code mode result | В MVP меняется model-facing `FunctionCallOutput` для normal unified exec |
+| Legacy shell | Целевая доработка относится к unified `exec_command` |
+| `SandboxDenied` | Отказ sandbox-политики не проходит через цепочку записи output-файлов |
+| Streaming capture buffer | MVP работает после текущего retained/captured output cap |
+| Workspace files | Output artifacts не должны загрязнять пользовательский проект |
+| Существующий `tool_output_token_limit` | Это общий config для context manager/model info, не exec-specific spill настройка |
 
 ## Итоговый контракт
 
@@ -218,13 +159,12 @@ effective_inline_limit =
   )
 ```
 
-Если итоговая реализация решит иначе трактовать `request.max_output_tokens`,
-карточку нужно обновить вместе с кодом. Исходная договоренность: model call
-может попросить меньше, но не больше config/default cap.
+`request.max_output_tokens` может уменьшить effective limit, но не увеличить
+config/default cap.
 
 ### Хранение
 
-Предлагаемый путь:
+Путь хранения:
 
 ```text
 <codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log
@@ -264,37 +204,6 @@ Output excerpt:
 ```
 
 Ошибка также должна попасть в tracing/logging как warning.
-
-## Карта файлов
-
-| Файл | Ожидаемая роль |
-| --- | --- |
-| `codex-rs/config/src/config_toml.rs` | Добавить `ToolsToml.exec` и новый TOML struct для `[tools.exec]` |
-| `codex-rs/core/src/config/mod.rs` | Провести effective config value в `Config` и выставить default `1000` |
-| `codex-rs/core/config.schema.json` | Сгенерированный schema artifact для нового key `[tools.exec].inline_output_max_tokens` |
-| `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Передать обычный exec request в process manager и оставить `SandboxDenied` вне цепочки spill |
-| `codex-rs/core/src/unified_exec/mod.rs` | Добавить request/result поля или helper types для exec output spill |
-| `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch записать `raw_output` в файл при превышении лимита |
-| `codex-rs/core/src/tools/context.rs` | Отрендерить spill metadata, `Output saved to` и `Output excerpt` для `ExecCommandToolOutput` |
-| `codex-rs/utils/path-utils/src/lib.rs` | При необходимости добавить atomic bytes write helper |
-| `codex-rs/core/src/tools/context_tests.rs` | Проверить model-visible formatting для spill и non-spill cases |
-| `codex-rs/core/src/unified_exec/*tests.rs` | Проверить immediate-finished branch, отсутствие spill для running process и запись файла |
-| `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
-| `docs/fork/exec-command-output-spill-files.md` | Owner handoff этой fork-доработки |
-
-Намеренно не меняется в MVP:
-
-| Зона | Почему не меняется |
-| --- | --- |
-| `write_stdin` | Polling long-running process имеет отдельный жизненный цикл |
-| Interactive PTY/SSH | Сессия может жить долго и требует отдельного решения по partial chunks |
-| MCP tool outputs | Другая tool surface и другой shape результата |
-| Code mode result | В MVP меняется model-facing `FunctionCallOutput` для normal unified exec |
-| Legacy shell | Целевая доработка относится к unified `exec_command` |
-| `SandboxDenied` | Отказ sandbox-политики не проходит через цепочку записи output-файлов |
-| Streaming capture buffer | MVP работает после текущего retained/captured output cap |
-| Workspace files | Output artifacts не должны загрязнять пользовательский проект |
-| Существующий `tool_output_token_limit` | Это общий config для context manager/model info, не exec-specific spill настройка |
 
 ## Архитектурное решение
 
@@ -352,11 +261,53 @@ truncation/model info. Новая настройка должна управля
 inline_output_max_tokens = 1000
 ```
 
-Если при реализации структура config делает `[tools.exec]` неудобной, нужно
-обсудить новое имя и обновить эту карточку. Исходная договоренность:
-настройка новая и не заменяет `tool_output_token_limit`.
+Изменение имени или области этого key является отдельным изменением контракта.
+Настройка не заменяет `tool_output_token_limit`.
 
-## Порядок реализации
+### Общий поток обработки
+
+Для unified `exec_command` текущий поток такой:
+
+```text
+exec_command(...)
+  -> process завершается до yield_time_ms или остается running
+  -> process_manager собирает retained bytes из OutputBuffer
+  -> строит ExecCommandToolOutput
+  -> ExecCommandToolOutput::response_text()
+  -> FunctionCallOutput(call_id=..., output=<response_text>)
+  -> conversation history
+  -> следующий model request
+```
+
+`ExecCommandToolOutput::response_text()` сейчас добавляет metadata wrapper:
+
+```text
+Chunk ID: <chunk_id>
+Wall time: <seconds> seconds
+Process exited with code <exit_code>
+Original token count: <approx_count>
+Output:
+<possibly truncated command output>
+```
+
+Если command output больше текущего model output limit, секция `Output:`
+получает результат `formatted_truncate_text(...)`:
+
+```text
+Output:
+Total output lines: <line_count>
+
+<начало реального вывода>
+…<removed_count> tokens truncated…
+<конец реального вывода>
+```
+
+Отдельного поля с количеством токенов после truncation нет.
+`Original token count` означает approximate token count до inline truncation
+для захваченного output. Факт truncation модель видит по marker-у внутри
+`Output:`.
+
+## Порядок повторения при переносе
 
 1. Добавить config model для `[tools.exec].inline_output_max_tokens`:
    - TOML parsing;
@@ -393,73 +344,22 @@ inline_output_max_tokens = 1000
 
 ## Проверки
 
-Эта карточка является handoff-артефактом реализации, а не runbook-ом запуска
-тестов. В ней фиксируется проверочное покрытие, которое нужно сохранить при
-переносе доработки. Исполняемая карта конкретных проверок живет в skill-owned
-`fork tests`.
-
-### Смысловое покрытие
-
-Минимальное смысловое покрытие для реализации:
-
-| Проверка | Ожидаемый результат |
-| --- | --- |
-| Разбор config для `[tools.exec].inline_output_max_tokens = 1234` | Effective config содержит `1234` |
-| Встроенное значение config | При отсутствии key используется `1000` |
-| `config.schema.json` | `codex-rs/core/config.schema.json` содержит новый key |
-| Завершенная команда ниже лимита | Файл не создается; model-visible format остается `Output:` |
-| Завершенная команда выше лимита | Файл создается; model-visible text содержит `Output exceeded...`, `Output saved to...`, `Output excerpt:` |
-| Содержимое файла | Файл содержит exact `raw_output` bytes |
-| Содержимое excerpt | Excerpt создается текущим middle-truncation marker-ом |
-| Running process после initial yield | Spill не происходит в MVP |
-| Отказ sandbox-политики | Spill не происходит; model-visible format остается `Output:` |
-| Ошибка сохранения | Tool response не становится failed, есть bounded warning и excerpt |
-| `max_output_tokens` меньше config | Excerpt уважает меньший effective limit |
-
-Смысловые области, которые должны оставаться представленными в исполняемой
-карте:
-
-| Область покрытия | Что должно проверяться |
-| --- | --- |
-| Config parsing/default | `[tools.exec].inline_output_max_tokens`, положительное значение и default `1000` |
-| Spill helper | Effective limit, отсутствие файла ниже лимита, sanitized path и exact bytes |
-| Model-visible format | `Output:` без spill и `Output excerpt:` при saved/failure spill |
-| Immediate-finished branch | Завершенная команда выше лимита создает output-файл и bounded excerpt |
-| Отказ sandbox-политики | `SandboxDenied` не создает output-файл и остается обычным `Output:` |
-| Long-running/polling branch | Initial running process и follow-up polling не получают spill |
-
-Заметка после переноса на `rust-v0.142.5`: проверка
-`exec_command_spills_large_completed_output_to_file` должна оставаться
-integration-level покрытием в `codex-rs/core/tests/suite/unified_exec.rs`.
-Unit-level проверка через `UnifiedExecProcessManager::exec_command` хрупко
-зависит от локальной sandbox startup path и может требовать отсутствующий
-landlock executable, тогда как контракт карточки требует проверить
-model-visible `exec_command` branch и сохранение spill-файла.
-
-### Владелец исполняемой карты
-
-Проверки уровня карточки для этой fork-доработки запускает skill-owned владелец
-`fork tests`. Карточка хранит внутренние argv только как машиночитаемые данные
-для этого владельца, а не как нормативную инструкцию для прямого запуска
-`just`/`cargo`.
-
-Данные ниже являются текущим блоком `fork-tests.v1`, который читает
-`fork tests`:
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "inline token limit",
+      "purpose": "разбор и применение лимита inline excerpt для exec output",
       "argv": ["just", "test", "-p", "codex-core", "inline_output_max_tokens"]
     },
     {
-      "purpose": "spill output",
+      "purpose": "сохранение большого immediate-finished output и ссылка на файл для модели",
       "argv": ["just", "test", "-p", "codex-core", "output_spill"]
     },
     {
-      "purpose": "spill formatting",
+      "purpose": "формат excerpt и metadata при успешном сохранении output",
       "argv": [
         "just",
         "test",
@@ -469,7 +369,7 @@ model-visible `exec_command` branch и сохранение spill-файла.
       ]
     },
     {
-      "purpose": "spill save failure formatting",
+      "purpose": "warning и excerpt без падения tool call при ошибке сохранения",
       "argv": [
         "just",
         "test",
@@ -479,7 +379,7 @@ model-visible `exec_command` branch и сохранение spill-файла.
       ]
     },
     {
-      "purpose": "large output spill",
+      "purpose": "сквозной spill большого вывода через exec_command",
       "argv": [
         "just",
         "test",
@@ -489,7 +389,7 @@ model-visible `exec_command` branch и сохранение spill-файла.
       ]
     },
     {
-      "purpose": "timeout poll",
+      "purpose": "отсутствие преждевременного spill в long-running polling ветке",
       "argv": [
         "just",
         "test",
@@ -502,148 +402,14 @@ model-visible `exec_command` branch и сохранение spill-файла.
 }
 ```
 
-### Дополнительные gates
-
-Запуск проверок не задается этой карточкой. Общий порядок запуска принадлежит
-проектному skill `fork`; конкретные внутренние команды принадлежат skill-owned
-wrappers.
-
-Дополнительные gates для общего проверочного прохода:
-
-| Проверочный gate | Когда нужен | Владелец |
-| --- | --- | --- |
-| Структурная форма карточки со статусом `active` | После изменения раздела `Проверки`, блока `fork-tests.v1` или статуса карточки | `fork cards validate` |
-| Исполняемая карта проверок уровня карточки | После изменения списка обязательного покрытия, crate/test target или имени теста | `fork tests` |
-| Артефакт config schema | Если diff реализации меняет `[tools.exec].inline_output_max_tokens` или связанные сгенерированные файлы schema | skill-owned generator wrapper |
-
-### Исторические результаты
-
-В старом разделе не было отдельной таблицы датированных запусков, exit code или
-логов. Исторический смысл сохранен так:
-
-| Исторический факт | Как сохранен |
-| --- | --- |
-| Код, schema и тесты для доработки были отмечены как реализованные в рабочем дереве | Статус сохранен в top-level секции `## Проверка покрытия` |
-| Внутренние `just` argv уже были перечислены в карточке | Они оставлены только внутри блока `fork-tests.v1` как данные для `fork tests`, а не вынесены в runbook |
-| Запуск проверок принадлежит общему fork workflow, а не этой карточке | Явно сохранено в подразделе `Дополнительные gates` |
-
-### Перенос на `rust-v0.144.5`
-
-После merge `rust-v0.144.5` выполнена статическая сверка owner-файлов карточки:
-
-- effective inline limit по-прежнему ограничивается config value, меньшим
-  `request.max_output_tokens` и token budget текущей model truncation policy;
-- immediate-finished branch сохраняет exact retained `raw_output` bytes в
-  sanitised Codex-owned path, а running/polling branch остается вне MVP;
-- `response_text()` остается чистым formatter-ом и различает saved spill,
-  bounded save failure и обычный `Output:` без spill;
-- `SandboxDenied` по-прежнему возвращается с `output_spill: None`;
-- config/default/schema, spill helper, formatting, immediate-finished spill и
-  sandbox-denial tests остаются в owner-файлах и соответствуют блоку
-  `fork-tests.v1`.
-
-Card-scoped правки кода после этого merge не потребовались. Проверки уровня
-проекта в one-card проходе не запускались; они остаются задачей общего
-проверочного прохода через skill-owned `fork` workflow.
-
-### Перенос на `rust-v0.144.6`
-
-После merge `rust-v0.144.6` выполнена статическая сверка owner-файлов карточки.
-Разность upstream `rust-v0.144.5..rust-v0.144.6` не затронула реализацию,
-config, schema или тесты spill-файлов.
-
-- Эффективный inline-лимит по-прежнему является минимумом значения config,
-  меньшего `request.max_output_tokens` и токенного бюджета текущей политики
-  усечения модели.
-- Spill выполняется только для завершившегося initial `exec_command`, у которого
-  нет активного `session_id` и есть финальный `exit_code`. Это включает быстро
-  завершившийся вызов с `tty = true`; активный PTY и последующие `write_stdin`
-  остаются вне spill lifecycle.
-- Абсолютный путь по-прежнему строится под
-  `<codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log` только из
-  sanitized ids. Файл создается один раз с `create_new`; автоматическая очистка
-  для него не вводилась, поэтому артефакт остается доступным после tool response
-  и resume, пока сохраняется `codex_home`.
-- На Unix spill-файл открывается с правами `0o600`; создание родительской
-  директории и файла происходит в принадлежащем Codex `codex_home`, а не внутри
-  workspace под sandbox.
-  `SandboxDenied` по-прежнему возвращает `output_spill: None` и не создает
-  артефакт.
-- Видимые модели metadata сохраняют `Original token count`, эффективный
-  inline-лимит, сохраненный путь или ограниченное сообщение об ошибке записи и
-  `Output excerpt:`. `response_text()` остается без файловых побочных эффектов.
-- Покрытие config/default/schema, helper для эффективного лимита, sanitized path
-  и exact bytes, форматирования успешной и неудачной записи,
-  immediate-finished integration spill, sandbox denial и long-running/polling
-  остается в owner-файлах и соответствует неизмененному блоку `fork-tests.v1`.
-
-Card-scoped правки кода после этого merge не потребовались. Проверки уровня
-проекта в one-card проходе не запускались; они остаются задачей общего
-проверочного прохода через skill-owned `fork` workflow.
-
-### Перенос на `rust-v0.145.0`
-
-После merge `rust-v0.145.0` upstream-контракт unified exec стал отдельно
-передавать `original_token_count` и `output_omitted_bytes`, вычисленные до
-добавления marker-а пропущенных bytes. Это пересеклось с fork spill-контрактом
-при построении `Config`, в ветке immediate-finished, обработке `SandboxDenied`
-и тестах видимого модели форматирования.
-
-- В `process_manager.rs` upstream `original_token_count`, вычисленный из
-  `collected_output.total_bytes()`, используется и для порога spill, и для
-  метаданных ответа. Повторный подсчет по тексту с уже вставленным marker-ом не
-  выполняется.
-- Spill-файл по-прежнему содержит exact `ExecCommandToolOutput.raw_output`.
-  После upstream-перехода на ограниченный head/tail-коллектор это означает exact
-  retained bytes вместе с `... <bytes> bytes omitted ...`, если середина была
-  отброшена коллектором; `output_omitted_bytes` сохраняется для последующего
-  видимого модели форматирования.
-- Ветка `SandboxDenied` использует upstream `original_token_count`, когда он
-  доступен, сохраняет `output_omitted_bytes`, формирует требуемые fork-поля
-  `chunk_id` и `raw_output`, но оставляет `output_spill: None`.
-- При построении `Config` сохранены оба независимых поля:
-  `exec_inline_output_max_tokens` fork-а и upstream `agents_enabled`.
-- Тесты форматирования spill сохранены вместе с upstream-проверкой метаданных
-  пропущенного вывода; все конструкции `ExecCommandToolOutput` явно задают и
-  `output_omitted_bytes`, и `output_spill`.
-
-Конфликты в области карточки разрешены в owner-файлах. Проверки уровня проекта в
-one-card проходе не запускались; они остаются задачей общего проверочного
-прохода через skill-owned `fork` workflow.
-
-### Перенос на `rust-v0.146.0`
-
-После merge `rust-v0.146.0` статическая сверка подтвердила сохранность
-spill-контракта в конфигурации, schema, ветке immediate-finished unified exec,
-обработке `SandboxDenied`, видимом модели форматировании и тестовом покрытии.
-
-Upstream добавил поле `ToolsToml.update_plan`. Два литерала структуры в
-config-тестах этой карточки были дополнены значением `None`, чтобы сохранить
-проверку `[tools.exec].inline_output_max_tokens` в новой форме `ToolsToml`.
-Других правок реализации в границах карточки не потребовалось.
-
-Проверки уровня проекта в one-card проходе не запускались; они остаются задачей
-общего проверочного прохода через skill-owned `fork` workflow.
-
-### Известные падения и пропуски
-
-В старом разделе не было зафиксированных известных падений конкретных проверок.
-Осознанные пропуски и границы покрытия:
-
-| Область | Статус |
-| --- | --- |
-| `write_stdin`, interactive PTY/SSH, MCP tool outputs, code mode и legacy shell | Не входят в MVP этой карточки |
-| Running process после initial yield и follow-up polling | В MVP не получают spill; это ожидаемая ветка покрытия, а не падение |
-| `SandboxDenied` | Не проходит через spill и остается обычным `Output:`; отсутствие output-файла является ожидаемым результатом |
-| Покрытие ветки `SandboxDenied` | Проверка `unified_exec_enforces_glob_deny_read_policy` сохранена в `codex-rs/core/tests/suite/unified_exec.rs`; она подтверждает, что sandbox-denied output не получает spill-файл |
-| Прямой запуск внутренних argv из `fork-tests.v1` | Не является нормативной инструкцией запуска; запуск выполняет skill-owned workflow |
+Дополнительно обязателен `fork generators`, поскольку доработка добавляет
+`[tools.exec].inline_output_max_tokens` в config schema.
 
 ## Риски и ограничения
 
-- При переносе на upstream `rust-v0.142.5` старое обращение к
-  `turn.truncation_policy` заменено на
-  `turn.model_info.truncation_policy.into()`, потому что `TurnContext` хранит
-  политику усечения в `model_info`.
+- Политику усечения нужно брать из
+  `turn.model_info.truncation_policy.into()`; не восстанавливать старое поле
+  `turn.truncation_policy`.
 - В ветке `UnifiedExecError::SandboxDenied` сохраняется `output_spill: None`;
   retained output передается через заранее собранный `raw_output`, без повторного
   `output_text.into_bytes()`.
@@ -664,39 +430,3 @@ config-тестах этой карточки были дополнены зна
   будет отдельно расширить readable roots или выбрать другой Codex-owned path.
 - Если `response_text()` вызовут несколько раз, он не должен повторно создавать
   или перезаписывать файл.
-
-## Проверка покрытия
-
-| Согласованный пункт | Статус |
-| --- | --- |
-| Только immediate-finished `exec_command` входит в MVP | перенесено в карточку |
-| `write_stdin`, polling, interactive PTY/SSH, MCP, code mode и legacy shell не входят в MVP | перенесено в карточку |
-| `SandboxDenied` не проходит через цепочку spill и не пишет output-файл | перенесено в карточку |
-| Существующий `1 MiB` capture cap принимается как граница MVP | перенесено в карточку |
-| MVP работает после capture buffer и сохраняет `ExecCommandToolOutput.raw_output` | перенесено в карточку |
-| В model-visible тексте не используется `full` | перенесено в карточку |
-| В обычном случае модели не объясняется `1 MiB` cap | перенесено в карточку |
-| Short output сохраняет текущий формат `Output:` | перенесено в карточку |
-| Long output получает saved file и inline excerpt | перенесено в карточку |
-| Spill text содержит `Output exceeded inline limit`, `Output saved to`, `Output excerpt` | перенесено в карточку |
-| `Output excerpt:` используется из-за наличия saved file | перенесено в карточку |
-| `inline_output_max_tokens` относится только к command output excerpt | перенесено в карточку |
-| Excerpt использует текущий middle truncation utility | перенесено в карточку |
-| Marker остается текущим, если MVP переиспользует truncator | перенесено в карточку |
-| `Original token count` остается count до inline truncation | перенесено в карточку |
-| Поле token count после truncation не добавляется | перенесено в карточку |
-| Добавляется новый config key, а не reuse `tool_output_token_limit` | перенесено в карточку |
-| Предложенное имя key: `[tools.exec].inline_output_max_tokens` | перенесено в карточку |
-| Effective limit учитывает config, меньший `max_output_tokens` и `turn.model_info.truncation_policy.into()` | перенесено в карточку |
-| Output files являются Codex runtime artifacts, не workspace files | перенесено в карточку |
-| Предложенный путь: `<codex_home>/exec_outputs/<thread_id>/<call_id>-<chunk_id>.log` | перенесено в карточку |
-| Имя файла строится только из sanitized ids | перенесено в карточку |
-| Файл пишется до `to_response_item`; `response_text()` без side effects | перенесено в карточку |
-| Ошибка записи файла не делает команду failed | перенесено в карточку |
-| Config schema нужно обновлять через fork generator wrapper | перенесено в карточку как требование к schema; конкретная команда принадлежит wrapper-у |
-| Нужны точечные тесты для порога, пути, содержимого файла, `SandboxDenied` и веток вне MVP | смысловое покрытие перенесено в карточку; конкретные команды живут в skill-owned `fork tests` |
-| Новая активная fork-карточка должна быть добавлена в исполняемую карту tests | перенесено в карточку и покрывается правкой skill-owned `fork tests` |
-| Запуск проверок выполняется не из карточки, а после подтверждения карточек по общему порядку fork | намеренно не перенесено как инструкция карточки; источник правила - project skill `fork` |
-| Прямые внутренние команды не должны быть основным проверочным входом в карточке | Сырой блок команд удален из карточки; карточка описывает проверочное покрытие, а не внутренние команды wrapper-а |
-| Код, schema и тесты реализованы в working tree | перенесено в карточку |
-| Migration-карта должна получить строку этой активной карточки | open question |

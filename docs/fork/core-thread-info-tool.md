@@ -2,8 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-07-29
-source_scope: working-tree
+updated: 2026-08-13
 ---
 
 # Утилитарный core tool `get_thread_info`
@@ -13,36 +12,6 @@ source_scope: working-tree
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет
 `get_thread_info`: встроенный core tool для чтения metadata текущего или
 указанного Codex thread.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Имя tool | `get_thread_info` |
-| Crate | `codex-core` |
-| Основной обработчик | `codex-rs/core/src/tools/handlers/thread_info.rs` |
-| Описание tool | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` |
-| Регистрация | `codex-rs/core/src/tools/spec_plan.rs` |
-| Аргумент | `thread_id?: string` |
-| Default thread | текущий concrete thread текущей сессии |
-| Основной идентификатор лога | `thread_id` |
-| Путь к JSONL | поле ответа `rollout_path` |
-| Имя агента | поле ответа `agent_name` |
-| Общий helper имени агента | `codex-rs/core/src/agent/agent_name.rs` |
-| Удаленный host сборки | `f-ms-dev:/home/slader/Projects/codex` |
-
-Главное runtime-поведение:
-
-- вызов `{}` возвращает metadata текущего concrete thread;
-- `thread_id` в аргументе выбирает другой persisted thread из `ThreadStore`;
-- ответ всегда содержит ключи `thread_id`, `session_id`, `rollout_path`,
-  `agent_name`;
-- `thread_id` обозначает конкретный thread и соответствует UUID в имени
-  rollout-файла;
-- `session_id` обозначает общий root-agent session tree;
-- для текущего root thread `agent_name` берется из `name` effective config, а
-  если его нет - из имени активного профиля;
-- для subagent `agent_name` берется из role/name его agent config, сохраненного
-  как `agent_role`, с fallback на leaf `agent_path` и затем `agent_nickname`.
 
 ## Зачем это нужно
 
@@ -59,20 +28,6 @@ source_scope: working-tree
 Для однозначной идентификации лога нужен именно `thread_id`. Новый tool делает
 это явным model-facing контрактом и одновременно показывает `session_id`, чтобы
 не терять связь subagent thread с общим деревом.
-
-## Согласованные решения
-
-| Пункт | Итоговое решение | Причина |
-| --- | --- | --- |
-| Имя tool | `get_thread_info` | Tool возвращает metadata concrete thread, а не абстрактной session |
-| Аргумент | `thread_id?: string` | Оmitted argument означает текущий concrete thread; явный UUID читает другой persisted thread |
-| Основной id | `thread_id` | Rollout filename и `SessionMeta.id` используют `ThreadId`; это однозначный ключ для JSONL |
-| `session_id` в ответе | Возвращать отдельным nullable полем | Он полезен для связи root и subagents, но не заменяет `thread_id` |
-| Путь к JSONL | `rollout_path` | Это имя уже используется в protocol/thread-store и честно описывает local rollout |
-| Root `agent_name` | Читать top-level `name` из effective config, затем active profile name | У профиля Hermione имя агента живет в config `name`; profile name является fallback |
-| Subagent `agent_name` | Читать `agent_role`, затем leaf `agent_path`, затем `agent_nickname` | `name` из agent TOML превращается в role name и хранится в session/thread metadata |
-| Не использовать `session_id` как filename key | Явно разделить `thread_id` и `session_id` | У subagents свои `thread_id` в общем `session_id`; filename должен находиться по `thread_id` |
-| Remote build | На `f-ms-dev` только сборка и тесты, исходники правятся локально | `f-ms-dev` является сборочным зеркалом, а не местом разработки |
 
 ## Карта файлов
 
@@ -204,7 +159,7 @@ ReadThreadParams {
 при цикле, слишком глубокой цепочке или ошибке чтения родителя. Это защищает
 tool от неограниченного чтения и поврежденной metadata.
 
-## Примеры поведения
+### Примеры поведения
 
 Значения UUID и paths ниже иллюстративные. Формы JSON и наборы полей являются
 частью контракта.
@@ -290,88 +245,42 @@ tool текущего runtime, а не app-server API и не extension tool.
   разрешить связанной runtime env переменной `CODEX_ROLLOUT` быть best-effort,
   чтобы отсутствие диагностического path не блокировало запуск CLI-команды.
 
-Отклоненные альтернативы:
-
-| Альтернатива | Почему отклонена |
-| --- | --- |
-| Назвать tool `get_session_info` | Смешивает общий `session_id` дерева и конкретный `thread_id` JSONL |
-| Принимать `session_id` как аргумент | Не позволяет однозначно выбрать subagent rollout внутри session tree |
-| Возвращать только `thread_id` и path | Теряется связь с root-agent session tree |
-| Возвращать только `session_id` | Нельзя однозначно найти rollout JSONL subagent |
-| Читать полный JSONL history ради metadata | Лишняя цена и риск unbounded context; `StoredThread` уже содержит нужные поля |
-| Выдумывать `agent_name` для старого root thread из текущего profile | Это может быть неверно, если thread был создан другим profile/config |
-
 ## Порядок повторения при переносе
 
 При переносе на новый upstream:
 
-1. Использовать project skill `fork` и эту карточку.
-2. Проверить, как в новом upstream устроены `ToolExecutor`, `ToolInvocation`,
+1. Проверить, как в новом upstream устроены `ToolExecutor`, `ToolInvocation`,
    `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`.
-3. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
-4. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
+2. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
+3. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
    используется связанной runtime env доработкой.
-5. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
-6. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
+4. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
+5. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
    `SystemTimeHandler` или ближайшим актуальным core utility block.
-7. Перенести tests для spec и runtime-контрактов helper-а.
-8. Если upstream поменял model-visible prompt tool list tests, обновить
+6. Перенести tests для spec и runtime-контрактов helper-а.
+7. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.
-9. Запустить форматирование и проверки через skill-owned gates в текущем
-   checkout.
-10. Сверить diff с этой карточкой: все описанные поля, ошибки, fallbacks и
+8. Сверить итоговый diff с контрактом: все описанные поля, ошибки, fallbacks и
    bounded parent-chain logic должны остаться на месте.
 
 ## Проверки
 
-### Смысловое покрытие
-
-Проверки этой карточки должны подтверждать следующий контракт:
-
-- `get_thread_info` зарегистрирован как core utility tool и виден модели с
-  описанием различия между `thread_id` и `session_id`;
-- input schema содержит необязательный `thread_id`, а runtime-разбор отклоняет
-  неизвестные поля, пустую строку и невалидный UUID как model-facing ошибки;
-- вызов без аргументов обслуживает текущий concrete thread через live `Session`
-  и материализует текущий rollout path перед возвратом `rollout_path`;
-- явный UUID другого persisted thread читается через `ThreadStore` с
-  `include_archived: true` и `include_history: false`;
-- ответ всегда сохраняет форму `thread_id`, `session_id`, `rollout_path`,
-  `agent_name`, а `thread_id` остается ключом к конкретному JSONL rollout;
-- `agent_name` вычисляется через общий helper для текущего root, текущего
-  subagent и persisted thread, включая fallback-контракт `agent_role`,
-  `agent_path` и `agent_nickname`;
-- обход parent chain для persisted thread ограничен и возвращает `null`, если
-  root `session_id` нельзя определить честно;
-- core tool activity для вызова `get_thread_info` использует `kind = ThreadInfo`
-  и показывает `current` для вызова без `thread_id` или короткий префикс
-  указанного `thread_id`;
-- cache-sensitive список prompt tools остается согласованным после добавления
-  нового tool.
-
-### Владелец исполняемой карты
-
-Card-level проверки запускает skill-owned command `fork tests`. Карточка не
-является runbook запуска внутренних команд: конкретные argv хранятся только в
-машинно-читаемом блоке `fork-tests.v1`, который читает `fork tests`.
-
-Для этой карточки `fork tests` должен покрывать helper `agent_name`, runtime и
-spec-контракт `thread_info`, а также cache-sensitive тест списка prompt tools.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "agent name",
+      "purpose": "единое разрешение имени root и subagent для runtime surfaces",
       "argv": ["just", "test", "-p", "codex-core", "agent_name"]
     },
     {
-      "purpose": "thread info",
+      "purpose": "metadata текущего и persisted thread, session tree и rollout path",
       "argv": ["just", "test", "-p", "codex-core", "thread_info"]
     },
     {
-      "purpose": "prompt tool cache",
+      "purpose": "direct core tool остаётся доступным в cached tool set",
       "argv": [
         "just",
         "test",
@@ -383,209 +292,6 @@ spec-контракт `thread_info`, а также cache-sensitive тест сп
   ]
 }
 ```
-
-### Дополнительные gates
-
-Дополнительные gates для этой доработки принадлежат skill-owned workflow, а не
-тексту карточки:
-
-- форматирование и lints должны выполняться через fork-owned обертки, если
-  родительский проход менял код или сгенерированные артефакты;
-- card-level проверки должны идти через `fork tests` с этой карточкой, чтобы
-  использовать argv из блока `fork-tests.v1`;
-- crate-level regression для `codex-core` нужен, если родительский проход
-  меняет общий core-контракт за пределами уже покрытых точечных проверок;
-- build/install gates для этой карточки не являются отдельным требованием,
-  пока не менялись сборочные профили, установка или TUI.
-
-### Исторические результаты
-
-Старый формат карточки до перехода на skill-owned workflow хранил прямые
-`just`-команды как запланированное покрытие. Они сохранены ниже только как
-исторический контекст и как объяснение внутреннего покрытия, а не как
-нормативный runbook:
-
-| Историческая команда | Где запускалась | Ожидавшийся результат |
-| --- | --- | --- |
-| `just fmt` | `f-ms-dev`, `codex-rs/` | Форматирование применено; remote diff синхронизирован локально |
-| `just test -p codex-core thread_info` | `f-ms-dev`, `codex-rs/` | Проходят unit tests `thread_info*` |
-| `just test -p codex-core agent_name` | `f-ms-dev`, `codex-rs/` | Проходят unit tests общего helper-а `agent_name` |
-| `just test -p codex-core prompt_tools_are_consistent_across_requests` | `f-ms-dev`, `codex-rs/` | Cache-sensitive prompt tool list остается согласованным |
-| `just test -p codex-core` | `f-ms-dev`, `codex-rs/` | Проходит crate-level regression suite для `codex-core` |
-| `just fix -p codex-core` | `f-ms-dev`, `codex-rs/` | Clippy/fix pass не оставляет обязательных исправлений |
-
-Фактические результаты 2026-06-16:
-
-| Команда | Результат |
-| --- | --- |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fmt` | прошла на `f-ms-dev`; remote-generated изменения синхронизированы локально |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core thread_info` | прошла: 10 tests run, 10 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core prompt_tools_are_consistent_across_requests` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core` | запускалась; итог: 2747 tests run, 2679 passed, 68 failed, 15 skipped |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла; remote-generated изменения синхронизированы локально |
-
-Дополнительные фактические результаты 2026-06-17 после выделения общего helper-а
-`codex-rs/core/src/agent/agent_name.rs`:
-
-| Команда | Результат |
-| --- | --- |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core agent_name` | прошла: 6 tests run, 6 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core thread_info` | прошла: 5 tests run, 5 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just test -p codex-core shell_command_handler_to_exec_params_uses_session_shell_and_turn_context` | прошла: 1 test run, 1 passed |
-| `PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH" just fix -p codex-core` | прошла за 1m05s |
-
-Эти проверки подтверждают, что `get_thread_info.agent_name` продолжает
-использовать прежний контракт через общий helper. Связанная доработка
-runtime env и ее дополнительные проверки зафиксированы в
-`docs/fork/codex-agent-env-var.md`.
-
-Миграционная сверка 2026-06-19 после обновления upstream:
-
-- вручную сверены файлы-владельцы выбранной карточки:
-  `codex-rs/core/src/tools/handlers/thread_info.rs`,
-  `codex-rs/core/src/tools/handlers/thread_info_spec.rs`,
-  `codex-rs/core/src/agent/agent_name.rs`,
-  `codex-rs/core/src/tools/handlers/mod.rs`,
-  `codex-rs/core/src/tools/spec_plan.rs`,
-  `codex-rs/core/tests/suite/prompt_caching.rs`;
-- вручную сверены прямо используемые API текущей кодовой базы:
-  `ReadThreadParams`, `StoredThread`, `ThreadStore`,
-  `ToolInvocation`, `Session::thread_id()`, `Session::session_id()`,
-  `Session::try_ensure_rollout_materialized()`,
-  `Session::current_rollout_path()`, `SessionSource`,
-  `SubAgentSource` и `AgentPath::name()`;
-- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
-  текущий thread обслуживается через live `Session`, другой persisted thread
-  читается через `ThreadStore`, `include_archived: true` и
-  `include_history: false` сохранены, обход parent chain ограничен
-  `MAX_PARENT_CHAIN_DEPTH = 64`;
-- доработано тестовое покрытие `agent_name`: добавлены проверки fallback на
-  `agent_nickname` для текущего subagent, приоритета `agent_role` для
-  persisted thread и fallback на `agent_nickname` для persisted thread;
-- команды форматирования, сборки, тестов, генераторов и `fix` в рамках этой
-  миграционной сверки одной карточки не запускались по ограничению запуска.
-
-Миграционная сверка 2026-07-05 после слияния `rust-v0.142.5`:
-
-- вручную сверены файлы-владельцы выбранной карточки:
-  `codex-rs/core/src/tools/handlers/thread_info.rs`,
-  `codex-rs/core/src/tools/handlers/thread_info_spec.rs`,
-  `codex-rs/core/src/agent/agent_name.rs`,
-  `codex-rs/core/src/tools/handlers/mod.rs`,
-  `codex-rs/core/src/tools/spec_plan.rs`,
-  `codex-rs/core/tests/suite/prompt_caching.rs`;
-- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
-  текущий thread обслуживается через live `Session`, другой persisted thread
-  читается через `ThreadStore`, `include_archived: true` и
-  `include_history: false` сохранены, видимое модели описание различает
-  `thread_id` и `session_id`, а список prompt tools содержит `get_thread_info`;
-- доработано тестовое покрытие `thread_info`: добавлены проверки model-facing
-  ошибки для невалидного UUID и неизвестных полей аргументов, чтобы тесты снова
-  покрывали контракт runtime-разбора из этой карточки;
-- команды форматирования, сборки, тестов, генераторов и `fix` не запускались по
-  ограничению запуска подагента одной карточки; эти проверки должен выполнить
-  родительский агент в общем проходе.
-
-Миграционная сверка 2026-07-10 после слияния `rust-v0.144.1`:
-
-- вручную сверены файлы-владельцы выбранной карточки:
-  `codex-rs/core/src/tools/handlers/thread_info.rs`,
-  `codex-rs/core/src/tools/handlers/thread_info_spec.rs`,
-  `codex-rs/core/src/agent/agent_name.rs`,
-  `codex-rs/core/src/tools/handlers/mod.rs`,
-  `codex-rs/core/src/tools/spec_plan.rs`,
-  `codex-rs/core/src/tools/core_tool_activity.rs`,
-  `codex-rs/protocol/src/items.rs`,
-  `codex-rs/core/tests/suite/prompt_caching.rs`;
-- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
-  текущий thread обслуживается через live `Session`, другой persisted thread
-  читается через `ThreadStore`, `include_archived: true` и
-  `include_history: false` сохранены, видимое модели описание различает
-  `thread_id` и `session_id`, а список prompt tools содержит `get_thread_info`;
-- уточнено, что текущая интеграция включает `CoreToolActivityKind::ThreadInfo`
-  и поле `detail` со значением `current` или префиксом указанного `thread_id`
-  для `CoreToolActivityItem`;
-- команды форматирования, сборки, тестов, генераторов и `fix` не запускались по
-  ограничению запуска подагента одной карточки; эти проверки должен выполнить
-  родительский агент в общем проходе.
-
-Миграционная сверка 2026-07-16 после слияния `rust-v0.144.5`:
-
-- вручную сверены файлы-владельцы выбранной карточки и прямо используемые API
-  текущей кодовой базы;
-- подтверждено, что runtime-контракт `get_thread_info` остался на месте:
-  текущий thread обслуживается через live `Session`, другой persisted thread
-  читается через `ThreadStore`, `include_archived: true` и
-  `include_history: false` сохранены, а обход parent chain остается ограничен
-  `MAX_PARENT_CHAIN_DEPTH = 64`;
-- подтверждено, что tool spec сохраняет необязательный `thread_id`, required
-  output-поля `thread_id`, `session_id`, `rollout_path`, `agent_name` и видимое
-  модели различие между concrete thread и общим session tree;
-- подтверждено, что helper `agent_name`, регистрация core utility tool,
-  `CoreToolActivityKind::ThreadInfo` и cache-sensitive список prompt tools
-  согласованы с карточкой; кодовая доработка не потребовалась;
-- команды форматирования, сборки, тестов, генераторов и `fix` не запускались по
-  ограничению запуска подагента одной карточки; эти проверки должен выполнить
-  родительский агент в общем проходе.
-
-Миграционная сверка 2026-07-18 после слияния `rust-v0.144.6`:
-
-- вручную сверены файлы-владельцы выбранной карточки и прямо используемые API
-  текущей кодовой базы;
-- подтверждено, что обработчик сохраняет выбор текущего или указанного thread,
-  материализует текущий rollout, читает сохраненный thread без полной истории и
-  ограничивает обход parent chain при определении корневого `session_id`;
-- подтверждено, что tool spec сохраняет необязательный `thread_id`, обязательные
-  output-поля `thread_id`, `session_id`, `rollout_path`, `agent_name` и видимое
-  модели различие между concrete thread и общим session tree;
-- подтверждено, что helper `agent_name`, регистрация core utility tool,
-  `CoreToolActivityKind::ThreadInfo` и cache-sensitive список prompt tools
-  согласованы с карточкой; кодовая доработка не потребовалась;
-- команды форматирования, сборки, тестов, генераторов, `fix` и markdownlint не
-  запускались по ограничению запуска подагента одной карточки; эти проверки
-  должен выполнить родительский агент в общем проходе.
-
-Миграционная сверка 2026-07-29 после слияния `rust-v0.146.0`:
-
-- вручную сверены файлы-владельцы выбранной карточки и прямо используемые API
-  `Session` и `ThreadStore`;
-- подтверждено, что runtime-контракт `get_thread_info` сохранил выбор текущего
-  или указанного thread, материализацию текущего rollout, чтение сохранённого
-  thread без полной истории и ограниченный обход parent chain;
-- подтверждено, что спецификация инструмента, обязательные поля результата,
-  helper `agent_name`, `CoreToolActivityKind::ThreadInfo`, регистрация core
-  utility tool и чувствительный к кэшу список инструментов в prompt остаются
-  согласованными с карточкой;
-- добавленные в index upstream-изменения в `handlers/mod.rs`, `spec_plan.rs`,
-  `items.rs` и `prompt_caching.rs` не потребовали card-local доработки; конфликт в
-  `session/session.rs` находится вне используемых этой карточкой методов и
-  оставлен для своего владельца;
-- кодовых изменений по этой карточке не потребовалось;
-- команды форматирования, сборки, тестов, генераторов, `fix` и markdownlint не
-  запускались по ограничению запуска подагента одной карточки; эти проверки
-  должен выполнить родительский агент в общем проходе.
-
-### Известные падения и пропуски
-
-- Первый узкий запуск проверки `thread_info` 2026-06-16 поймал compile error
-  `borrow of partially moved value: stored_thread`; ошибка была исправлена до
-  успешных узких проверок.
-- Падения полного crate-level regression 2026-06-16 не были связаны с
-  `get_thread_info`: ключевой общий симптом - remote sandbox failure
-  `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`; также были
-  падения code-mode/MCP tests из-за missing `test_stdio_server` и timeouts.
-  Узкие проверки нового tool и cache-sensitive prompt tool list прошли.
-- При миграционной сверке 2026-06-19 команды форматирования, сборки, тестов,
-  генераторов и `fix` не запускались по ограничению запуска подагента одной
-  карточки; эти проверки должен включить родительский агент в общий проход.
-
-## Runtime, сборка и установка
-
-Эта доработка не требует отдельного install step. Если нужно проверить installed
-binary, используй обычный fork workflow для remote release-fast build и
-локальной установки, описанный в других fork-карточках. Для этой карточки
-достаточно проверки `codex-core`, если не менялись сборочные профили,
-установка или TUI.
 
 ## Риски и ограничения
 
@@ -600,25 +306,3 @@ binary, используй обычный fork workflow для remote release-fa
 - Tool не является API для чтения истории, transcript или contents rollout.
 - Tool не должен расширяться до unbounded scan/search без отдельного design
   review.
-
-## Проверка покрытия
-
-| Пункт | Статус |
-| --- | --- |
-| Пользовательская цель: получить путь к JSONL текущей/указанной thread | перенесено в карточку |
-| Переименование `session` в `thread` после уточнения модели | перенесено в карточку |
-| Различие `thread_id` и `session_id` | перенесено в карточку |
-| `thread_id` как однозначный ключ rollout filename | перенесено в карточку |
-| Видимое модели описание различает `thread_id` для JSONL rollout и `session_id` для группировки дерева | перенесено в карточку и закреплено spec-тестом |
-| `agent_name` из subagent config `name` через `agent_role` | перенесено в карточку |
-| `agent_name` текущего root из profile/config `name` | перенесено в карточку |
-| Общий helper `agent_name` для `get_thread_info` и `CODEX_AGENT` | перенесено в карточку и связанную карточку `codex-agent-env-var.md` |
-| Связь `rollout_path` с best-effort `CODEX_ROLLOUT` | перенесено в связанную карточку `codex-agent-env-var.md` |
-| Remote build только на `f-ms-dev`, без разработки на mirror | перенесено в карточку |
-| Не читать полный JSONL history ради metadata | перенесено в карточку |
-| Проверки `fmt`, `test`, `fix` | выполнены; полный `codex-core` suite запускался и упал на remote-инфраструктуре, подробности зафиксированы выше |
-| Миграционная сверка после обновления upstream 2026-06-19 | ручная сверка выполнена; тестовое покрытие fallback-контракта `agent_name` усилено; команды проверок должен запустить основной агент |
-| Миграционная сверка после слияния `rust-v0.142.5` 2026-07-05 | ручная сверка выполнена; тестовое покрытие runtime-разбора `thread_info` восстановлено для невалидного UUID и неизвестных полей; команды проверок должен запустить основной агент |
-| Миграционная сверка после слияния `rust-v0.144.1` 2026-07-10 | ручная сверка выполнена; карта файлов уточнена для core tool activity и protocol kind; команды проверок должен запустить основной агент |
-| Миграционная сверка после слияния `rust-v0.144.5` 2026-07-16 | ручная сверка runtime, tool spec, helper, регистрации, core tool activity и тестового контракта выполнена; кодовая доработка не потребовалась; команды проверок должен запустить основной агент |
-| Миграционная сверка после слияния `rust-v0.144.6` 2026-07-18 | ручная сверка обработчика, контракта идентификаторов, tool spec, регистрации, core tool activity, prompt cache и тестового покрытия выполнена; кодовая доработка не потребовалась; команды проверок должен запустить основной агент |

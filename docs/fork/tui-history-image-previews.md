@@ -2,8 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-07-29
-source_scope: rust-v0.137.0..HEAD
+updated: 2026-08-13
 ---
 
 # TUI history image previews
@@ -16,19 +15,6 @@ source_scope: rust-v0.137.0..HEAD
 Карточка предназначена именно для переноса fork patch на новый upstream: она
 сохраняет полный feature chain, кодовые границы, config/API surface, проверки,
 ограничения и известные риски.
-
-| Поле | Значение |
-| --- | --- |
-| Статус | `active` |
-| Основные commits | `96feb7e0d`, `483c08245`, `a041a3820`, `23726d4c6`, `bc35d2615`, `697bad938` |
-| Архитектурный owner | `docs/architecture/features/tui-history-image-previews.md` |
-| Главный invariant | Не встраивать terminal escape payload в ratatui `Line` |
-| Инвариант после `0.137.0` | Обычные строки терминальной истории должны идти как `HyperlinkLine`, а не возвращаться к старому пути через `Line<'static>` |
-| Typed marker | `HistoryCellDisplayItem::LocalImage { path, preview_size }` |
-| Controlled boundary | `AppEvent::InsertLocalImage { path, caption, preview_size }` |
-| Config surface | `[tui.history_image_preview]` |
-| Model-visible API | `view_image.preview_size = small`, `normal`, `large` |
-| Checkpoint перед карточкой | Пропущен по явному разрешению пользователя от 2026-06-08 |
 
 ## Зачем это нужно
 
@@ -49,21 +35,6 @@ Fallback остается рядом:
 - `[Image #n]` для пользовательских вложений;
 - `[Image]`;
 - `[Image: <caption>]`.
-
-## Commit chain
-
-| Commit | Смысл |
-| --- | --- |
-| `96feb7e0d Add terminal image previews to TUI history` | Базовый marker/render path для пользовательских local images, `HistoryInsertItem::Image`, `pets::prepare_history_image` |
-| `483c08245 Normalize history images for Kitty previews` | `png_frame`, нормализация non-PNG в PNG для Kitty payload `f=100` |
-| `a041a3820 Wire view_image into local image history` | `AppEvent::InsertLocalImage`, validation, `LocalImageHistoryCell`, `ChatWidget::on_view_image_tool_call` |
-| `23726d4c6 Preserve TUI image previews during replay` | Item-level replay/reflow, `ImageGeneration.saved_path`, snapshot update |
-| `bc35d2615 Anchor Kitty history images in scrollback` | Kitty virtual placement, Unicode placeholders, scrollback anchors/deletion |
-| `697bad938 Add configurable TUI image preview sizes` | `ImagePreviewSize`, `preview_size`, `[tui.history_image_preview]`, app-server/schema propagation |
-
-Важно: текущая архитектурная карточка в `docs/architecture` исторически
-упоминала только первые два commits в секции "Коммиты реализации". Для handoff
-без потери смысла нужен весь chain выше.
 
 ## Карта файлов
 
@@ -183,7 +154,15 @@ Fallback остается рядом:
    anchored image scrolls out of visible history.
 6. Sixel path remains bytes payload.
 
-## Пошаговое воспроизведение
+## Архитектурное решение
+
+History cells возвращают типизированные display items и не хранят terminal
+bytes в `Line`. `App` преобразует только доверенные `LocalImage` markers на
+границе вставки истории, protocol modules владеют кодированием и Kitty
+placement, а `CustomTerminal` — очисткой terminal resources. Config и protocol
+surfaces передают только ограниченный enum размера preview.
+
+## Порядок повторения при переносе
 
 ### 1. Ввести typed display item
 
@@ -197,7 +176,7 @@ HistoryCellDisplayItem::LocalImage {
 ```
 
 Все code paths, которым нужны plain lines, должны явно фильтровать markers.
-После upstream `HyperlinkLine` migration полезна вспомогательная функция:
+Для этого используется вспомогательная функция:
 
 ```rust
 pub(crate) fn line(self) -> Option<Line<'static>>
@@ -207,8 +186,7 @@ pub(crate) fn line(self) -> Option<Line<'static>>
 Она нужна только потребителям обычных видимых строк. Пути scrollback,
 resize reflow, initial replay, thread-switch tail replay и overlay-deferred
 history должны переносить обычные строки как `HyperlinkLine`, чтобы не потерять
-метаданные терминальных ссылок и не повторить регрессию миграции
-на `0.137.0`.
+метаданные терминальных ссылок.
 
 ### 2. Добавить fallback plus marker в user attachments
 
@@ -279,7 +257,7 @@ history должны работать на `HistoryCellDisplayItem`, а не т�
 - `LocalImage` обрабатывать best-effort:
   - detect terminal image support;
   - взять target rows через `config.history_image_preview.rows_for(preview_size)`;
-  - ограничить columns текущей width, исторически `width - 4`;
+  - ограничить columns доступной шириной терминала с учётом protocol padding;
   - вызвать `pets::prepare_history_image`;
   - при success создать `HistoryInsertItem::Image`;
   - при error логировать и пропустить marker.
@@ -312,183 +290,38 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `[tui.history_image_preview]` config;
 - `HistoryImagePreviewConfig::rows_for`.
 
-Заметка для переноса на `rust-v0.142.5`: если конфликт в `view_image.rs`
-появляется только на границе импортов, сохраняй `ImagePreviewSize`, но не
-возвращай устаревший `codex_features::Feature`. Актуальная upstream-сторона уже
-перенесла обработчик на `turn_environment.cwd().to_abs_path()`/`PathUri`,
-оставила `data_url_from_bytes` без старой ветки `Feature::ResizeAllImages` и
-сохранила `detail = original`; fork-добавка в этом месте ограничена разбором
-`preview_size`, ошибкой для неизвестного значения и заполнением
-`ImageViewItem.preview_size`.
+При разрешении upstream-конфликтов сохранять актуальные upstream-типы и
+накладывать только fork-поля и typed markers:
 
-Заметка для переноса на `rust-v0.143.0`: если upstream меняет поверхность пути
-`ImageView` с `AbsolutePathBuf` на `PathUri`/`LegacyAppPathString`, сохраняй
-новую upstream-модель путей и добавляй поверх нее fork-поле `preview_size`.
-`TurnItem::ImageView`, legacy `ViewImageToolCallEvent`, app-server v2
-`ThreadItem::ImageView`, TUI replay и `ChatWidget::on_view_image_tool_call`
-должны переносить один и тот же `ImagePreviewSize` без возврата к числовому
-`preview_rows`.
-
-Заметка для переноса на `rust-v0.144.1`: если конфликт возникает в
-сгенерированном TypeScript `v2/ThreadItem.ts`, сохраняй upstream-форму
-`{ "type": "webSearch" } & WebSearchItem` и
-`{ "type": "imageGeneration" } & ImageGenerationItem`, но добавляй fork-поле
-`previewSize: ImagePreviewSize` в `imageView`. Не возвращай встроенное поле
-`savedPath?: AbsolutePathBuf` в `ThreadItem.ts`: после upstream-выноса оно живет
-в `ImageGenerationItem`.
-
-Заметка для переноса на `rust-v0.144.5`: между upstream-метками
-`rust-v0.144.4` и `rust-v0.144.5` owner-пути этой доработки не менялись.
-Проверка текущего `HEAD` подтвердила сохранение сквозного контракта:
-`view_image` возвращает модели `FunctionCallOutputContentItem::InputImage` и
-отдельно создаёт `ImageViewItem` с `preview_size`; protocol/app-server передают
-`ImagePreviewSize` и `previewSize`; TUI сохраняет доверенную границу
-`InsertLocalImage`, `HistoryCellDisplayItem::LocalImage`, `HyperlinkLine`, пути
-replay/reflow, вставку в терминальную историю, расчёт размера, Kitty virtual
-placement, регрессионные тесты и snapshot-артефакты. Правки кода, схем и
-snapshots для этой миграции не потребовались.
-
-Заметка для переноса на `rust-v0.144.6`: между upstream-метками
-`rust-v0.144.5` и `rust-v0.144.6` owner-пути этой доработки также не менялись.
-Проверка текущего `HEAD` подтвердила тот же сквозной контракт без правок кода,
-схем и snapshots:
-
-- `view_image` разрешает путь относительно `cwd` выбранного окружения, проверяет
-  доступ через его filesystem с sandbox context и принимает только обычный файл;
-- TUI получает локальный путь только через структурированные `ImageView` /
-  `ImageGeneration.saved_path`, повторно требует локальный обычный файл и
-  успешное декодирование, а путь чужой платформы оставляет текстовым fallback;
-- `ImagePreviewSize` проходит через core item, legacy event, app-server v2,
-  сгенерированные TypeScript/JSON и TUI replay без потери `preview_size`;
-- `HistoryCellDisplayItem::LocalImage` сохраняется в Rich history и путях
-  initial replay, thread-switch replay, overlay defer и resize reflow, а terminal
-  payload создаётся только на границе `prepare_history_insert_items`;
-- число столбцов ограничено доступной шириной терминала и снизу значением `1`,
-  а настройки строк имеют тип `u16` и ограничение снизу значением `1`;
-  отдельного верхнего runtime-ограничения для `small_rows`, `normal_rows` и
-  `large_rows` нет.
-
-Заметка для переноса на `rust-v0.145.0`: upstream изменил replay/reflow и
-сгенерированную форму `ThreadItem`, поэтому перенос потребовал адаптации, а не
-простого сохранения прежних конфликтных сторон:
-
-- `InitialHistoryReplayBuffer` и terminal insertion продолжают хранить
-  `HistoryCellDisplayItem` / `HistoryInsertItem`, чтобы `LocalImage` переживал
-  initial replay, thread-switch replay и resize reflow; при этом новая
-  upstream-ветвь `render_from_transcript_tail || overlay.is_some()` сохраняется
-  и планирует немедленный source-backed reflow;
-- `finish_required_stream_reflow` очищает `retained_items`, а не устаревшие
-  `retained_lines`, перед отложенным воспроизведением хвоста transcript;
-- новые upstream-тесты capped replay в `app/tests.rs` используют
-  `buffer_initial_history_replay_display_items`, `retained_items` и
-  `ReflowRenderResult.items`; сам файл остаётся неразрешённым из-за чужих
-  конфликтов в других участках;
-- обычные строки по-прежнему проходят как `HyperlinkLine`, а изображения — как
-  отдельный `HistoryInsertItem::Image`; новые upstream-изменения wrapping не
-  возвращают terminal history к line-only контракту;
-- сгенерированный `ThreadItem.ts` сохраняет новую upstream-форму
-  `{ "type": "sleep" } & SleepItem` и одновременно fork-поле
-  `previewSize: ImagePreviewSize` в `imageView`;
-- конфликт `app/event_dispatch.rs`, относящийся к lifecycle runtime-потоков, не
-  является частью этой карточки и намеренно оставлен владельцу соответствующей
-  fork-доработки.
-
-Заметка для переноса на `rust-v0.146.0`: аудит диапазона
-`rust-v0.145.0..rust-v0.146.0` показал, что upstream не менял собственно
-контракт предварительного просмотра изображений: `ImagePreviewSize`,
-`preview_size`, `[tui.history_image_preview]`, доверенная граница
-`InsertLocalImage`, типизированный `HistoryCellDisplayItem::LocalImage`,
-формирование управляющей последовательности терминала и Kitty virtual placement
-сохранились. Адаптация понадобилась в двух местах, где новый upstream пересёкся
-с fork-архитектурой:
-
-- в `custom_terminal.rs` новое тестовое поле `screen_size_override` объединено с
-  `history_rows_inserted_total` и `kitty_history_images`; все поля
-  инициализируются одновременно, а привязки Kitty по-прежнему очищаются вместе
-  с историей терминала;
-- новый upstream-тест
-  `directive_only_completion_removes_streamed_directive` в `app/tests.rs`
-  переведён с upstream `ReflowRenderResult.lines` на fork-поле
-  `ReflowRenderResult.items`, чтобы он проходил через типизированный путь
-  replay/reflow и использовал общий `rendered_line_text`;
-- `app/tests.rs` остаётся `UU` из-за отдельного конфликта импортов, не
-  принадлежащего этой карточке, поэтому task-owned адаптация в этом смешанном
-  файле намеренно не добавлена в index;
-- snapshot-файл
-  `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
-  не изменился между upstream-метками и сохраняет прежнее визуальное
-  подтверждение fallback. Проверка нового upstream snapshot для
-  `directive_only_completion_removes_streamed_directive` переведена на
-  перекомпоновку через `HistoryCellDisplayItem` без изменения ожидаемого
-  содержимого snapshot; фактическая проверка pending snapshots передана
-  родительскому проходу.
+- путь `ImageView` остаётся в актуальной upstream-модели
+  `PathUri`/`LegacyAppPathString`; fork добавляет `preview_size`, но не возвращает
+  устаревшие feature branches;
+- `TurnItem::ImageView`, legacy event, app-server v2, generated TypeScript и TUI
+  replay передают один `ImagePreviewSize` без числового `preview_rows`;
+- generated `ThreadItem.ts` сохраняет все upstream variants, а вариант
+  `imageView` дополнительно содержит `previewSize`;
+- `InitialHistoryReplayBuffer`, `ReflowRenderResult` и terminal insertion
+  хранят `items`, а не пониженные `lines`; обычные строки остаются
+  `HyperlinkLine`, изображения — отдельным `HistoryInsertItem::Image`;
+- `CustomTerminal` инициализирует и очищает Kitty bindings вместе с остальным
+  состоянием истории;
+- конфликты соседних lifecycle features не включаются в эту карточку только из-за
+  общего файла.
 
 ## Проверки
 
-### Смысловое покрытие
-
-Проверочное покрытие должно сохранять весь контракт TUI image preview:
-
-- пользовательские local image attachments отображаются как fallback-строка и
-  bitmap marker только в Rich mode;
-- `view_image` и `ImageGeneration.saved_path` входят в историю через доверенный
-  `AppEvent::InsertLocalImage`, а произвольный Markdown/plain text не создаёт
-  `LocalImage`;
-- пути replay/reflow, включая resize reflow, initial replay, thread-switch
-  tail replay и overlay-deferred history, не теряют typed marker;
-- обычные строки терминальной истории остаются `HyperlinkLine` на пути
-  `HistoryCellDisplayItem::Line(HyperlinkLine)` ->
-  `HistoryInsertItem::Line(HyperlinkLine)`;
-- Kitty history previews используют PNG payload, virtual placement и
-  placeholder anchoring вместо screen placement;
-- `view_image.preview_size`, `ImagePreviewSize`, `[tui.history_image_preview]`,
-  config schema и app-server protocol surfaces остаются синхронизированными;
-- snapshot-покрытие сохраняет форму отрисованной истории видимой для проверки.
-
-Покрытие, найденное в `HEAD`:
-
-- `user_history_cell_emits_local_image_items_for_terminal_history`;
-- `local_image_history_cell_emits_image_item_in_rich_mode_only`;
-- `agent_markdown_image_syntax_does_not_emit_local_image_item`;
-- `view_image_tool_call_emits_local_image_event`;
-- `view_image_tool_call_preserves_preview_size_hint`;
-- `image_generation_call_with_saved_path_emits_local_image_event`;
-- `history_image_size_*`;
-- `history_image_prepare_kitty_payload_*`;
-- `kitty_png_virtual_placement_transmits_without_screen_placement`;
-- `kitty_file_virtual_placement_transmits_without_screen_placement`;
-- config-тесты для `[tui.history_image_preview]`;
-- handler/spec-тесты `view_image` для `preview_size`;
-- тесты app-server protocol и schema fixtures.
-
-Snapshot-подтверждение:
-
-- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__image_generation_call_history_snapshot.snap`
-
-Этот snapshot подтверждает текстовый fallback для `ImageGeneration` без
-`saved_path`; terminal bitmap marker намеренно не входит в ratatui snapshot.
-Форма marker и его отсутствие в Raw mode проверяются обычными assertions
-`user_history_cell_emits_local_image_items_for_terminal_history` и
-`local_image_history_cell_emits_image_item_in_rich_mode_only`.
-
-### Владелец исполняемой карты
-
-Проверки уровня карточки запускает skill-owned команда `fork tests`.
-Внутренние argv не являются runbook карточки: они живут в блоке `fork-tests.v1`
-ниже и читаются `fork tests` для карточки `fork-tui-history-image-previews`.
-
-Данные ниже являются текущим блоком `fork-tests.v1`.
+Исполняемая карта card-level regression tests:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "core view image",
+      "purpose": "trusted ImageView path и model-visible результат view_image",
       "argv": ["just", "test", "-p", "codex-core", "view_image"]
     },
     {
-      "purpose": "tui render",
+      "purpose": "rich image history, replay, reflow и terminal insertion в TUI",
       "argv": [
         "just",
         "test",
@@ -500,15 +333,15 @@ Snapshot-подтверждение:
       ]
     },
     {
-      "purpose": "app server protocol",
+      "purpose": "app-server wire contract для image preview items и previewSize",
       "argv": ["just", "test", "-p", "codex-app-server-protocol"]
     },
     {
-      "purpose": "protocol",
+      "purpose": "protocol types для preview size и сохранённого image path",
       "argv": ["just", "test", "-p", "codex-protocol"]
     },
     {
-      "purpose": "pending snapshots",
+      "purpose": "отсутствие непреднамеренных изменений TUI snapshots",
       "argv": [
         "cargo",
         "insta",
@@ -521,82 +354,13 @@ Snapshot-подтверждение:
 }
 ```
 
-### Дополнительные gates
+Дополнительно обязателен `fork generators`, если перенос меняет `ImagePreviewSize`, `[tui.history_image_preview]` или app-server `previewSize`.
 
-Для общего проверочного прохода после обработки карточек требуются не прямые
-команды из карточки, а skill-owned владельцы:
+`manual-required`: в Kitty нужно проверить показ PNG, `view_image` в истории, сохранение preview после resize и text fallback при слишком узком окне.
 
-- `fork generators` нужен, если diff затрагивает или подтверждает
-  schema-артефакты config/app-server для `ImagePreviewSize`,
-  `[tui.history_image_preview]` или `previewSize`;
-- `fork build-fast` остаётся релевантным release-gate, потому что историческая
-  цепочка доработки включала сборку и установку бинарника;
-- ручной Kitty smoke остаётся `manual-required`: нужно подтвердить, что команда
-  terminal graphics показывает PNG, TUI `view_image` показывает изображение в
-  истории, preview переживает обычный resize, а крайне узкое окно отказывает без
-  потери fallback;
-- локальная проверка без Rust/Cargo сводится к review whitespace в diff и поиску
-  ключевых идентификаторов `LocalImage`, `InsertLocalImage`, `ImagePreviewSize`,
-  `preview_size`, `history_image_preview`, `KittyUnicodePlaceholder`.
+## Риски и ограничения
 
-### Исторические результаты
-
-Исторические commit messages и docs фиксировали такие проверки:
-
-- `bc35d2615`:
-  - `cargo test -p codex-tui kitty`;
-  - work-tracking check;
-  - `git diff --check`.
-- `697bad938`:
-  - scoped-запуск `cargo check` для `codex-core`, `codex-tui`,
-    `codex-app-server-protocol`;
-  - `just write-config-schema`;
-  - `just write-app-server-schema`;
-  - focused-запуск `cargo test`;
-  - `just fix`;
-  - `just build-fast-release`;
-  - установка и `--version`;
-  - известные несвязанные падения full-suite.
-
-Текущая карточка не утверждает, что эти проверки запускались в текущем запуске.
-Прямые команды `just`/`cargo` выше сохранены только как историческое подтверждение,
-а не как нормативный runbook.
-
-### Известные падения и пропуски
-
-Не копировать без перепроверки как существующие тесты:
-
-- `insert_history_items_with_wrap_policy_counts_image_rows`;
-- `kitty_placeholder_image_writes_text_anchored_cells`;
-- `kitty_placeholder_image_is_deleted_after_scrolling_off_visible_history`.
-
-Explorer нашёл эти имена только в docs, а не как тестовые функции в committed code.
-
-Внутренний argv для `codex-tui` в `fork-tests.v1` сохраняет skip
-`ide_context::ipc::tests::fetch_ide_context_uses_unregistered_request_route`.
-Причина skip не подтверждена этой карточкой; это известный пропуск, который
-родительский общий проверочный проход должен сохранить или пересмотреть явно.
-
-Исторический `697bad938` фиксировал известные несвязанные падения full-suite. Эта
-карточка не утверждает, что такие падения остаются актуальными после текущей
-миграции.
-
-В текущем запуске миграции на `rust-v0.146.0`:
-
-- режим списка `fork tests` успешно вывел пять ожидаемых строк исполняемой
-  карты;
-- проверка whitespace diff для `codex-rs/tui/src/custom_terminal.rs`
-  завершилась успешно, после чего полностью разрешённый task-owned конфликт
-  этого файла добавлен в index; повторная проверка staged diff также
-  завершилась успешно;
-- тесты, генераторы, форматирование, сборка, markdownlint и проверка pending
-  snapshots не запускались по ограничению роли подагента; их должен выполнить
-  родительский общий проверочный проход через skill-owned команды;
-- `app/tests.rs` остаётся смешанным неразрешённым файлом из-за чужого
-  конфликта импортов; task-owned переход нового теста с `.lines` на `.items`
-  сохранён в рабочем дереве, но файл не добавлен в index.
-
-## Ограничения
+### Ограничения
 
 - Managed ownership original images after resume intentionally not implemented.
   Если source path disappears, bitmap payload cannot be regenerated; fallback
@@ -613,7 +377,7 @@ Explorer нашёл эти имена только в docs, а не как те�
 - Do not parse local image paths from arbitrary Markdown/plain text as trusted
   sources.
 
-## Риски
+### Риски
 
 - Upstream changes in history rendering can silently convert typed markers back
   to lines. This breaks replay/reflow bitmap preservation.
@@ -628,27 +392,3 @@ Explorer нашёл эти имена только в docs, а не как те�
   cited as executed tests.
 - App-server schema fixtures are part of the public-ish protocol surface. If
   `ImagePreviewSize` changes, generated JSON/TS fixtures must move with it.
-
-## Связанные документы
-
-- `docs/architecture/features/tui-history-image-previews.md`
-- `docs/plans/archive/2026/PLAN-TUI-ASSISTANT-IMAGES-001/summary.md`
-- `docs/follow-ups/archive/2026/FU-2026-001-tui-history-image-reflow-reemit.md`
-- `docs/follow-ups/archive/2026/FU-2026-002-tui-assistant-tool-image-source.md`
-- `docs/follow-ups/archive/2026/FU-2026-006-tui-history-image-preview-size.md`
-
-## Проверка покрытия
-
-| Пункт | Статус | Где отражено |
-| --- | --- | --- |
-| User attachments отображаются как preview и fallback | перенесено в карточку | "Итоговый контракт", "Пошаговое воспроизведение" |
-| `view_image` входит в controlled local image path | перенесено в карточку | "Source contract", "Пошаговое воспроизведение" |
-| `ImageGeneration.saved_path` входит в controlled local image path | перенесено в карточку | "Source contract", "Пошаговое воспроизведение" |
-| Replay/reflow сохраняет typed marker | перенесено в карточку | "Пошаговое воспроизведение", "Ограничения" |
-| Контракт миграции `HyperlinkLine` сохранён | перенесено в карточку | "Итоговый контракт", "Пошаговое воспроизведение", "Риски" |
-| Kitty history использует virtual placement и placeholders | перенесено в карточку | "Kitty contract", "Пошаговое воспроизведение" |
-| `preview_size` и config rows остаются разными surfaces | перенесено в карточку | "Preview size contract" |
-| Регрессионное покрытие, snapshot-подтверждение и test targets | перенесено в карточку | "Проверки" |
-| `fork tests` владеет исполняемой картой уровня карточки | перенесено в карточку | "Проверки" |
-| Исторические проверочные команды сохранены только как подтверждение | перенесено в карточку | "Проверки" |
-| Риск устаревших doc/test names сохранён | перенесено в карточку | "Проверки", "Риски" |
