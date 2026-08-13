@@ -57,9 +57,12 @@ skill-owned установкой, а не ручным копированием 
 
 `fork tests --mode list` и `fork tests --mode cards` принимают повторяемый
 `--card`. Значение может быть `id` карточки, путь `docs/fork/*.md`, имя файла
-или `id` без префикса `fork-`. Фильтр запускает или печатает только строки
-из блоков `fork-tests.v1`, относящиеся к выбранной карточке. `--mode full` не
-принимает `--card`, потому что полный проход не является card-level запуском.
+или `id` без префикса `fork-`. Фильтр ограничивает результат выбранными
+карточками. Режим `list` печатает строки из блоков `fork-tests.v1`, а для
+карточки с обоснованным исключением — вид `manual-required`/`not-applicable` и
+его причину. Режим `cards` запускает только `fork-tests.v1` и отклоняет
+выбранную карточку без автоматизированных тестов. `--mode full` не принимает
+`--card`, потому что полный проход не является card-level запуском.
 
 ## Модель владения командами
 
@@ -103,7 +106,7 @@ Rust workflow:
 | `fork cards list` | Навигация по fork-карточкам |
 | `fork cards validate` | Current-state форма, `fork-tests.v1`, запрет legacy-секций |
 | `fork migration *` | Генерация, чтение, точечное обновление и валидация JSON migration map |
-| `fork tests --mode list` | Печать исполняемой карты без запуска внутренних argv |
+| `fork tests --mode list` | Карта тестов и обоснованных исключений без запуска |
 | `fork tests --mode cards` | Card-level запуск с предусловиями и логами |
 | `fork preflight` | Составной gate для skill/files/cards/JSON map/untracked/conflicts/markdown |
 | `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
@@ -311,5 +314,5 @@ legacy-секциями.
 Heavy or mutating gates (`fix`, `generators`, `tests --mode cards`,
 `tests --mode full`, `build-fast`) запускай только когда они нужны текущему
 этапу. `fork install` запускай только после явного решения установить собранный
-бинарник. Режим `tests --mode list` печатает исполняемую карту проверок без
-запуска тестов.
+бинарник. Режим `tests --mode list` печатает исполняемую карту проверок и
+обоснованные исключения без запуска тестов.

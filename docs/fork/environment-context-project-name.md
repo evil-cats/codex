@@ -82,8 +82,8 @@ TUI уже умеет показывать `project-name` в поверхнос�
    rollout не содержит `workspace_roots`, `workspace_roots_from_turn_context_item(...)`
    использует `cwd` как резервный источник.
 9. Если `workspace_roots` пустой, `project_name` отсутствует.
-10. Если у пути нет имени последнего компонента, резервное значение - полный путь
-   через `to_string_lossy()`.
+10. Если у пути нет имени последнего компонента, резервное значение - строковое
+    представление пути через `inferred_native_path_string()`.
 11. Если имя содержит символы, требующие XML-escaping, рендеринг использует
      `push_optional_element(...)` и `push_xml_escaped_text(...)`, поэтому
      `repo & docs` превращается в

@@ -39,6 +39,7 @@ Inline `developer_instructions` неудобен для больших profile-d
 | `codex-rs/core/src/config/mod.rs` | Читает файлы и собирает effective `developer_instructions` |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет parsing, append order, empty warnings и missing-file error |
 | `codex-rs/core/config.schema.json` | Экспортирует config key в schema |
+| `codex-rs/core/src/session/turn_context.rs` | Передаёт итоговые инструкции из конфигурации сессии в `TurnContext` |
 | `codex-rs/core/src/session/mod.rs` | Добавляет итоговое значение в агрегированное сообщение с ролью `developer` |
 | `codex-rs/core/src/context_manager/updates.rs` | Преобразует developer sections в model-visible `ResponseItem` |
 | `codex-rs/core/tests/suite/client.rs` | Проверяет наличие `Config.developer_instructions` в developer message запроса |

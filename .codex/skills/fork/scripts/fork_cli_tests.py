@@ -170,6 +170,35 @@ class CardTestFilterTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (docs_fork / "manual-only.md").write_text(
+            (
+                "---\n"
+                "id: fork-manual-only\n"
+                "status: active\n"
+                "---\n"
+                "# Manual only\n"
+                "\n"
+                "## Проверки\n"
+                "\n"
+                "`manual-required`: Поведение подтверждается интерактивно\n"
+                "в TUI.\n"
+            ),
+            encoding="utf-8",
+        )
+        (docs_fork / "not-applicable-only.md").write_text(
+            (
+                "---\n"
+                "id: fork-not-applicable-only\n"
+                "status: active\n"
+                "---\n"
+                "# Not applicable only\n"
+                "\n"
+                "## Проверки\n"
+                "\n"
+                "`not-applicable`: Отдельного card-level test нет.\n"
+            ),
+            encoding="utf-8",
+        )
         return repo_root
 
     def test_filters_by_card_id(self) -> None:
@@ -223,6 +252,50 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertIsNotNone(error)
         assert error is not None
         self.assertIn("card(s) have no fork-tests.v1 entries: fork-planned-only", error)
+
+    def test_list_command_prints_filtered_test_exceptions_with_reasons(self) -> None:
+        repo_root = self.make_repo()
+        args = type(
+            "Args",
+            (),
+            {
+                "repo_root": str(repo_root),
+                "version": "0.146.1",
+                "mode": "list",
+                "card": ["fork-manual-only", "fork-not-applicable-only"],
+            },
+        )()
+
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
+                with unittest.mock.patch("sys.stdout", stdout):
+                    with unittest.mock.patch("sys.stderr", stderr):
+                        result = fork_cli.cmd_tests(args)
+                stdout.seek(0)
+                output = stdout.read()
+
+        self.assertEqual(result, 0)
+        normalized_lines = [" ".join(line.split()) for line in output.splitlines()]
+        self.assertIn(
+            "fork-manual-only manual-required "
+            "Поведение подтверждается интерактивно в TUI.",
+            normalized_lines,
+        )
+        self.assertIn(
+            "fork-not-applicable-only not-applicable "
+            "Отдельного card-level test нет.",
+            normalized_lines,
+        )
+
+    def test_executable_filter_rejects_manual_test_exception(self) -> None:
+        tests, error = fork_cli.card_tests_for_filters(
+            self.make_repo(), ["fork-manual-only"]
+        )
+
+        self.assertEqual(tests, [])
+        self.assertIsNotNone(error)
+        assert error is not None
+        self.assertIn("card(s) have no fork-tests.v1 entries: fork-manual-only", error)
 
 
 class CardsListTests(unittest.TestCase):

@@ -109,8 +109,9 @@ LEGACY_OWNER_CARD_HEADING_PREFIXES = (
     "Migration check:",
 )
 
-MANUAL_TEST_EXCEPTION_RE = re.compile(
-    r"`?(?:manual-required|not-applicable)`?\s*:\s*\S"
+TEST_EXCEPTION_PARAGRAPH_RE = re.compile(
+    r"(?ms)^[ \t]*`?(?P<kind>manual-required|not-applicable)`?[ \t]*:[ \t]*"
+    r"(?P<reason>\S.*?)(?=\n[ \t]*\n|\Z)"
 )
 
 COMMAND_RUNBOOK_RE = re.compile(
@@ -209,6 +210,15 @@ class CardTest:
     card_id: str
     argv: tuple[str, ...]
     purpose: str
+
+
+@dataclass(frozen=True)
+class CardTestException:
+    """Обоснованное отсутствие автоматизированного теста у active-карточки."""
+
+    card_id: str
+    kind: str
+    reason: str
 
 
 def card_test(card_id: str, purpose: str, *argv: str) -> CardTest:
@@ -872,8 +882,74 @@ def available_card_test_ids(tests: list[CardTest]) -> str:
     return "\n".join(f"  {card_id}" for card_id in sorted(card_test_ids(tests)))
 
 
-def card_tests_for_filters(
+def test_exception_from_checks(checks: str) -> tuple[str, str] | None:
+    """Разбирает вид и нормализованную причину исключения из раздела проверок."""
+
+    match = TEST_EXCEPTION_PARAGRAPH_RE.search(checks)
+    if not match:
+        return None
+
+    return match.group("kind"), " ".join(match.group("reason").split())
+
+
+def card_test_exception_in_card(path: Path) -> CardTestException | None:
+    """Возвращает обоснованное test-исключение из одной owner-карточки."""
+
+    text = read_text(path)
+    _, checks = section_text_for_aliases(text, CHECKS_SECTION_ALIASES)
+    exception = test_exception_from_checks(checks)
+    card_id = first_id(path)
+    if not exception or not card_id:
+        return None
+
+    kind, reason = exception
+    return CardTestException(
+        card_id=card_id,
+        kind=kind,
+        reason=reason,
+    )
+
+
+def active_card_test_exceptions(repo_root: Path) -> list[CardTestException]:
+    """Собирает test-исключения только из активных owner-карточек."""
+
+    exceptions: list[CardTestException] = []
+    for path in fork_doc_paths(repo_root):
+        if path.name.startswith("migration-") or first_status(path) != "active":
+            continue
+        exception = card_test_exception_in_card(path)
+        if exception:
+            exceptions.append(exception)
+    return exceptions
+
+
+def card_test_exceptions_for_filters(
     repo_root: Path, card_filters: list[str] | None
+) -> list[CardTestException]:
+    """Ограничивает валидные test-исключения уже проверенными card-фильтрами."""
+
+    exceptions = active_card_test_exceptions(repo_root)
+    if not card_filters:
+        return exceptions
+
+    aliases = card_test_aliases(repo_root, [])
+    requested_ids = {
+        aliases[value]
+        for raw_filter in card_filters
+        if (value := raw_filter.strip()) in aliases
+    }
+    return [
+        exception
+        for exception in exceptions
+        if exception.card_id in requested_ids
+    ]
+
+
+def card_tests_for_filters(
+    repo_root: Path,
+    card_filters: list[str] | None,
+    *,
+    allow_exceptions: bool = False,
 ) -> tuple[list[CardTest], str | None]:
     all_tests, load_errors = card_tests(repo_root)
     if load_errors:
@@ -912,7 +988,15 @@ def card_tests_for_filters(
     requested_ids = set(requested)
     tests = [test for test in all_tests if test.card_id in requested_ids]
     tested_ids = {test.card_id for test in tests}
-    missing = sorted(requested_ids - tested_ids)
+    exception_ids = (
+        {
+            exception.card_id
+            for exception in active_card_test_exceptions(repo_root)
+        }
+        if allow_exceptions
+        else set()
+    )
+    missing = sorted(requested_ids - tested_ids - exception_ids)
     if missing:
         return (
             [],
@@ -1042,7 +1126,7 @@ def strict_card_validation_errors(path: Path) -> list[str]:
     card_level_tests, card_test_errors = card_tests_in_card(path)
     errors.extend(card_test_errors)
     has_card_tests = bool(card_level_tests)
-    has_manual_exception = MANUAL_TEST_EXCEPTION_RE.search(checks) is not None
+    has_manual_exception = test_exception_from_checks(checks) is not None
     if not has_card_tests and not has_manual_exception:
         errors.append(
             "active card has no fork-tests.v1 block and no "
@@ -1313,7 +1397,11 @@ def cmd_tests(args: argparse.Namespace) -> int:
         )
         return 2
 
-    selected_tests, filter_error = card_tests_for_filters(repo_root, card_filters)
+    selected_tests, filter_error = card_tests_for_filters(
+        repo_root,
+        card_filters,
+        allow_exceptions=args.mode == "list",
+    )
     if filter_error:
         print(f"ERROR: {filter_error}", file=sys.stderr)
         return 2
@@ -1321,6 +1409,10 @@ def cmd_tests(args: argparse.Namespace) -> int:
     if args.mode == "list":
         for test in selected_tests:
             print(f"{test.card_id:<36} {test.purpose:<24} {shell_quote(test.argv)}")
+        for exception in card_test_exceptions_for_filters(repo_root, card_filters):
+            print(
+                f"{exception.card_id:<36} {exception.kind:<24} {exception.reason}"
+            )
         return 0
 
     session = LogSession(
