@@ -5,6 +5,7 @@ use crate::context::world_state::WorldState;
 use crate::context::world_state::WorldStateDiff;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::normalize;
+use crate::context_manager::tool_output_history::ToolOutputHistoryPolicy;
 use crate::event_mapping::has_non_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_dev_message_content;
 use crate::event_mapping::is_contextual_user_message_content;
@@ -134,7 +135,9 @@ impl ContextManager {
                 continue;
             }
 
-            let processed = Self::process_item(item_ref, policy);
+            let output_history_policy =
+                ToolOutputHistoryPolicy::for_item(item_ref, self.items.as_ref());
+            let processed = Self::process_item(item_ref, policy, output_history_policy);
             Arc::make_mut(&mut self.items).push(processed);
         }
     }
@@ -343,7 +346,11 @@ impl ContextManager {
         normalize::strip_audio_when_unsupported(input_modalities, items);
     }
 
-    fn process_item(item: &ResponseItem, policy: TruncationPolicy) -> ResponseItem {
+    fn process_item(
+        item: &ResponseItem,
+        policy: TruncationPolicy,
+        output_history_policy: ToolOutputHistoryPolicy,
+    ) -> ResponseItem {
         let policy_with_serialization_budget = policy * 1.2;
         match item {
             ResponseItem::FunctionCallOutput {
@@ -354,7 +361,12 @@ impl ContextManager {
             } => ResponseItem::FunctionCallOutput {
                 id: id.clone(),
                 call_id: call_id.clone(),
-                output: truncate_function_output_payload(output, policy_with_serialization_budget),
+                output: match output_history_policy {
+                    ToolOutputHistoryPolicy::ModelDefault => {
+                        truncate_function_output_payload(output, policy_with_serialization_budget)
+                    }
+                    ToolOutputHistoryPolicy::AlreadyBounded => output.clone(),
+                },
                 internal_chat_message_metadata_passthrough: metadata.clone(),
             },
             ResponseItem::CustomToolCallOutput {

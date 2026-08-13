@@ -1227,6 +1227,67 @@ fn record_items_truncates_function_call_output_content() {
 }
 
 #[test]
+fn record_items_preserves_read_file_output_above_model_default_limit() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(10);
+    let call = ResponseItem::FunctionCall {
+        id: None,
+        name: "read_file".to_string(),
+        namespace: None,
+        arguments: r#"{"path":"example.txt"}"#.to_string(),
+        call_id: "read-file-large".to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let output = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: "read-file-large".to_string(),
+        output: FunctionCallOutputPayload::from_text(
+            "ReadFile: example.txt\ncomplete=yes\n\n".to_string()
+                + &"large file content\n".repeat(2_500),
+        ),
+        internal_chat_message_metadata_passthrough: None,
+    };
+
+    history.record_items([&call], policy);
+    history.record_items([&output], policy);
+
+    assert_eq!(history.raw_items(), &[call, output]);
+}
+
+#[test]
+fn record_items_truncates_non_read_file_output_with_read_file_text() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(10);
+    let call = ResponseItem::FunctionCall {
+        id: None,
+        name: "other_tool".to_string(),
+        namespace: None,
+        arguments: "{}".to_string(),
+        call_id: "other-tool-large".to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let long_output = "ReadFile: example.txt\ncomplete=yes\n\n".to_string()
+        + &"foreign tool output\n".repeat(2_500);
+    let output = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: "other-tool-large".to_string(),
+        output: FunctionCallOutputPayload::from_text(long_output.clone()),
+        internal_chat_message_metadata_passthrough: None,
+    };
+
+    history.record_items([&call], policy);
+    history.record_items([&output], policy);
+
+    assert_eq!(&history.raw_items()[0], &call);
+    let ResponseItem::FunctionCallOutput { output, .. } = &history.raw_items()[1] else {
+        panic!("expected function call output");
+    };
+    let stored = output.text_content().expect("text output");
+    assert_ne!(stored, long_output);
+    assert!(stored.contains("tokens truncated"));
+}
+
+#[test]
 fn record_items_truncates_custom_tool_call_output_content() {
     let mut history = ContextManager::new();
     let policy = TruncationPolicy::Tokens(1_000);

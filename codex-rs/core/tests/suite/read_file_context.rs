@@ -11,6 +11,7 @@ use anyhow::Result;
 use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::Op;
@@ -27,6 +28,23 @@ use core_test_support::test_codex::local;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use serde_json::json;
+
+const LARGE_READ_FILE_LINE_COUNT: usize = 2_000;
+
+fn large_read_file_fixture(path: &str) -> (String, String) {
+    let content = (1..=LARGE_READ_FILE_LINE_COUNT)
+        .map(|line| format!("payload-{line:04}-abcdefghijklmnopqrstuvwxyz\n"))
+        .collect::<String>();
+    let numbered_content = content
+        .lines()
+        .enumerate()
+        .map(|(index, line)| format!("{} | {line}\n", index + 1))
+        .collect::<String>();
+    let output = format!(
+        "ReadFile: {path}\nLines: total={LARGE_READ_FILE_LINE_COUNT} requested=1-{LARGE_READ_FILE_LINE_COUNT} returned=1-{LARGE_READ_FILE_LINE_COUNT} complete=yes\nLineNumbers: yes\n\n{numbered_content}"
+    );
+    (content, output)
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn read_file_context_dedup_uses_one_complete_content_output() -> Result<()> {
@@ -163,6 +181,77 @@ async fn read_file_context_dedup_uses_one_complete_content_output() -> Result<()
         same_reference_request.function_call_output_text("read-file-context-full"),
         mock.function_call_output_text("read-file-context-full"),
         "CoveredBy content must be present in the same model-visible request"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_large_output_bypasses_model_default_truncation_and_deduplicates() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex()
+        .with_model_info_override("gpt-5.5", |model_info| {
+            model_info.truncation_policy = TruncationPolicyConfig::tokens(/*limit*/ 1_000);
+        })
+        .with_config(|config| {
+            config.read_file_content_max_tokens = 30_000;
+        });
+    let fixture = builder.build_with_auto_env(&server).await?;
+    let path = "read-file-context-large.txt";
+    let (content, expected_output) = large_read_file_fixture(path);
+    fs::write(fixture.workspace_path(path), content).context("write large read_file fixture")?;
+
+    let first_call_id = "read-file-context-large-first";
+    let second_call_id = "read-file-context-large-second";
+    let args = json!({ "path": path });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-large-first"),
+                ev_function_call(first_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-large-first"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-large-second"),
+                ev_function_call(second_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-large-second"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-large-done", "done"),
+                ev_completed("resp-large-done"),
+            ]),
+        ],
+    )
+    .await;
+
+    fixture
+        .submit_turn_with_permission_profile(
+            "read the same large file twice",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[1].function_call_output_text(first_call_id),
+        Some(expected_output.clone())
+    );
+    assert_eq!(
+        requests[2].function_call_output_text(first_call_id),
+        Some(expected_output.clone())
+    );
+    assert_eq!(
+        requests[2]
+            .function_call_output_text(second_call_id)
+            .context("large repeated read_file output present")?,
+        format!(
+            "ReadFile: {path}\nStatus: already_in_context\nCoverage: requested=1-{LARGE_READ_FILE_LINE_COUNT} available=1-{LARGE_READ_FILE_LINE_COUNT} complete=yes\nLineNumbers: yes\nCoveredBy: {first_call_id}\n"
+        )
     );
 
     Ok(())
@@ -486,15 +575,18 @@ async fn read_file_context_dedup_survives_cold_resume() -> Result<()> {
     skip_if_sandbox!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config.read_file_content_max_tokens = 10_000;
-    });
+    let mut builder = test_codex()
+        .with_model_info_override("gpt-5.5", |model_info| {
+            model_info.truncation_policy = TruncationPolicyConfig::tokens(/*limit*/ 1_000);
+        })
+        .with_config(|config| {
+            config.read_file_content_max_tokens = 30_000;
+        });
     let initial = builder.build(&server).await?;
-    fs::write(
-        initial.workspace_path("read-file-context-resume.txt"),
-        "alpha\nbeta\n",
-    )
-    .context("write cold-resume read_file fixture")?;
+    let path = "read-file-context-resume.txt";
+    let (content, expected_output) = large_read_file_fixture(path);
+    fs::write(initial.workspace_path(path), content)
+        .context("write cold-resume read_file fixture")?;
     let home = Arc::clone(&initial.home);
     let rollout_path = initial
         .session_configured
@@ -505,7 +597,7 @@ async fn read_file_context_dedup_survives_cold_resume() -> Result<()> {
 
     let first_call_id = "read-file-context-before-resume";
     let second_call_id = "read-file-context-after-resume";
-    let args = json!({ "path": "read-file-context-resume.txt" });
+    let args = json!({ "path": path });
     let mock = mount_sse_sequence(
         &server,
         vec![
@@ -545,10 +637,14 @@ async fn read_file_context_dedup_survives_cold_resume() -> Result<()> {
     // Начальный harness должен жить до конца: возобновлённый thread использует его
     // сохранённый cwd, а уничтожение harness удалит fixture вместе с TempDir.
 
-    let mut resume_builder = test_codex().with_config(move |config| {
-        config.read_file_content_max_tokens = 10_000;
-        config.cwd = resume_cwd;
-    });
+    let mut resume_builder = test_codex()
+        .with_model_info_override("gpt-5.5", |model_info| {
+            model_info.truncation_policy = TruncationPolicyConfig::tokens(/*limit*/ 1_000);
+        })
+        .with_config(move |config| {
+            config.read_file_content_max_tokens = 30_000;
+            config.cwd = resume_cwd;
+        });
     let resumed = resume_builder.resume(&server, home, rollout_path).await?;
     resumed
         .submit_turn_with_permission_profile(
@@ -557,10 +653,18 @@ async fn read_file_context_dedup_survives_cold_resume() -> Result<()> {
         )
         .await?;
 
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[2].function_call_output_text(first_call_id),
+        Some(expected_output.clone())
+    );
     assert_eq!(
         mock.function_call_output_text(second_call_id)
             .context("cold-resume read_file output present")?,
-        "ReadFile: read-file-context-resume.txt\nStatus: already_in_context\nCoverage: requested=1-2 available=1-2 complete=yes\nLineNumbers: yes\nCoveredBy: read-file-context-before-resume\n"
+        format!(
+            "ReadFile: {path}\nStatus: already_in_context\nCoverage: requested=1-{LARGE_READ_FILE_LINE_COUNT} available=1-{LARGE_READ_FILE_LINE_COUNT} complete=yes\nLineNumbers: yes\nCoveredBy: {first_call_id}\n"
+        )
     );
 
     Ok(())

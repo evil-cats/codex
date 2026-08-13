@@ -8,7 +8,9 @@ use super::tests::make_session_and_context;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -1160,6 +1162,40 @@ async fn reconstruct_history_marks_read_file_calls_from_compaction_replacement()
             read_file_call(current_window_call_id)
         ]
     );
+}
+
+#[tokio::test]
+async fn reconstruct_history_preserves_read_file_output_above_model_default_limit() {
+    let (session, mut turn_context) = make_session_and_context().await;
+    turn_context.model_info.truncation_policy = TruncationPolicyConfig::tokens(/*limit*/ 10);
+    let call_id = "read-file-large-resume";
+    let call = ResponseItem::FunctionCall {
+        id: None,
+        name: "read_file".to_string(),
+        namespace: None,
+        arguments: json!({"path": "example.txt"}).to_string(),
+        call_id: call_id.to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let output = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: call_id.to_string(),
+        output: FunctionCallOutputPayload::from_text(
+            "ReadFile: example.txt\ncomplete=yes\n\n".to_string()
+                + &"large resumed file content\n".repeat(2_500),
+        ),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let rollout_items = vec![
+        RolloutItem::ResponseItem(call.clone()),
+        RolloutItem::ResponseItem(output.clone()),
+    ];
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(&turn_context, &rollout_items)
+        .await;
+
+    assert_eq!(reconstructed.history, vec![call, output]);
 }
 
 #[tokio::test]

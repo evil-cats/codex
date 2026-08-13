@@ -1,5 +1,6 @@
 mod history;
 mod normalize;
+mod tool_output_history;
 pub(crate) mod updates;
 
 pub(crate) use history::ContextManager;
