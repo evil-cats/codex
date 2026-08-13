@@ -72,6 +72,7 @@ pub use mcp_resource::ReadMcpResourceHandler;
 pub use new_context_window::NewContextWindowHandler;
 pub use plan::PlanHandler;
 pub use read_file::ReadFileHandler;
+pub(crate) use read_file::restore_read_file_context_index;
 pub use request_permissions::RequestPermissionsHandler;
 pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;

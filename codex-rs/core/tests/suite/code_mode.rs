@@ -663,7 +663,7 @@ async fn code_mode_exec_holds_captured_result_during_elicitation() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn code_mode_only_restricts_prompt_tools() -> Result<()> {
+async fn code_mode_only_keeps_read_file_direct_and_outside_exec() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -689,10 +689,24 @@ async fn code_mode_only_restricts_prompt_tools() -> Result<()> {
         vec![
             "exec".to_string(),
             "wait".to_string(),
+            "read_file".to_string(),
             "request_user_input".to_string(),
             "web_search".to_string()
         ]
     );
+
+    let exec_description = first_body
+        .get("tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| {
+            tools.iter().find_map(|tool| {
+                (tool.get("name").and_then(Value::as_str) == Some("exec"))
+                    .then(|| tool.get("description").and_then(Value::as_str))
+                    .flatten()
+            })
+        })
+        .expect("exec description should be present");
+    assert!(!exec_description.contains("read_file"));
 
     Ok(())
 }

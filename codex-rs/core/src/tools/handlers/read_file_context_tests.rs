@@ -3,6 +3,8 @@
 //! Проверки моделируют уже нормализованную model-visible history и доказывают,
 //! что matcher использует ровно один typed content-bearing output.
 
+use std::collections::HashSet;
+
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseItem;
@@ -15,6 +17,8 @@ use serde_json::json;
 use super::*;
 use crate::tools::handlers::read_file::read_file_output;
 use crate::tools::handlers::read_file::split_lines_preserving_endings;
+
+const CURRENT_WINDOW_ID: &str = "thread:0";
 
 fn args(path: &str, start_line: Option<usize>, end_line: Option<usize>) -> ReadFileArgs {
     ReadFileArgs {
@@ -97,7 +101,7 @@ fn context_index(history: &[ResponseItem]) -> ReadFileContextIndex {
             && name == READ_FILE_TOOL_NAME
         {
             let args = serde_json::from_str::<ReadFileArgs>(arguments).expect("valid test args");
-            index.record(call_id.clone(), previous_source(&args));
+            index.record(CURRENT_WINDOW_ID, call_id.clone(), previous_source(&args));
         }
     }
     index
@@ -109,12 +113,28 @@ fn coverage(
     current_content: &str,
     current_source: ReadFileSource,
 ) -> Option<ReadFileContextCoverage> {
+    let index = context_index(history);
+    index.synchronize(CURRENT_WINDOW_ID, history);
+    coverage_with_index(
+        history,
+        current_args,
+        current_content,
+        current_source,
+        &index,
+    )
+}
+
+fn coverage_with_index(
+    history: &[ResponseItem],
+    current_args: &ReadFileArgs,
+    current_content: &str,
+    current_source: ReadFileSource,
+    index: &ReadFileContextIndex,
+) -> Option<ReadFileContextCoverage> {
     let lines = split_lines_preserving_endings(current_content);
     let requested_range = normalize_range(current_args, lines.len())
         .expect("valid current range")
         .expect("non-empty current range");
-    let index = context_index(history);
-    index.synchronize(history);
     find_context_coverage(
         history,
         &ReadFileContextRequest {
@@ -123,7 +143,7 @@ fn coverage(
             lines: &lines,
             requested_range,
         },
-        &index,
+        index,
     )
 }
 
@@ -349,10 +369,11 @@ fn read_file_context_uses_recorded_source_for_implicit_primary_environment() {
     ];
     let index = ReadFileContextIndex::default();
     index.record(
+        CURRENT_WINDOW_ID,
         "call-primary".to_string(),
         source("previous-primary", "example.txt"),
     );
-    index.synchronize(&history);
+    index.synchronize(CURRENT_WINDOW_ID, &history);
     let lines = split_lines_preserving_endings(content);
     let requested_range = normalize_range(&previous_args, lines.len())
         .expect("valid range")
@@ -371,6 +392,75 @@ fn read_file_context_uses_recorded_source_for_implicit_primary_environment() {
         ),
         None
     );
+}
+
+#[test]
+fn read_file_context_rehydrates_coverage_after_cold_resume() {
+    let content = "one\ntwo\nthree\n";
+    let previous_args = args("example.txt", None, None);
+    let persisted_output =
+        read_file_output(&previous_args, content, 10_000).expect("read_file output");
+    let history = vec![
+        read_call("call-before-resume", &previous_args),
+        output_item("call-before-resume", persisted_output, None),
+    ];
+    let current_args = args("example.txt", Some(2), Some(3));
+    let index = ReadFileContextIndex::default();
+    index.restore(CURRENT_WINDOW_ID.to_string(), &history, &HashSet::new());
+
+    assert_eq!(
+        coverage_with_index(
+            &history,
+            &current_args,
+            content,
+            source("primary-after-resume", "example.txt"),
+            &index,
+        ),
+        Some(ReadFileContextCoverage {
+            call_id: "call-before-resume".to_string(),
+            available_range: LineRange { start: 1, end: 3 },
+        })
+    );
+}
+
+#[test]
+fn read_file_context_resume_fallback_requires_matching_logical_source_arguments() {
+    let content = "one\ntwo\n";
+    let previous_args = ReadFileArgs {
+        environment_id: Some("env-a".to_string()),
+        ..args("example.txt", None, None)
+    };
+    let history = vec![
+        read_call("call-before-resume", &previous_args),
+        read_output("call-before-resume", &previous_args, content),
+    ];
+    let index = ReadFileContextIndex::default();
+    index.restore(CURRENT_WINDOW_ID.to_string(), &history, &HashSet::new());
+
+    for current_args in [
+        ReadFileArgs {
+            environment_id: Some("env-b".to_string()),
+            ..args("example.txt", None, None)
+        },
+        ReadFileArgs {
+            environment_id: Some("env-a".to_string()),
+            ..args("other.txt", None, None)
+        },
+    ] {
+        assert_eq!(
+            coverage_with_index(
+                &history,
+                &current_args,
+                content,
+                source(
+                    current_args.environment_id.as_deref().unwrap_or("primary"),
+                    &current_args.path,
+                ),
+                &index,
+            ),
+            None
+        );
+    }
 }
 
 #[test]
@@ -406,11 +496,78 @@ fn read_file_context_rejects_reference_chaining_and_missing_content_output() {
 #[test]
 fn read_file_context_index_drops_sources_absent_from_active_history() {
     let index = ReadFileContextIndex::default();
-    index.record("call-removed".to_string(), source("primary", "removed.txt"));
+    index.record(
+        CURRENT_WINDOW_ID,
+        "call-removed".to_string(),
+        source("primary", "removed.txt"),
+    );
 
-    index.synchronize(&[]);
+    index.synchronize(CURRENT_WINDOW_ID, &[]);
 
-    assert_eq!(index.source("call-removed"), None);
+    assert_eq!(index.provenance("call-removed"), None);
+}
+
+#[test]
+fn read_file_context_window_change_invalidates_retained_output() {
+    let content = "one\ntwo\n";
+    let previous_args = args("example.txt", None, None);
+    let history = vec![
+        read_call("call-before-compaction", &previous_args),
+        read_output("call-before-compaction", &previous_args, content),
+    ];
+    let index = context_index(&history);
+
+    assert!(
+        coverage_with_index(
+            &history,
+            &previous_args,
+            content,
+            source("primary", "example.txt"),
+            &index,
+        )
+        .is_some()
+    );
+
+    index.synchronize("thread:1", &history);
+
+    assert_eq!(
+        coverage_with_index(
+            &history,
+            &previous_args,
+            content,
+            source("primary", "example.txt"),
+            &index,
+        ),
+        None
+    );
+}
+
+#[test]
+fn read_file_context_resume_excludes_compaction_replacement_calls() {
+    let content = "one\ntwo\n";
+    let previous_args = args("example.txt", None, None);
+    let call_id = "call-copied-by-compaction";
+    let history = vec![
+        read_call(call_id, &previous_args),
+        read_output(call_id, &previous_args, content),
+    ];
+    let index = ReadFileContextIndex::default();
+    index.restore(
+        "thread:1".to_string(),
+        &history,
+        &HashSet::from([call_id.to_string()]),
+    );
+
+    assert_eq!(
+        coverage_with_index(
+            &history,
+            &previous_args,
+            content,
+            source("primary", "example.txt"),
+            &index,
+        ),
+        None
+    );
 }
 
 #[test]

@@ -1,3 +1,9 @@
+//! Восстановление активной истории и metadata context window из persisted rollout.
+//!
+//! Обратный replay выбирает последнюю сохранившуюся replacement-history,
+//! применяет более новый хвост и возвращает согласованные данные для resume или
+//! fork без изменения исходного rollout.
+
 use super::*;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::is_user_turn_boundary;
@@ -9,6 +15,7 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub(super) struct RolloutReconstruction {
     pub(super) history: Vec<ResponseItem>,
+    pub(super) replacement_history_call_ids: HashSet<String>,
     pub(super) previous_turn_settings: Option<PreviousTurnSettings>,
     pub(super) reference_context_item: Option<TurnContextItem>,
     pub(super) world_state_baseline: Option<WorldStateSnapshot>,
@@ -314,6 +321,14 @@ impl Session {
         )
         .unwrap_or(u64::MAX);
 
+        let replacement_history_call_ids = base_replacement_history
+            .iter()
+            .flat_map(|history| history.iter())
+            .filter_map(|item| match item {
+                ResponseItem::FunctionCall { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect();
         let mut history = ContextManager::new();
         let mut saw_legacy_compaction_without_replacement_history = false;
         if let Some(base_replacement_history) = base_replacement_history {
@@ -432,6 +447,7 @@ impl Session {
         });
         RolloutReconstruction {
             history: history.into_raw_items(),
+            replacement_history_call_ids,
             previous_turn_settings,
             reference_context_item,
             world_state_baseline,

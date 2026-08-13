@@ -1159,6 +1159,58 @@ async fn core_tool_activity_file_coalesces_with_exec_exploration_cell() {
 }
 
 #[tokio::test]
+async fn direct_core_tool_activity_file_stays_grouped_between_searches() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let first_search = begin_exec(
+        &mut chat,
+        "call-first-search",
+        "rg '^(//|func Test)' pixel_test.go",
+    );
+    end_exec(
+        &mut chat,
+        first_search,
+        "pixel_test.go:func TestPixels\n",
+        "",
+        0,
+    );
+    for (call_id, path) in [
+        ("call-comments", "comments.md"),
+        ("call-index", "INDEX.md"),
+        ("call-pixel-test", "pixel_test.go"),
+    ] {
+        complete_core_file_activity(&mut chat, call_id, path);
+    }
+
+    let second_search = begin_exec(
+        &mut chat,
+        "call-second-search",
+        "rg '^\\s+//' pixel_test.go",
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Exploring\n  └ Search ^(//|func Test) in pixel_test.go\n  └ File comments.md, INDEX.md, pixel_test.go\n  └ Search ^\\s+// in pixel_test.go\n"
+    );
+
+    end_exec(
+        &mut chat,
+        second_search,
+        "pixel_test.go:    // comment\n",
+        "",
+        0,
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "mixed direct file activity should remain in one exploration block"
+    );
+    assert_eq!(
+        active_blob(&chat),
+        "• Explored\n  └ Search ^(//|func Test) in pixel_test.go\n  └ File comments.md, INDEX.md, pixel_test.go\n  └ Search ^\\s+// in pixel_test.go\n"
+    );
+}
+
+#[tokio::test]
 async fn core_tool_activity_file_started_before_exec_exploration_is_adopted() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();

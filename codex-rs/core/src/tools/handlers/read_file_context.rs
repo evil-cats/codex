@@ -1,9 +1,9 @@
 //! Поиск уже доступного модели содержимого для повторного `read_file`.
 //!
 //! Модуль анализирует только нормализованную историю следующего inference и
-//! связывает typed `read_file` calls с успешными outputs по `call_id`. Он не
-//! хранит cache: исчезновение исходного output из истории автоматически
-//! отключает дедупликацию.
+//! связывает typed `read_file` calls с успешными outputs по `call_id` внутри
+//! одного context window. Он не хранит cache: исчезновение исходного output из
+//! истории или смена окна автоматически отключают дедупликацию.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -49,23 +49,42 @@ pub(super) struct ReadFileContextCoverage {
     available_range: LineRange,
 }
 
-/// Хранит только resolved identity успешно обработанных вызовов в живом thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ReadFileProvenance {
+    Resolved(ReadFileSource),
+    Resumed,
+}
+
+#[derive(Debug, Default)]
+struct ReadFileContextState {
+    window_id: Option<String>,
+    calls: HashMap<String, ReadFileProvenance>,
+}
+
+/// Хранит только оконный provenance успешно обработанных вызовов.
 ///
 /// Это не cache содержимого и не доказательство доступности текста: matcher
 /// всегда дополнительно требует исходный output в активной model-visible
-/// history. Индекс очищается по этой истории при каждом повторном чтении.
+/// history. Индекс очищается по этой истории при каждом повторном чтении и
+/// безусловно сбрасывается при смене `window_id`. После cold resume provenance
+/// текущего окна восстанавливается консервативно из typed аргументов вызова и
+/// подтверждается точным сравнением с актуальным файлом.
 #[derive(Debug, Default)]
 pub(super) struct ReadFileContextIndex {
-    sources: Mutex<HashMap<String, ReadFileSource>>,
+    state: Mutex<ReadFileContextState>,
 }
 
 impl ReadFileContextIndex {
-    pub(super) fn record(&self, call_id: String, source: ReadFileSource) {
-        self.sources().insert(call_id, source);
+    pub(super) fn record(&self, window_id: &str, call_id: String, source: ReadFileSource) {
+        let mut state = self.state();
+        state.select_window(window_id);
+        state
+            .calls
+            .insert(call_id, ReadFileProvenance::Resolved(source));
     }
 
-    /// Удаляет provenance вызовов, которых больше нет в активной истории.
-    pub(super) fn synchronize(&self, history: &[ResponseItem]) {
+    /// Сбрасывает прежнее окно и удаляет вызовы вне активной истории текущего.
+    pub(super) fn synchronize(&self, window_id: &str, history: &[ResponseItem]) {
         let active_call_ids = history
             .iter()
             .filter_map(|item| match item {
@@ -75,16 +94,62 @@ impl ReadFileContextIndex {
                 _ => None,
             })
             .collect::<HashSet<_>>();
-        self.sources()
+        let mut state = self.state();
+        if state.select_window(window_id) {
+            return;
+        }
+        state
+            .calls
             .retain(|call_id, _| active_call_ids.contains(call_id.as_str()));
     }
 
-    fn source(&self, call_id: &str) -> Option<ReadFileSource> {
-        self.sources().get(call_id).cloned()
+    /// Восстанавливает только вызовы из активного хвоста текущего окна.
+    ///
+    /// Вызовы из replacement-history последней сохранившейся compaction намеренно
+    /// исключаются: сам факт их копирования механизмом compaction не доказывает,
+    /// что точный output с содержимым файла прочитан в новом окне.
+    pub(super) fn restore(
+        &self,
+        window_id: String,
+        history: &[ResponseItem],
+        replacement_history_call_ids: &HashSet<String>,
+    ) {
+        let calls = history
+            .iter()
+            .filter_map(|item| match item {
+                ResponseItem::FunctionCall { name, call_id, .. }
+                    if name == READ_FILE_TOOL_NAME
+                        && !replacement_history_call_ids.contains(call_id) =>
+                {
+                    Some((call_id.clone(), ReadFileProvenance::Resumed))
+                }
+                _ => None,
+            })
+            .collect();
+        *self.state() = ReadFileContextState {
+            window_id: Some(window_id),
+            calls,
+        };
     }
 
-    fn sources(&self) -> std::sync::MutexGuard<'_, HashMap<String, ReadFileSource>> {
-        self.sources.lock().unwrap_or_else(PoisonError::into_inner)
+    fn provenance(&self, call_id: &str) -> Option<ReadFileProvenance> {
+        self.state().calls.get(call_id).cloned()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, ReadFileContextState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl ReadFileContextState {
+    /// Возвращает `true`, если выбранное окно изменилось и индекс был очищен.
+    fn select_window(&mut self, window_id: &str) -> bool {
+        if self.window_id.as_deref() == Some(window_id) {
+            return false;
+        }
+        self.window_id = Some(window_id.to_string());
+        self.calls.clear();
+        true
     }
 }
 
@@ -127,7 +192,12 @@ pub(super) fn find_context_coverage(
             else {
                 return None;
             };
-            if output.success != Some(true) {
+            // `success` является внутренней metadata и после deserialize
+            // сохранённого FunctionCallOutput при resume становится `None`.
+            // Явно неуспешный результат переиспользовать нельзя; `None` всё равно
+            // должен пройти строгий разбор формата output `read_file` и точное
+            // сравнение ниже.
+            if output.success == Some(false) {
                 return None;
             }
             let (call_index, arguments) = calls.get(call_id.as_str())?;
@@ -135,9 +205,14 @@ pub(super) fn find_context_coverage(
                 return None;
             }
             let candidate_args = serde_json::from_str::<ReadFileArgs>(arguments).ok()?;
-            if candidate_args.line_numbers != request.args.line_numbers
-                || context_index.source(call_id)? != request.source
-            {
+            let source_matches = match context_index.provenance(call_id)? {
+                ReadFileProvenance::Resolved(source) => source == request.source,
+                ReadFileProvenance::Resumed => {
+                    candidate_args.path == request.args.path
+                        && candidate_args.environment_id == request.args.environment_id
+                }
+            };
+            if candidate_args.line_numbers != request.args.line_numbers || !source_matches {
                 return None;
             }
             let output_text = output.text_content()?;

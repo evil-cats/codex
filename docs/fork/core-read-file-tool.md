@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-12
+updated: 2026-08-13
 source_scope: discussion-2026-07-03..discussion-2026-08-12
 ---
 
@@ -29,6 +29,7 @@ source_scope: discussion-2026-07-03..discussion-2026-08-12
 | Основной обработчик | `codex-rs/core/src/tools/handlers/read_file.rs` |
 | Описание tool | `codex-rs/core/src/tools/handlers/read_file_spec.rs` |
 | Регистрация | `codex-rs/core/src/tools/spec_plan.rs` |
+| Экспозиция | `DirectModelOnly`: прямой model-visible tool без вложения в code-mode `exec` |
 | Диапазон строк | опциональные `start_line` и `end_line`, только вместе |
 | Номера строк | включены по умолчанию, отключаются через `line_numbers=false` |
 | Лимит содержимого | только из config, не из аргументов tool call |
@@ -38,11 +39,15 @@ source_scope: discussion-2026-07-03..discussion-2026-08-12
 | Слишком длинная первая строка | blocker/error, строка не режется |
 | Контекстная дедупликация | реализована в `codex-core` |
 | Условие ссылки | один прежний content-bearing output полностью содержит новый диапазон |
+| Граница доверия | coverage действует только внутри значения `Session::current_window_id()` вида `<thread_id>:<window_number>`; смена окна безусловно его аннулирует |
 | Неполное пересечение | возвращается весь запрошенный диапазон или файл |
 | Source of truth | эта карточка и owner-файлы ниже |
 
 Главный контракт:
 
+- модель вызывает `read_file` как прямой верхнеуровневый
+  `FunctionCall(name=read_file)`; tool не публикуется внутри code-mode
+  `functions.exec` и не требует дополнительного слоя оркестрации;
 - tool всегда сначала вычисляет `total_lines`;
 - затем нормализует запрос к диапазону строк: явно переданному диапазону или
   полному диапазону `1-total_lines`;
@@ -56,7 +61,11 @@ source_scope: discussion-2026-07-03..discussion-2026-08-12
   прочитанным;
 - повторный вызов может вернуть короткий `Status: already_in_context` только
   тогда, когда один прежний output с фактическим содержимым целиком покрывает
-  новый диапазон и всё ещё присутствует в фактической model-visible history;
+  новый диапазон, всё ещё присутствует в фактической model-visible history и
+  относится к тому же `window_id`;
+- compaction является жёсткой границей: после смены `window_id` прежнее
+  coverage не используется, даже если replacement-history содержит старую
+  typed call/output пару;
 - частичное пересечение никогда не приводит к сборке содержимого из нескольких
   мест контекста: tool возвращает обычный полный результат для нового запроса.
 
@@ -75,6 +84,9 @@ Codex до этой доработки читает файлы через shell-
   типизированным чтением файла;
 - большой stdout попадает в общий механизм excerpt/spill-log, после чего модель
   видит только обрывок вывода и путь к сохраненному логу;
+- вложение file-read в code-mode `exec` скрывает отдельный typed
+  `FunctionCall(read_file)` внутри `custom_tool_call(exec)` и лишает runtime
+  достоверной пары call/output для контекстной дедупликации;
 - TUI показывает `Read` по эвристическому разбору shell-команды, а не потому,
   что был вызван отдельный file-read tool;
 - при чтении документов и fork-карточек легко ошибочно принять неполный excerpt
@@ -92,10 +104,11 @@ Codex до этой доработки читает файлы через shell-
 этом не может надежно определить, пережил ли прежний tool output compaction:
 summary может упомянуть файл, но не гарантирует наличие его точного текста.
 
-Решение должно принимать host-side runtime, который видит фактическую историю
-следующего inference. Оно экономит model context, но не отменяет чтение
-актуального файла из filesystem: повторный вызов обязан проверить, что прежний
-текст не устарел.
+Решение должен принимать host-side runtime, который видит фактическую историю
+следующего inference и идентификатор текущего context window. История сама по
+себе недостаточна: любая смена `window_id` аннулирует прежнее coverage. Это
+экономит model context внутри окна, но не отменяет чтение актуального файла из
+filesystem: повторный вызов обязан проверить, что прежний текст не устарел.
 
 ## Карта файлов
 
@@ -103,17 +116,21 @@ Owner-файлы реализации:
 
 | Файл | Ответственность |
 | --- | --- |
-| `codex-rs/core/src/tools/handlers/read_file.rs` | Runtime: path, sandbox/read permissions, строки, диапазоны, content token budget, line-number rendering и ошибки |
+| `codex-rs/core/src/tools/handlers/read_file.rs` | Runtime: direct-only model exposure, path, sandbox/read permissions, строки, диапазоны, content token budget, line-number rendering и ошибки |
 | `codex-rs/core/src/tools/handlers/read_file_spec.rs` | Spec Responses API tool: имя `read_file`, аргументы, model-visible description и текстовый output contract с согласованным header |
 | `codex-rs/core/src/tools/handlers/read_file_tests.rs` | Unit tests runtime-контракта: диапазоны, right-tail line trimming, long line, пустой файл и `line_numbers=false` |
 | `codex-rs/core/src/tools/handlers/read_file_spec_tests.rs` | Tests spec-контракта: имя tool, default `line_numbers`, отсутствие argument для token limit и описание поведения `complete=no` |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает handler и spec-модуль |
 | `codex-rs/core/src/tools/spec_plan.rs` | Регистрирует `ReadFileHandler` рядом с core utility tools |
-| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет visibility для environment-backed tools: скрытие без environment, видимость с environment и `environment_id` |
+| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет visibility для environment-backed tools и `DirectModelOnly`: `read_file` остается прямым при code mode и не входит в описание nested `exec` |
 | `codex-rs/config/src/config_toml.rs` | Добавляет TOML config `[tools.read_file].content_max_tokens` |
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective config field, default `10_000` и resolver для лимита `read_file` |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
 | `codex-rs/core/tests/suite/tools.rs` | Интеграционное покрытие: tool доступен при local environment, отсутствует без environment, следует environment выбранного шага и возвращает line metadata для UTF-8 fixture |
+| `codex-rs/core/tests/suite/code_mode.rs` | Интеграционно проверяет фактический Responses request: `read_file` остается отдельным tool в code-mode-only surface и отсутствует в описании `exec` |
+| `codex-rs/core/src/session/mod.rs` | Передаёт handler-у ключ `Session::current_window_id()` и восстанавливает оконный provenance после rollout replay |
+| `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history последней сохранившейся compaction от вызовов, записанных в хвосте текущего окна |
+| `codex-rs/core/src/session/rollout_reconstruction_tests.rs` | Проверяет маркировку вызовов, принесённых replacement-history, при resume-реконструкции |
 | `codex-rs/core/config.schema.json` | Regenerated schema для `[tools.read_file].content_max_tokens` |
 | `docs/fork/core-read-file-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 
@@ -121,22 +138,26 @@ Owner-файлы контекстной дедупликации:
 
 | Файл | Статус | Ответственность |
 | --- | --- | --- |
-| `codex-rs/core/src/tools/handlers/read_file_context.rs` | `implemented` | Приватный helper: bounded provenance index resolved `environment_id + PathUri`, поиск одного полностью покрывающего `read_file` output в активной prompt-equivalent history и построение короткой ссылки |
-| `codex-rs/core/src/tools/handlers/read_file_context_tests.rs` | `implemented` | Unit tests typed call/output, полного вложения, raw/numbered content, несовпадений, очистки provenance и запрета reference chaining |
-| `codex-rs/core/tests/suite/read_file_context.rs` | `implemented` | Integration coverage обычного результата, `already_in_context`, полного ответа при overlap/union, изменения файла, смены primary cwd и rollback fallback |
+| `codex-rs/core/src/tools/handlers/read_file_context.rs` | `implemented` | Приватный helper: bounded provenance index для одного `window_id`, resolved `environment_id + PathUri`, консервативное восстановление после resume, поиск одного полностью покрывающего output и короткая ссылка |
+| `codex-rs/core/src/tools/handlers/read_file_context_tests.rs` | `implemented` | Unit tests typed call/output, полного вложения, raw/numbered content, несовпадений, смены окна, compaction-replacement exclusion, cold-resume fallback и запрета reference chaining |
+| `codex-rs/core/tests/suite/read_file_context.rs` | `implemented` | Integration coverage обычного результата, `already_in_context`, overlap/union, изменения файла, смены primary cwd, rollback, явной compaction и cold resume |
 | `codex-rs/core/tests/suite/mod.rs` | `implemented extension` | Регистрирует отдельный integration test module контекстной дедупликации на non-Windows targets |
 
 `ContextManager` и compaction-модули не должны получать долговечный file cache
-только ради этой доработки. Расширение использует существующую историю и
-естественно перестает дедуплицировать output, который исчез после compaction,
-rollback или другой переписи model-visible history.
+только ради этой доработки. `ReadFileContextIndex`, прикреплённый к
+`thread_extension_data`, хранит текущий `window_id` и bounded provenance по
+`call_id`, но не содержит текст файла. В живой session смена `window_id`
+сначала полностью очищает этот provenance; только новые content-bearing outputs
+могут снова разрешить дедупликацию в новом окне.
 
-Resolved source identity живёт только в bounded `ReadFileContextIndex`,
-прикреплённом к `thread_extension_data`. Индекс не содержит текст файла, не
-переживает новую session после resume и очищается по call IDs активной
-prompt-equivalent history. Сам по себе он никогда не разрешает ссылку: matcher
-всё равно требует исходную typed call/output пару и точное совпадение
-запрошенных строк с актуальным файлом.
+После cold resume runtime восстанавливает provenance из rollout replay. Прямая
+typed call/output пара из хвоста после последней сохранившейся compaction может
+снова разрешить ссылку, если совпадают `path`, значение аргумента
+`environment_id`, `line_numbers`, диапазон и точный актуальный текст. Call IDs,
+которые входят в replacement-history самой compaction, явно исключаются:
+перенос старой пары механизмом compaction не может продлить её доверие на новое
+окно.
+Summary или один лишь provenance ссылку также не разрешают.
 
 Намеренно не входит в MVP:
 
@@ -342,19 +363,36 @@ Error: line 10 exceeds ReadFile content token limit
 filesystem cache и не разрешает отвечать по устаревшему снимку.
 
 Runtime должен получить ту же нормализованную историю, которая используется
-для следующего inference, и сопоставлять только typed пары
-`FunctionCall(name=read_file)` и успешный `FunctionCallOutput` по `call_id`.
+для следующего inference, и текущий `window_id`. Он сопоставляет только typed пары
+`FunctionCall(name=read_file)` и content-bearing `FunctionCallOutput` по
+`call_id`, всегда отвергая явно неуспешный output.
 Append-only rollout, TUI history, compaction summary, пользовательское сообщение
 или произвольное совпадение текста не доказывают, что содержимое файла доступно
 модели.
+
+Смена значения `Session::current_window_id()` является безусловной границей
+доверия. Этот ключ имеет форму `<thread_id>:<window_number>` и меняется при
+переходе в новое context window. После этого ни один вызов прежнего окна не
+может стать `CoveredBy`, даже если механизм compaction скопировал его typed
+call/output пару в replacement-history. Первое чтение в новом окне
+возвращает обычный полный результат и создаёт новое coverage только для этого
+окна.
 
 Один прежний вызов подходит для ссылки, только если одновременно выполнены все
 условия:
 
 - его content-bearing `FunctionCallOutput` всё ещё присутствует в активной
   prompt-equivalent history;
-- вызов относится к тому же выбранному environment и тому же разрешенному
-  `PathUri` файла;
+- вызов зарегистрирован в том же `window_id`, что и текущий запрос;
+- в живой session сохранённый provenance относится к тому же выбранному
+  environment и тому же разрешенному `PathUri` файла;
+- после cold resume вызов находится в хвосте текущего окна, а не в
+  replacement-history последней сохранившейся compaction, и совпадают
+  сохранённые typed-аргументы `path` и `environment_id`;
+- явно неуспешный output с `success=false` никогда не используется; после
+  deserialize persisted rollout внутреннее поле `success` отсутствует, поэтому
+  такой output допускается только через последующий строгий разбор формата и
+  точное сравнение с актуальным файлом;
 - `line_numbers` совпадает;
 - прежний `returned` диапазон целиком содержит новый нормализованный
   `requested` диапазон;
@@ -390,8 +428,13 @@ token limit. В частности:
 - несколько прежних outputs не объединяются, даже если их union покрывает
   запрос;
 - запрос полного файла после чтения только диапазона возвращает полный файл;
-- после compaction или rollback содержимое возвращается заново, если прежний
-  content-bearing output отсутствует в активной истории;
+- после любой compaction содержимое возвращается заново независимо от состава
+  replacement-history;
+- после rollback содержимое возвращается заново, если прежний content-bearing
+  output отсутствует в активной истории;
+- после cold resume сохранённая прямая typed call/output пара текущего окна
+  снова разрешает ссылку, если её логический source, rendering и актуальный
+  текст совпадают;
 - другое значение `line_numbers`, другой environment, другой файл или
   изменившиеся строки требуют обычного результата.
 
@@ -401,7 +444,11 @@ host-side подтверждение доступности точного те�
 
 ## Архитектурное решение
 
-`read_file` является отдельным core utility tool, а не shell-wrapper.
+`read_file` является отдельным прямым core utility tool, а не shell-wrapper и
+не вложенным executor-ом code-mode `functions.exec`. Handler публикует
+`ToolExposure::DirectModelOnly`: Responses API получает обычный
+`FunctionCall(read_file)`, но code-mode namespace `tools.*` этот tool не
+содержит.
 
 Причины:
 
@@ -421,6 +468,7 @@ host-side подтверждение доступности точного те�
 | --- | --- | --- |
 | Делать отдельный `read_file`, а не дисциплинировать использование `sed` | принято | Нужны отдельные лимиты, metadata полноты и tool identity без эвристик shell parser |
 | Не проектировать это как внешний JSON-протокол | принято | Для агента это typed tool call, как `get_thread_info` и `get_system_time`; schema остается внутренней деталью Responses API |
+| Публиковать `read_file` как `DirectModelOnly` | принято | Tool нужен модели только для загрузки текста в context; прямой call сохраняет typed history, а исключение из nested `exec` убирает лишний слой оркестрации |
 | Всегда сначала вычислять `total_lines` | принято | Полный размер файла известен до нормализации диапазона и до усечения вывода |
 | Если диапазон не передан, использовать `1-total_lines` | принято | У tool нет отдельного режима "читать весь файл"; есть только нормализованный диапазон |
 | Диапазон задается парой `start_line`, `end_line` | принято | Оба края должны быть явными; варианты "только start" и "только end" не входят в MVP |
@@ -439,18 +487,21 @@ host-side подтверждение доступности точного те�
 | MVP читает только обычные текстовые UTF-8 файлы | принято | Binary, non-UTF-8 и неподдерживаемые файлы должны давать понятную ошибку |
 | Model-visible description должен направлять агента к `read_file` вместо shell-команд чтения | принято | Иначе модель может продолжить выбирать `cat`, `sed -n`, `nl`, `head` и `tail` по привычке |
 | Отдельные prompt/system/developer instructions пересмотреть после поведенческого тестирования | принято | Для MVP достаточно model-visible description; усиление зависит от поведения модели |
-| Решение о повторной выдаче принимает host-side runtime | принято | Модель не может надежно доказать, что точный прежний output пережил compaction и доступен в текущем prompt |
+| Решение о повторной выдаче принимает host-side runtime | принято | Модель не может надежно доказать, что точный прежний output доступен в текущем prompt; runtime проверяет историю и `window_id` |
+| Считать смену `window_id` безусловной границей | принято | Compaction может оставить только summary либо иначе переписать history; старое coverage нельзя переносить в новое окно |
+| При resume исключать call IDs из compaction replacement-history | принято | Это сохраняет дедупликацию для вызовов, реально выполненных после compaction, но не доверяет старым парам, перенесённым в replacement-history |
 | Ссылаться только на один content-bearing output с полным вложением диапазона | принято | Модели не приходится собирать содержимое из разных мест истории |
 | При неполном пересечении возвращать весь новый диапазон или файл | принято | Простота и локальность результата важнее экономии токенов на общей части диапазонов |
 | Не объединять несколько прежних outputs | принято | Union-покрытие потребовало бы от модели восстанавливать единый текст из нескольких удаленных фрагментов контекста |
 | Не добавлять `delivery=content` или другой force-флаг | принято | Host уже проверяет фактический prompt; escape hatch вернул бы бесконтрольное дублирование |
-| Хранить resolved source identity отдельно от текста | принято | Аргументы прежнего вызова без `environment_id` не позволяют восстановить прежний primary environment после смены cwd; bounded provenance index хранит только `environment_id + PathUri` и не заменяет проверку активного output |
+| Хранить resolved source identity отдельно от текста в живой session | принято | Bounded provenance index хранит только `environment_id + PathUri` и не заменяет проверку активного output; после cold resume runtime использует более консервативный fallback по совпавшим typed-аргументам и точному актуальному тексту |
 
 Отклоненные альтернативы:
 
 | Альтернатива | Почему не выбрана |
 | --- | --- |
 | Продолжать использовать `sed -n` маленькими диапазонами | Это остается shell stdout без metadata полноты и отдельного content limit |
+| Публиковать `read_file` внутри code-mode `functions.exec` | В rollout остаётся только внешний `custom_tool_call(exec)`, поэтому отдельная typed call/output пара `read_file` недоступна host-side matcher-у; дополнительная оркестрация здесь не даёт пользы |
 | Использовать exec spill-log как способ "прочитать весь файл" | Spill-log является артефактом большого вывода команды, а не typed file-read контрактом |
 | Добавить per-call `token_limit` | Агент начнет подгонять лимиты вручную; лимит должен быть config-only |
 | Резать текст по токенам внутри строки | Это возвращает поврежденный текст и создает риск ложного чтения |
@@ -458,6 +509,7 @@ host-side подтверждение доступности точного те�
 | Возвращать файл как JSON вместо текстового header/output | JSON усложняет чтение и экранирует содержимое, а header уже задает нужную metadata полноты |
 | Полагаться на память или самооценку модели | Модель не знает, сохранился ли точный tool output после compaction или другой переписи истории |
 | Считать compaction summary доказательством наличия файла | Summary может сохранить только вывод или упоминание и не гарантирует наличие точных строк |
+| Доверять старой typed call/output паре после смены `window_id` | Наличие пары в replacement-history не доказывает, что compaction сохранила прежний model context без потерь |
 | Хранить независимый cache прочитанных файлов между окнами истории | Cache способен пережить исчезновение текста из model-visible context и дать ложный `already_in_context` |
 | Возвращать только непокрытые части пересекающихся диапазонов | Модели пришлось бы собирать единый запрос из старого и нового outputs |
 | Объединять coverage нескольких вызовов | Покрытие было бы host-side полным, но model-side работа оставалась бы распределенной по нескольким местам контекста |
@@ -469,7 +521,9 @@ host-side подтверждение доступности точного те�
 
 1. Найти текущую архитектуру core utility tools: handlers, spec modules,
    registry в `spec_plan.rs`, prompt tool coverage tests.
-2. Добавить `read_file` handler и spec по локальным паттернам соседних tools.
+2. Добавить `read_file` handler и spec по локальным паттернам соседних tools;
+   задать `ToolExposure::DirectModelOnly`, чтобы tool оставался прямым в
+   model-visible surface и не попадал в code-mode `exec` namespace.
 3. Добавить config-only content limit
    `[tools.read_file].content_max_tokens` с default `10_000` approximate tokens.
 4. Реализовать подсчет `total_lines` до нормализации диапазона и усечения.
@@ -487,19 +541,24 @@ host-side подтверждение доступности точного те�
     flow.
 11. Обновить schema для нового config key.
 12. Добавить приватный helper контекстной дедупликации рядом с handler; он должен
-    анализировать prompt-equivalent history и typed пары `read_file`
-    call/output, а не summary или произвольный текст. Resolved
-    `environment_id + PathUri` сохранять в bounded thread-local provenance index,
-    который очищается по активной истории и не содержит file content.
+    анализировать prompt-equivalent history, текущий `window_id` и typed пары
+    `read_file` call/output, а не summary или произвольный текст. Resolved
+    `environment_id + PathUri` сохранять в bounded thread-local provenance
+    index, который очищается по активной истории, полностью сбрасывается при
+    смене окна и не содержит file content. Для cold resume восстанавливать
+    только вызовы из хвоста текущего окна, исключая call IDs из compaction
+    replacement-history, и требовать совпадения typed `path`/`environment_id`
+    с точным сравнением актуального текста.
 13. Реализовать ссылку только на один прежний content-bearing output, который
     полностью содержит новый диапазон; запретить reference chaining, union и
     частичную выдачу пересечений.
 14. Дополнить model-visible description контрактом
     `Status: already_in_context` и полным fallback-ответом при любом
     несовпадении.
-15. Добавить unit и integration coverage повторного вызова, вложенного
-    диапазона, изменения файла, compaction/rollback, `line_numbers`, environment
-    и неполного пересечения.
+15. Добавить unit и integration coverage прямой model exposure без nested
+    `exec`, повторного вызова, вложенного диапазона, изменения файла,
+    безусловной инвалидации после compaction, rollback, cold resume,
+    `line_numbers`, environment и неполного пересечения.
 16. После поведенческого тестирования решить, нужны ли отдельные
     prompt/system/developer instructions помимо model-visible `read_file`
     description для выбора tool вместо shell readers.
@@ -526,6 +585,7 @@ host-side подтверждение доступности точного те�
 | Output остается текстовым и содержит согласованный header | `required` | runtime и integration tests |
 | Tool description направляет агента к `read_file` вместо shell-команд чтения для выбранных файлов и диапазонов | `required` | spec tests |
 | `read_file` является environment-backed: скрыт без environment и получает `environment_id` при multiple environments | `required` | tool visibility tests |
+| В code mode `read_file` остаётся отдельным прямым tool и не публикуется внутри `exec` | `required, implemented` | spec-plan test `read_file_stays_direct_and_outside_code_mode` и integration test `code_mode_only_keeps_read_file_direct_and_outside_exec` |
 | Tool реально вызывается через mocked Responses flow и возвращает line metadata для UTF-8 fixture | `required` | integration test |
 | `read_file` разрешает `path` через environment выбранного шага без преобразования его `cwd` в путь локального хоста | `required` | integration test и общий remote-environment gate |
 | Повторный запрос того же диапазона возвращает один `already_in_context` без текста | `required, implemented` | `read_file` context unit tests и integration test |
@@ -533,7 +593,10 @@ host-side подтверждение доступности точного те�
 | Частично пересекающийся, больший или полный новый запрос возвращается целиком | `required, implemented` | context unit tests и integration test |
 | Несколько прежних outputs не объединяются для покрытия одного запроса | `required, implemented` | context unit test и integration full-file-after-ranges scenario |
 | Изменившееся содержимое, другой `line_numbers`, environment или `PathUri` отключают ссылку | `required, implemented` | context unit tests и integration tests изменения файла и смены primary cwd |
-| Compaction/rollback без прежнего content-bearing output повторно возвращает содержимое | `required, implemented` | context unit test отсутствующего output и integration rollback test |
+| Смена `window_id` после compaction безусловно запрещает прежний `CoveredBy`, даже если старая пара сохранена | `required, implemented` | unit tests `read_file_context_window_change_invalidates_retained_output`, `read_file_context_resume_excludes_compaction_replacement_calls` и integration test `read_file_context_compaction_requires_fresh_content` |
+| Rollback без прежнего content-bearing output повторно возвращает содержимое | `required, implemented` | context unit test отсутствующего output и integration rollback test |
+| Resume-реконструкция отличает call IDs из compaction replacement-history от хвоста текущего окна | `required, implemented` | `reconstruct_history_marks_read_file_calls_from_compaction_replacement` |
+| Cold resume с сохранённой прямой typed call/output парой текущего окна восстанавливает `already_in_context` без долговечного file cache | `required, implemented` | context unit tests resume provenance и integration test `read_file_context_dedup_survives_cold_resume` |
 | Reference output не может стать `CoveredBy` для следующего вызова | `required, implemented` | context unit tests |
 | Поиск покрытия использует prompt-equivalent history, а не rollout или summary | `required, implemented` | context unit tests и integration assertion исходящего request body |
 | Prompt/system/developer instructions сверх description решаются после поведенческого тестирования | `deferred` | open question |
@@ -552,7 +615,7 @@ host-side подтверждение доступности точного те�
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "runtime and active-context dedup contract",
+      "purpose": "runtime, direct exposure, and active-context dedup contract",
       "argv": ["just", "test", "-p", "codex-core", "read_file"]
     },
     {
@@ -588,12 +651,25 @@ host-side подтверждение доступности точного те�
 | `rust-v0.145.0` one-card migration audit | `без доработки` | Полный контракт `read_file`, owner-файлы, config/schema, регистрация, environment-backed visibility и integration coverage сохранились после merge. Конфликты в `codex-rs/core/src/config/mod.rs` и `codex-rs/core/src/tools/spec_plan.rs` не затрагивают card-owned участки и оставлены родительскому агенту. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | `rust-v0.146.0` one-card migration audit | `доработано` | Разрешены card-owned конфликты в `codex-rs/config/src/config_toml.rs`, `codex-rs/core/src/config/mod.rs`, `codex-rs/core/config.schema.json` и `codex-rs/core/src/tools/spec_plan.rs`: контракт `read_file` сохранен вместе с upstream-настройкой `update_plan`. Card-owned config test адаптирован к новому полю `ToolsToml`; исполняемая карта тестов не изменилась. Проверки не запускались: их выполняет родительский агент после прохода по карточкам |
 | Контекстная дедупликация, 2026-08-12 | `реализовано` | Handler всегда читает актуальный файл, затем ищет один content-bearing output в prompt-equivalent history; source provenance хранит только resolved `environment_id + PathUri`, а overlap, union, изменившийся файл, смена source и исчезнувший output приводят к полной выдаче |
-| Первоначальный compaction regression test, 2026-08-12 | `исправлено` | Тест ошибочно ожидал исчезновения исходного output после local compaction, хотя фактическая история его сохранила и runtime корректно вернул ссылку. Сценарий заменен на `ThreadRollback`, который доказанно удаляет прежний call/output из следующего prompt |
+| Прямая экспозиция и cold resume, 2026-08-12 | `реализовано` | `ReadFileHandler` использует `DirectModelOnly`, поэтому Responses API видит отдельный `FunctionCall(read_file)`, а code-mode `exec` больше не публикует nested `tools.read_file`; пустой после resume provenance index восстанавливает coverage из typed history и точного актуального текста |
+| Первый прогон cold-resume regression, 2026-08-12 | `исправлено` | Resume test builder создавал новый temporary cwd, поэтому fixture отсутствовал. Тест теперь явно использует persisted cwd исходной session и удерживает его `TempDir` до конца проверки |
+| Второй прогон cold-resume regression, 2026-08-12 | `исправлено` | Persisted `FunctionCallOutputPayload` теряет внутреннее поле `success` при deserialize. Matcher по-прежнему отвергает `Some(false)`, а `None` принимает только после разбора content-bearing `ReadFile` output и точного сравнения с текущим файлом |
+| Первоначальный compaction regression test, 2026-08-12 | `ошибочный вывод, исправлено` | Вывод, будто local compaction сохранила content-bearing output и разрешает ссылку, был неверной интерпретацией неудачного теста. Точная причина прежнего результата не была доказана; сценарий `ThreadRollback` не заменяет обязательную проверку compaction |
+| Оконная инвалидация после compaction, 2026-08-12 | `реализовано и проверено` | `ReadFileContextIndex` теперь привязан к `window_id`; смена окна очищает provenance, resume исключает call IDs из compaction replacement-history, а явный integration test дожидается завершения compaction и получает полный текст при следующем чтении |
 | `fork tests --mode cards --card fork-core-read-file-tool`, 2026-08-12 | `passed` | Прошли runtime/active-context contract и tool visibility targets, включая unit, spec и integration coverage новой дедупликации |
 | `fork format --fix`, 2026-08-12 | `passed` | Отформатированы Rust changes и вынесенный integration module |
 | `fork format --check`, 2026-08-12 | `passed` | После scoped fix форматирование осталось чистым |
 | `fork fix --package codex-core`, 2026-08-12 | `passed` | Scoped Clippy/fix gate завершился без card-owned исправлений |
 | `fork build-fast`, 2026-08-12 | `passed` | На ветке `hermione-0.146.0` прошли branch check, migration map, release-fast build, binary metadata и version check |
+| `fork tests --mode list --card fork-core-read-file-tool --card fork-tui-core-tool-activity` после direct-exposure доработки | `passed` | Исполняемая карта включает новые core direct/resume regressions и TUI lifecycle regression без добавления обходных команд |
+| `fork tests --mode cards --card fork-core-read-file-tool --version 0.146.0` после исправления cold resume | `passed` | Оба core targets прошли, включая `42` tests по фильтру `read_file`, фактический code-mode Responses surface и cold resume |
+| `fork fix --package codex-core --package codex-tui` после direct-exposure доработки | `passed` | Scoped Rust lint/fix завершился успешно; единственный несвязанный auto-fix `needless_borrow` в `config_tests.rs` исключён из card-owned diff |
+| `fork format --check` и `fork cards validate` после direct-exposure доработки | `passed` | Форматирование чистое; проверены `27` карточек, `card_errors: 0` |
+| `fork build-fast --version 0.146.0` после direct-exposure доработки | `passed` | Прошли branch check, migration map, release-fast build, binary metadata и version check; артефакт собран в `codex-rs/target/release-fast/codex` |
+| `fork tests --mode cards --card fork-core-read-file-tool --version 0.146.0` после оконной инвалидации | `passed` | Прошли `46` tests по фильтру `read_file` и visibility target; integration test `read_file_context_compaction_requires_fresh_content` подтвердил полный post-compaction output и смену `x-codex-window-id` |
+| `fork fix --package codex-core`, `fork format --check`, `fork cards validate` после оконной инвалидации | `passed` | Scoped lint завершился успешно; форматирование чистое; проверены `27` карточек, `card_errors: 0` |
+| `fork build-fast --version 0.146.0` после оконной инвалидации, 2026-08-13 | `passed` | Прошли branch check, migration map, release-fast build, binary metadata и version check |
+| `fork install`, 2026-08-13 | `passed` | Установлен `/home/slader/.local/bin/codex-hermione` версии `codex-cli 0.146.0+hermione`, размером `374974600` bytes; SHA-256 источника и установленного binary совпал: `9ab0cbb6d00228d2083500e25d58e9ebd3b18b73de8a6962720cedbe591c93f3` |
 | `fork install`, 2026-08-12 | `passed` | Установлен `/home/slader/.local/bin/codex-hermione` версии `codex-cli 0.146.0+hermione`; SHA-256 источника и установленного binary совпал: `67974837a85f3d010bb98377aa7ca20e8c25a7ccebaffdacfc509cecb65165df` |
 | `cargo check -p codex-core` | `passed` | Прошел до финальной правки `Error:` header; после финальной правки crate был снова проверен через Clippy |
 | `just fmt` | `passed` | Прошел после финальных code changes |
@@ -622,14 +698,16 @@ host-side подтверждение доступности точного те�
 
 ## Runtime, сборка и установка
 
-Текущая реализация контекстной дедупликации проверяется 2026-08-12 в checkout
-`/home/slader/Projects/evilcats/codex` на ветке `hermione-0.146.0`. Card-scoped
-tests, scoped fix для `codex-core` и `fork build-fast` прошли;
-config/schema/dependency surface в этой части доработки не менялся. Текущий
-binary собран в `codex-rs/target/release-fast/codex` и установлен в
-`/home/slader/.local/bin/codex-hermione`. Установленная версия —
-`codex-cli 0.146.0+hermione`, размер — `374835336` bytes, SHA-256 —
-`67974837a85f3d010bb98377aa7ca20e8c25a7ccebaffdacfc509cecb65165df`.
+Текущая реализация direct exposure, контекстной дедупликации и безусловной
+оконной инвалидации проверена 2026-08-12 в checkout
+`/home/slader/Projects/evilcats/codex` на ветке `hermione-0.146.0`.
+Card-scoped tests, scoped fix, format/card validation и `fork build-fast`
+прошли; config/schema/dependency surface не менялся. `fork build-fast` и
+`fork install` повторно выполнены 2026-08-13. Новый binary собран в
+`codex-rs/target/release-fast/codex` и установлен в
+`/home/slader/.local/bin/codex-hermione`; установленная версия —
+`codex-cli 0.146.0+hermione`, размер — `374974600` bytes, SHA-256 —
+`9ab0cbb6d00228d2083500e25d58e9ebd3b18b73de8a6962720cedbe591c93f3`.
 
 Поведение базового tool подтверждено существующими unit/spec/config tests и
 integration test `suite::tools::read_file_tool_reads_utf8_file_with_line_metadata`.
@@ -682,6 +760,10 @@ Bazel lock update не требуется. `codex-rs/core/BUILD.bazel` испо�
   чтении.
 - `read_file` не заменяет поиск по репозиторию: tool description оставляет
   discovery за `rg`, `rg --files` и похожими командами.
+- `DirectModelOnly` намеренно исключает `read_file` из code-mode `exec`
+  namespace. Если upstream изменит смысл tool exposure, регрессия должна быть
+  заметна одновременно по фактическому Responses request и по отсутствию
+  `read_file` в model-visible описании `exec`.
 - Sandbox/path semantics реализованы через environment filesystem,
   `FileSystemSandboxContext` и обычные permission checks. `ReadFileHandler`
   выбирает environment из `ToolInvocation.step_context.environments` и
@@ -697,15 +779,24 @@ Bazel lock update не требуется. `codex-rs/core/BUILD.bazel` испо�
   description.
 - Контекстная дедупликация экономит model context, но намеренно не экономит
   filesystem read: актуальное содержимое проверяется до решения о ссылке.
-- Источником истины является prompt-equivalent history. Rollout, TUI history,
-  summary и независимый cache не доказывают доступность точного текста модели.
+- Источником истины внутри одного окна являются текущий `window_id` вместе с
+  prompt-equivalent history. Rollout, TUI history, summary и независимый cache
+  не доказывают доступность точного текста модели, а смена окна безусловно
+  аннулирует прежнее coverage.
 - Только один прежний content-bearing output может покрыть запрос. Частичное
   пересечение и union нескольких outputs приводят к полной выдаче нового
   диапазона или файла; это сознательный расход токенов ради локального,
   самодостаточного результата.
-- `ReadFileContextIndex` хранит только resolved source identity и очищается по
-  call IDs активной истории. Он не хранит file content и не заменяет проверку,
-  что исходный output реально присутствует в текущей model-visible history.
+- `ReadFileContextIndex` хранит `window_id` и provenance call IDs текущего окна.
+  Он не хранит file content, полностью очищается при смене окна и не заменяет
+  проверку, что исходный output реально присутствует в текущей model-visible
+  history.
+- После cold resume resolved source прошлого вызова уже недоступен. Fallback
+  сознательно слабее live-session provenance: он допускает только call IDs из
+  хвоста текущего окна, исключает compaction replacement-history и требует
+  совпадения логических `path`/`environment_id`, прежнего content-bearing output
+  и точного актуального текста запрошенных строк. При любом несовпадении
+  возвращается полный результат.
 
 ## Проверка покрытия
 
@@ -713,6 +804,7 @@ Bazel lock update не требуется. `codex-rs/core/BUILD.bazel` испо�
 | --- | --- | --- |
 | Отдельный `read_file` вместо shell-чтения | `перенесено в карточку` | `Зачем это нужно`, `Архитектурное решение` |
 | Вызов как typed tool, а не внешний JSON-протокол | `перенесено в карточку` | `Итоговый контракт`, `Архитектурное решение` |
+| Прямая `DirectModelOnly` экспозиция без вложения в code-mode `exec` | `перенесено в карточку` | `Обзор`, `Карта файлов`, `Архитектурное решение`, `Проверки` |
 | `total_lines` вычисляется всегда первым | `перенесено в карточку` | `Обзор`, `Итоговый контракт` |
 | Диапазон отсутствует -> `1-total_lines` | `перенесено в карточку` | `Итоговый контракт` |
 | Диапазон задается `start_line` + `end_line` | `перенесено в карточку` | `Итоговый контракт` |
@@ -736,7 +828,9 @@ Bazel lock update не требуется. `codex-rs/core/BUILD.bazel` испо�
 | Ссылка только на один content-bearing output с полным вложением диапазона | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Проверки` |
 | Полная выдача при частичном пересечении, большем диапазоне или полном файле | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Архитектурное решение` |
 | Запрет union нескольких outputs и reference chaining | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Проверки` |
-| Повторная выдача после исчезновения content-bearing output при compaction/rollback | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Риски и ограничения` |
+| Безусловная повторная выдача после смены `window_id` при compaction | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Архитектурное решение`, `Проверки`, `Риски и ограничения` |
+| Повторная выдача после rollback при исчезновении content-bearing output | `перенесено в карточку` | `Повторные чтения и активный контекст`, `Проверки` |
+| Восстановление дедупликации после cold resume только для хвоста текущего окна | `перенесено в карточку` | `Карта файлов`, `Повторные чтения и активный контекст`, `Проверки`, `Риски и ограничения` |
 | Отсутствие `delivery=content` и долговечного cache доступности | `перенесено в карточку` | `Архитектурное решение`, `Риски и ограничения` |
 | Новая реализация и regression tests | `перенесено в карточку` | `Карта файлов`, `Проверки`, `Исторические результаты` |
 

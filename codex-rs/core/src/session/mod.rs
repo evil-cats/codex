@@ -1424,6 +1424,7 @@ impl Session {
     ) -> Option<PreviousTurnSettings> {
         let rollout_reconstruction::RolloutReconstruction {
             mut history,
+            replacement_history_call_ids,
             previous_turn_settings,
             reference_context_item,
             world_state_baseline,
@@ -1440,6 +1441,12 @@ impl Session {
         // This meets media preparation requirements without modifying persisted rollouts.
         prepare_image_response_items(&mut history);
         prepare_audio_response_items(&mut history);
+        crate::tools::handlers::restore_read_file_context_index(
+            self,
+            self.context_window_id(window_number),
+            &history,
+            &replacement_history_call_ids,
+        );
         {
             let mut state = self.state.lock().await;
             state.replace_history(history, reference_context_item);
@@ -3615,9 +3622,12 @@ impl Session {
 
     pub(crate) async fn current_window_id(&self) -> String {
         let state = self.state.lock().await;
-        let thread_id = self.thread_id;
         let window_number = state.auto_compact_window_number();
-        format!("{thread_id}:{window_number}")
+        self.context_window_id(window_number)
+    }
+
+    fn context_window_id(&self, window_number: u64) -> String {
+        format!("{}:{window_number}", self.thread_id)
     }
 
     pub(crate) async fn advance_auto_compact_window(&self) -> (u64, AutoCompactWindowIds) {

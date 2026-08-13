@@ -1,3 +1,6 @@
+//! Регрессионные тесты восстановления history, context window и связанных
+//! resume/fork metadata из persisted rollout.
+
 use super::*;
 
 use super::tests::build_world_state_from_turn_context;
@@ -1115,6 +1118,48 @@ async fn reconstruct_history_prefers_compacted_window_over_session_meta() {
         Some(compacted_previous_window_id)
     );
     assert_eq!(reconstructed.window_id, Some(compacted_window_id));
+}
+
+#[tokio::test]
+async fn reconstruct_history_marks_read_file_calls_from_compaction_replacement() {
+    let (session, turn_context) = make_session_and_context().await;
+    let compacted_call_id = "read-file-before-compaction";
+    let current_window_call_id = "read-file-after-compaction";
+    let read_file_call = |call_id: &str| ResponseItem::FunctionCall {
+        id: None,
+        name: "read_file".to_string(),
+        namespace: None,
+        arguments: json!({"path": "example.txt"}).to_string(),
+        call_id: call_id.to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let rollout_items = vec![
+        RolloutItem::Compacted(CompactedItem {
+            message: String::new(),
+            replacement_history: Some(vec![read_file_call(compacted_call_id)]),
+            window_number: Some(1),
+            first_window_id: None,
+            previous_window_id: None,
+            window_id: None,
+        }),
+        RolloutItem::ResponseItem(read_file_call(current_window_call_id)),
+    ];
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(&turn_context, &rollout_items)
+        .await;
+
+    assert_eq!(
+        reconstructed.replacement_history_call_ids,
+        HashSet::from([compacted_call_id.to_string()])
+    );
+    assert_eq!(
+        reconstructed.history,
+        vec![
+            read_file_call(compacted_call_id),
+            read_file_call(current_window_call_id)
+        ]
+    );
 }
 
 #[tokio::test]

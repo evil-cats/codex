@@ -5,12 +5,15 @@
 //! его filesystem с действующими sandbox-ограничениями. Формирование диапазона,
 //! metadata полноты и усечение по целым строкам остаются локальным контрактом
 //! этого обработчика. Перед выдачей содержимого обработчик также проверяет,
-//! сохранился ли один полностью покрывающий output в активном model context.
+//! сохранился ли один полностью покрывающий output в текущем context window.
 
 #[path = "read_file_context.rs"]
 mod read_file_context;
 
+use std::collections::HashSet;
+
 use crate::function_tool::FunctionCallError;
+use crate::session::session::Session;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -21,6 +24,8 @@ use crate::tools::handlers::read_file_spec::create_read_file_tool;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
+use codex_protocol::models::ResponseItem;
+use codex_tools::ToolExposure;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_utils_output_truncation::approx_token_count;
@@ -41,6 +46,23 @@ impl ReadFileHandler {
             include_environment_id,
         }
     }
+}
+
+/// Восстанавливает оконный provenance `read_file` из replay текущего thread.
+///
+/// Вызовы, принесённые replacement-history последней compaction, исключаются;
+/// допустимы только прямые вызовы, записанные после этой границы.
+pub(crate) fn restore_read_file_context_index(
+    session: &Session,
+    window_id: String,
+    history: &[ResponseItem],
+    replacement_history_call_ids: &HashSet<String>,
+) {
+    session
+        .services
+        .thread_extension_data
+        .get_or_init(ReadFileContextIndex::default)
+        .restore(window_id, history, replacement_history_call_ids);
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +98,10 @@ impl ToolExecutor<ToolInvocation> for ReadFileHandler {
 
     fn spec(&self) -> ToolSpec {
         create_read_file_tool(self.include_environment_id)
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::DirectModelOnly
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -166,11 +192,12 @@ impl ReadFileHandler {
             .services
             .thread_extension_data
             .get_or_init(ReadFileContextIndex::default);
+        let window_id = session.current_window_id().await;
         let history = session
             .clone_history()
             .await
             .for_prompt(&turn.model_info.input_modalities);
-        context_index.synchronize(&history);
+        context_index.synchronize(&window_id, &history);
         let contextual_output = if let Some(requested_range) = requested_range {
             let request = ReadFileContextRequest {
                 args: &args,
@@ -194,7 +221,7 @@ impl ReadFileHandler {
             },
             Ok,
         )?;
-        context_index.record(call_id, current_source);
+        context_index.record(&window_id, call_id, current_source);
 
         Ok(boxed_tool_output(FunctionToolOutput::from_text(
             output,

@@ -634,6 +634,27 @@ async fn request_user_input_stays_direct_in_code_mode_only() {
 }
 
 #[tokio::test]
+async fn read_file_stays_direct_and_outside_code_mode() {
+    let plan = probe(|turn| {
+        set_features(turn, &[Feature::CodeMode, Feature::CodeModeOnly]);
+    })
+    .await;
+
+    plan.assert_visible_contains(&[
+        "read_file",
+        codex_code_mode::PUBLIC_TOOL_NAME,
+        codex_code_mode::WAIT_TOOL_NAME,
+    ]);
+    plan.assert_registered_contains(&["read_file"]);
+    assert_eq!(plan.exposure("read_file"), ToolExposure::DirectModelOnly);
+
+    let ToolSpec::Freeform(exec) = plan.visible_spec(codex_code_mode::PUBLIC_TOOL_NAME) else {
+        panic!("expected code mode exec tool");
+    };
+    assert!(!exec.description.contains("read_file"));
+}
+
+#[tokio::test]
 async fn shell_family_registers_visible_unified_exec_and_hidden_legacy_shell() {
     let plan = probe(|turn| {
         set_features(turn, &[Feature::ShellTool, Feature::UnifiedExec]);

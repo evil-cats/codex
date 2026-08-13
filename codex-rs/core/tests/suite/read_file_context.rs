@@ -4,11 +4,15 @@
 //! model-visible history, source identity и fallback после изменения истории.
 
 use std::fs;
+use std::sync::Arc;
 
 use anyhow::Context;
 use anyhow::Result;
+use codex_model_provider_info::built_in_model_providers;
+use codex_protocol::items::TurnItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::Op;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -362,6 +366,201 @@ async fn read_file_context_dedup_rehydrates_after_rollback() -> Result<()> {
     assert!(
         !requests[2].has_function_call(first_call_id),
         "post-rollback prompt should not retain the original read_file call"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_context_compaction_requires_fresh_content() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
+    provider.name = "OpenAI-compatible read_file test provider".to_string();
+    provider.base_url = Some(format!("{}/v1", server.uri()));
+    provider.supports_websockets = false;
+    let mut builder = test_codex().with_config(move |config| {
+        config.model_provider = provider;
+        config.read_file_content_max_tokens = 10_000;
+    });
+    let fixture = builder.build_with_auto_env(&server).await?;
+    fs::write(
+        fixture.workspace_path("read-file-context-compaction.txt"),
+        "alpha\nbeta\n",
+    )
+    .context("write compaction read_file fixture")?;
+
+    let first_call_id = "read-file-context-before-compaction";
+    let second_call_id = "read-file-context-after-compaction";
+    let args = json!({ "path": "read-file-context-compaction.txt" });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-before-compaction"),
+                ev_function_call(first_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-before-compaction"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-before-compaction", "done"),
+                ev_completed("resp-before-compaction-done"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-compaction-summary", "summary without file content"),
+                ev_completed("resp-compaction-summary"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-after-compaction"),
+                ev_function_call(second_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-after-compaction"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-after-compaction", "done"),
+                ev_completed("resp-after-compaction-done"),
+            ]),
+        ],
+    )
+    .await;
+
+    fixture
+        .submit_turn_with_permission_profile(
+            "read before compaction",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+    fixture.codex.submit(Op::Compact).await?;
+
+    let mut compaction_completed = false;
+    let mut turn_completed = false;
+    while !compaction_completed || !turn_completed {
+        let event = fixture.codex.next_event().await?;
+        match event.msg {
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::ContextCompaction(_),
+                ..
+            }) => compaction_completed = true,
+            EventMsg::TurnComplete(_) => turn_completed = true,
+            _ => {}
+        }
+    }
+
+    fixture
+        .submit_turn_with_permission_profile(
+            "read after compaction",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+
+    assert_eq!(
+        mock.function_call_output_text(second_call_id)
+            .context("post-compaction read_file output present")?,
+        "ReadFile: read-file-context-compaction.txt\nLines: total=2 requested=1-2 returned=1-2 complete=yes\nLineNumbers: yes\n\n1 | alpha\n2 | beta\n"
+    );
+    let requests = mock.requests();
+    let before_compaction = requests
+        .iter()
+        .find(|request| request.function_call_output_text(first_call_id).is_some())
+        .context("request carrying pre-compaction read_file output")?;
+    let after_compaction = requests
+        .iter()
+        .find(|request| request.function_call_output_text(second_call_id).is_some())
+        .context("request carrying post-compaction read_file output")?;
+    assert_ne!(
+        before_compaction.header("x-codex-window-id"),
+        after_compaction.header("x-codex-window-id"),
+        "compaction must advance the context window"
+    );
+    assert!(
+        !after_compaction.has_function_call(first_call_id),
+        "post-compaction prompt must not reuse the pre-compaction read_file call"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_file_context_dedup_survives_cold_resume() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config.read_file_content_max_tokens = 10_000;
+    });
+    let initial = builder.build(&server).await?;
+    fs::write(
+        initial.workspace_path("read-file-context-resume.txt"),
+        "alpha\nbeta\n",
+    )
+    .context("write cold-resume read_file fixture")?;
+    let home = Arc::clone(&initial.home);
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .context("cold-resume rollout path")?;
+    let resume_cwd = initial.config.cwd.clone();
+
+    let first_call_id = "read-file-context-before-resume";
+    let second_call_id = "read-file-context-after-resume";
+    let args = json!({ "path": "read-file-context-resume.txt" });
+    let mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-before-resume"),
+                ev_function_call(first_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-before-resume"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-before-resume", "done"),
+                ev_completed("resp-before-resume-done"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-after-resume"),
+                ev_function_call(second_call_id, "read_file", &args.to_string()),
+                ev_completed("resp-after-resume"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-after-resume", "done"),
+                ev_completed("resp-after-resume-done"),
+            ]),
+        ],
+    )
+    .await;
+
+    initial
+        .submit_turn_with_permission_profile(
+            "read before cold resume",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+    initial.codex.submit(Op::Shutdown).await?;
+    wait_for_event(&initial.codex, |event| {
+        matches!(event, EventMsg::ShutdownComplete)
+    })
+    .await;
+    // Начальный harness должен жить до конца: возобновлённый thread использует его
+    // сохранённый cwd, а уничтожение harness удалит fixture вместе с TempDir.
+
+    let mut resume_builder = test_codex().with_config(move |config| {
+        config.read_file_content_max_tokens = 10_000;
+        config.cwd = resume_cwd;
+    });
+    let resumed = resume_builder.resume(&server, home, rollout_path).await?;
+    resumed
+        .submit_turn_with_permission_profile(
+            "read after cold resume",
+            PermissionProfile::read_only(),
+        )
+        .await?;
+
+    assert_eq!(
+        mock.function_call_output_text(second_call_id)
+            .context("cold-resume read_file output present")?,
+        "ReadFile: read-file-context-resume.txt\nStatus: already_in_context\nCoverage: requested=1-2 available=1-2 complete=yes\nLineNumbers: yes\nCoveredBy: read-file-context-before-resume\n"
     );
 
     Ok(())

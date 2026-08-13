@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-07-29
+updated: 2026-08-13
 source_scope: working-tree
 ---
 
@@ -69,6 +69,17 @@ history cell является `Exploring` или `Explored` с `Search`, `List` 
 • Exploring
   └ Search as_any in history_cell
   └ File insert_history.rs
+```
+
+`read_file` при этом остаётся прямым function tool, а не вложенной операцией
+`exec`. Смешанная группировка является свойством TUI lifecycle и сохраняется,
+когда прямые вызовы `read_file` расположены между shell search-командами:
+
+```text
+• Explored
+  └ Search ^(//|func Test) in pixel_test.go
+  └ File comments.md, INDEX.md, pixel_test.go
+  └ Search ^\s+// in pixel_test.go
 ```
 
 Если `read_file` стартовал чуть раньше shell exploration-команды из-за
@@ -167,7 +178,7 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
-| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, смешанный `Search`/`File`, перенос pending `File`, completed-only replay и interleaving с завершением `exec` |
+| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, явный `Search -> direct File -> Search`, перенос pending `File`, completed-only replay и interleaving с завершением `exec` |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
 | `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, а при несвязанном завершении `exec` не сбрасывает активный in-progress `File` |
@@ -177,11 +188,11 @@ thread и чтение текущего времени host. Но если эт�
 | `.codex/skills/fork/scripts/fork_cli.py` | Читает блоки `fork-tests.v1` из карточек и исполняет проверки через `fork tests` |
 | `docs/fork/tui-core-tool-activity.md` | Владеющий handoff-артефакт: UI-контракт, перенос, проверки и ограничения fork-доработки |
 
-Намеренно несемантический touch:
+Связанное семантическое изменение, которым владеет core-карточка:
 
 | Файл | Причина |
 | --- | --- |
-| `codex-rs/core/src/tools/handlers/read_file.rs` | Только форматирование существующего `collapsible_if`; runtime-контракт `read_file` не меняется |
+| `codex-rs/core/src/tools/handlers/read_file.rs` | `ToolExposure::DirectModelOnly`: `read_file` остаётся прямым model-visible tool и исключается из nested code-mode `exec`; TUI-карточка подтверждает, что эта экспозиция не ломает grouping |
 
 Связанные карточки:
 
@@ -273,6 +284,9 @@ shell-read renderer может продолжать писать `Read`, пот�
   (`Search`, `List` или `Read`), `read_file` добавляется в него отдельной
   строкой `File`; это правило действует и для активного `Exploring`, и для
   завершенного, но еще не вытолкнутого в историю `Explored`;
+- прямой `FunctionCall(read_file)` между двумя shell search-командами остаётся
+  в том же exploration-блоке; grouping не зависит от публикации `read_file`
+  внутри `exec` и не требует такой публикации;
 - если `read_file` стартует раньше shell exploration-команды, новый
   `Search`/`List`/`Read` забирает pending `File` в свой `ExecCell` вместо того,
   чтобы flush-ить stale `Exploring -> File` отдельной history-карточкой;
@@ -378,6 +392,8 @@ function tools, а не притворяться shell execution.
 - не показывать обобщенный `Tool read_file` как основной label;
 - добавить структурированное сопоставление выбранного core tool call с
   пользовательской activity;
+- принимать `read_file` как прямой `FunctionCall` с экспозицией
+  `DirectModelOnly`; code-mode `exec` не должен владеть file-read lifecycle;
 - для `read_file` повторить компактность старого shell `Read`: короткие имена
   файлов, группировка соседних чтений и дедупликация повторов;
 - сохранять grouping при replay completed-only `CoreToolActivity` и при
@@ -433,11 +449,12 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 6. Добавить TUI rendering с точными labels из этой карточки.
 7. Для `read_file` в компактной истории показывать короткое имя файла без
    диапазонов строк; коалесить соседние `File` activity в один блок без
-   повторов и приклеивать `File` к текущему exploration-блоку shell
-   `Search`/`List`/`Read`, если он еще активен в transcript tail. Если указан
-   `environment_id`, разрешать путь через cwd той же step environment, которую
-   выбирает handler, чтобы не интерпретировать foreign path по правилам primary
-   host.
+   повторов и приклеивать прямой `FunctionCall(read_file)` к текущему
+   exploration-блоку shell `Search`/`List`/`Read`, если он еще активен в
+   transcript tail, включая последовательность `Search -> File -> Search`.
+   Если указан `environment_id`, разрешать путь через cwd той же step
+   environment, которую выбирает handler, чтобы не интерпретировать foreign
+   path по правилам primary host.
 8. Поддержать completed-only replay: если сохраненная thread history уже
    схлопнула `ItemStarted`/`ItemCompleted` в completed item, соседние `File`
    entries должны группироваться так же, как live start/completion flow.
@@ -468,6 +485,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `read_file` в компактной истории не показывает `:start-end` диапазоны строк | `required` | TUI snapshots для одиночной и сгруппированной `File` activity |
 | Последовательные `read_file` calls коалессятся в один блок `File` | `required` | TUI lifecycle test `sequential_core_tool_activity_files_coalesce_in_active_cell` |
 | `read_file` коалесится с текущим shell exploration-блоком `Search`/`List`/`Read` и для `Exploring`, и для `Explored` | `required` | TUI lifecycle test `core_tool_activity_file_coalesces_with_exec_exploration_cell` |
+| Прямые `read_file` calls между двумя shell search-командами сохраняют единый блок `Search -> File -> Search` | `required` | TUI lifecycle regression `direct_core_tool_activity_file_stays_grouped_between_searches` |
 | Pending `read_file`, стартовавший до shell `Search`/`List`/`Read`, переносится в новый exploration-блок без отдельного stale `Exploring -> File` | `required` | TUI lifecycle test `core_tool_activity_file_started_before_exec_exploration_is_adopted` |
 | Completed-only replay соседних `read_file` items коалесится в один `File` блок | `required` | TUI lifecycle test `completed_only_core_tool_activity_file_replay_coalesces_file_items` |
 | Завершение несвязанной `exec`-команды между параллельными `read_file` calls не разделяет `File` группу | `required` | TUI lifecycle test `core_tool_activity_file_group_survives_exec_completion_between_parallel_reads` |
@@ -600,6 +618,12 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | `.codex/skills/fork/scripts/fork tests --mode list --card fork-tui-core-tool-activity` в проходе `rust-v0.146.0` | `ok-current-pass` | Исполняемая карта печатает core activity path detail, TUI snapshots и lifecycle, thread history replay, protocol item model, analytics reducer и pending snapshots |
 | `.codex/skills/fork/scripts/fork cards validate` в проходе `rust-v0.146.0` | `ok-current-pass` | Проверены 25 карточек, ошибок формы и связи с исполняемыми картами нет |
 | `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity --version 0.146.0` | `blocked-current-pass` | Обёртка остановилась до внутренних тестовых `argv` на проверке `migration map ready`: текущая карточка имеет статус `inProgress`, две соседние карточки ещё `pending`; JSON-карта миграции намеренно не менялась и прямой обход проверки не выполнялся |
+| Direct `read_file` grouping regression, 2026-08-12 | `implemented` | Явный lifecycle test воспроизводит `Search -> direct File -> Search` с файлами `comments.md`, `INDEX.md`, `pixel_test.go` и требует один active `Exploring`, затем один completed `Explored` блок |
+| `.codex/skills/fork/scripts/fork tests --mode cards --card fork-tui-core-tool-activity --version 0.146.0`, 2026-08-12 | `ok` | После готовности migration map прошли core activity path detail, TUI snapshots/lifecycle, thread history replay, protocol item model, analytics reducer и pending snapshots |
+| `.codex/skills/fork/scripts/fork fix --package codex-core --package codex-tui`, 2026-08-12 | `ok` | Scoped Rust lint/fix завершился успешно; единственный несвязанный auto-fix `needless_borrow` в `config_tests.rs` исключён из card-owned diff |
+| `.codex/skills/fork/scripts/fork format --check` и `fork cards validate`, 2026-08-12 | `ok` | Форматирование чистое; проверены `27` карточек, `card_errors: 0` |
+| `.codex/skills/fork/scripts/fork build-fast --version 0.146.0`, 2026-08-12 | `ok` | Прошли branch check, migration map, release-fast build, binary metadata и version check |
+| `.codex/skills/fork/scripts/fork build-fast --version 0.146.0` и `fork install`, 2026-08-13 | `ok` | Повторная сборка прошла все gates; установлен `/home/slader/.local/bin/codex-hermione` версии `codex-cli 0.146.0+hermione`, SHA-256 источника и установленного binary совпал: `9ab0cbb6d00228d2083500e25d58e9ebd3b18b73de8a6962720cedbe591c93f3` |
 
 ### Известные падения и пропуски
 
@@ -608,17 +632,16 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 - В миграционном проходе `rust-v0.145.0` проверки уровня проекта не запускались
   по ограничению subagent one-card flow; их выполняет parent-agent в общем
   проверочном проходе.
-- В миграционном проходе `rust-v0.146.0` остаются общие неразрешённые конфликты
-  других областей; они не относятся к owner-файлам этой карточки и намеренно не
-  разрешаются и не добавляются в index этим проходом.
-- Проверки уровня карточки `rust-v0.146.0` не запускали внутренние тестовые
-  `argv`: обёртка остановилась на незавершённых статусах карты миграции до
-  начала тестов.
+- В миграционном subagent-проходе `rust-v0.146.0` оставались общие конфликты
+  других областей; они не относились к owner-файлам этой карточки и были
+  переданы общему migration flow.
+- Исторический blocker `migration map ready` снят в проверочном проходе
+  2026-08-12: все внутренние `argv` карточки выполнились успешно.
 - На момент subagent-прохода в общих owner-файлах
   `chatwidget/tool_lifecycle.rs`, `history_cell/mod.rs` и сгенерированном
   `ThreadItem.ts` оставались конфликты других областей. Участки
   `CoreToolActivity` в них были сохранены, а чужие конфликты намеренно не
-  разрешались этой карточкой.
+  разрешались этой карточкой. В текущем checkout unmerged-файлов нет.
 - В ходе реализации уже исправлены промежуточные падения: отсутствующий
   `CoreToolActivity` в app-server thread history, exhaustive match в
   `codex-analytics`, неверный TUI test filter и внешний `.snap.new` вместо
@@ -636,17 +659,21 @@ Runtime-проверка этой карточки должна подтверж
 в TUI snapshot coverage; ручная проверка установленного бинарника нужна перед
 установкой или release-fast переносом.
 
-В последнем полном проверочном проходе release-fast binary был собран и проверен
-wrapper-ом `fork build-fast`: `codex-rs/target/release-fast/codex`. Бинарник был
-установлен wrapper-ом `fork install` в
-`/home/slader/.local/bin/codex-hermione`. Миграционный subagent-проход
-`rust-v0.145.0` эти gates не повторял.
+В текущем проверочном проходе release-fast binary собран и проверен wrapper-ом
+`fork build-fast`: `codex-rs/target/release-fast/codex`. Wrapper `fork install`
+установил его в `/home/slader/.local/bin/codex-hermione`; версия —
+`codex-cli 0.146.0+hermione`, размер — `374974600` bytes, SHA-256 —
+`9ab0cbb6d00228d2083500e25d58e9ebd3b18b73de8a6962720cedbe591c93f3`.
 
 ## Риски и ограничения
 
 - Нужно не смешать user-facing activity item с model-visible
   `FunctionCallOutput`: первое нужно пользователю, второе нужно модели.
 - Нельзя подменять provenance: `read_file` не должен выглядеть как shell command.
+- TUI grouping не должен зависеть от nested code-mode executor-а: после
+  `DirectModelOnly` экспозиции прямой `FunctionCall(read_file)` обязан проходить
+  тот же `CoreToolActivity` lifecycle и оставаться внутри смешанного exploration
+  tail.
 - Компактная история намеренно не показывает точный диапазон строк; точный
   `path` и диапазоны строк нужно искать в structured payload или diagnostics, а
   не в обычной строке истории.
@@ -680,6 +707,7 @@ wrapper-ом `fork build-fast`: `codex-rs/target/release-fast/codex`. Бинар
 | `read_file` не должен показывать номера строк в компактной истории | `перенесено в карточку` | `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
 | Последовательные `read_file` calls должны коалеситься в один блок `File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
 | `read_file` должен коалеситься с текущим shell exploration-блоком `Search`/`List`/`Read` для `Exploring` и `Explored` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
+| Последовательность `Search -> direct File -> Search` должна оставаться одним exploration-блоком | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Архитектурное решение`, `Проверки` |
 | Pending `read_file`, стартовавший до shell exploration-команды, не должен оставлять отдельный stale `Exploring -> File` | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки` |
 | Completed-only replay соседних `read_file` items должен коалеситься в один `File` блок | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Проверки`, `Риски и ограничения` |
 | Несвязанное завершение `exec` между параллельными `read_file` calls не должно разделять `File` группу | `перенесено в карточку` | `Обзор`, `Итоговый контракт`, `Карта файлов`, `Проверки`, `Риски и ограничения` |
