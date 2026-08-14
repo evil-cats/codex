@@ -2,7 +2,7 @@
 id: fork-model-instructions-files
 status: active
 created: 2026-07-24
-updated: 2026-08-13
+updated: 2026-08-14
 ---
 
 # Model instructions files
@@ -12,7 +12,9 @@ updated: 2026-08-13
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет top-level
 config key `model_instructions_files`. Он позволяет разделить базовые инструкции
 модели между несколькими Markdown-файлами и собрать их в одно значение
-Responses API `instructions`.
+`Config.base_instructions`. Обычный Responses transport передаёт это значение
+через top-level поле `instructions`; Responses Lite использует свой upstream
+wire contract с одним developer item.
 
 ## Зачем это нужно
 
@@ -28,8 +30,9 @@ Responses API `instructions`.
 - каждый документ обрабатывается через `trim()` и соединяется с соседним через
   `\n\n`;
 - объединённый текст передаётся как одно значение базовых инструкций;
-- дополнительные сообщения `input` или элементы с ролью `developer` не
-  создаются;
+- загрузка файлов сама не создаёт дополнительные сообщения `input` или элементы
+  с ролью `developer`; стандартный Responses transport использует top-level
+  `instructions`, а Responses Lite применяет общий upstream wire adapter;
 - одновременное использование одиночного и множественного ключей возвращает
   ошибку конфигурации;
 - пустой, отсутствующий или нечитаемый файл возвращает ошибку конфигурации;
@@ -103,8 +106,8 @@ Tools instructions.
 Workflow instructions.
 ```
 
-Итог становится одним `Config.base_instructions`. На уровне Responses API это
-одно верхнеуровневое поле:
+Итог становится одним `Config.base_instructions`. В стандартном Responses wire
+mode это одно верхнеуровневое поле:
 
 ```json
 {
@@ -112,8 +115,16 @@ Workflow instructions.
 }
 ```
 
-Доработка не создаёт несколько `instructions`, не добавляет элементы в
+Доработка не создаёт несколько `instructions`, сама не добавляет элементы в
 `input` и не меняет `developer_instructions_files`.
+
+В Responses Lite upstream wire adapter намеренно не сериализует top-level
+`instructions` и добавляет единое `Config.base_instructions` одним developer
+item перед основным input. Это преобразование не зависит от числа исходных
+файлов и не является дополнительной логикой этой fork-доработки. Если
+одновременно заданы `developer_instructions_files`, их итоговое значение
+остаётся отдельной точной content-секцией в обычном агрегированном developer
+message: два слоя не объединяются и не заменяют друг друга.
 
 ### Совместимость и взаимоисключение
 
@@ -225,7 +236,7 @@ Runtime override сохраняет наивысший приоритет. Эт�
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "ordered loading, precedence, mutual exclusion и ошибки instruction files",
+      "purpose": "ordered loading, precedence, mutual exclusion, ошибки и отдельная Responses Lite delivery",
       "argv": ["just", "test", "-p", "codex-core", "model_instructions_files"]
     }
   ]

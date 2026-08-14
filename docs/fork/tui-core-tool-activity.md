@@ -49,8 +49,8 @@ thread и чтение текущего времени host. Но если эт�
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
-| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
-| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет, что `read_file detail` использует `environment_id` и path convention выбранного foreign `PathUri`, а не primary cwd текущего host |
+| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, исключение одноимённого extension tool и выбор `environment_id`/path convention для `read_file detail` |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает выполнение подходящих core function tools событиями `emit_turn_item_started` и `emit_turn_item_completed` без изменения model-visible `FunctionCallOutput` |
 | `codex-rs/core/src/tools/mod.rs` | Подключает модуль `core_tool_activity` |
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Экспортирует v2 `ThreadItem::CoreToolActivity`, wire enums, `id()` и conversion из core `TurnItem` |
@@ -259,6 +259,9 @@ function tools и не притворяется shell execution.
 - не показывать обобщенный `Tool read_file` как основной label;
 - добавить структурированное сопоставление выбранного core tool call с
   пользовательской activity;
+- считать отсутствующий, пустой и нормализованный upstream namespace `functions`
+  одним default namespace через `ToolName::is_default_namespace()`, но не
+  материализовать одноимённые tools из других namespaces как core activity;
 - принимать `read_file` как прямой `FunctionCall` с экспозицией
   `DirectModelOnly`; code-mode `exec` не должен владеть file-read lifecycle;
 - для `read_file` повторить компактность старого shell `Read`: короткие имена
@@ -296,6 +299,9 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    `Exploring/Explored -> Read/List/Search` в renderer-е истории exec.
 2. Проверить текущий путь обычных function tools:
    `FunctionCall` -> tool dispatch -> `FunctionCallOutput`.
+   Отдельно проверить, нормализует ли upstream обычные вызовы в namespace
+   `functions`: такая нормализация должна по-прежнему считаться default namespace
+   и не отключать activity mapping.
 3. Выбрать или перенести минимальную структурированную поверхность для выбранной
    core tool activity; текущая реализация использует `CoreToolActivity` item.
 4. Реализовать mapping только для `read_file`, `get_thread_info` и
@@ -335,7 +341,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "typed activity и безопасная detail-строка для трёх core tools",
+      "purpose": "typed activity, default namespace и безопасная detail-строка для трёх core tools",
       "argv": ["just", "test", "-p", "codex-core", "core_tool_activity"]
     },
     {
@@ -404,3 +410,6 @@ app-server v2 schema и wire enums.
 - `read_file detail` нельзя вычислять через primary cwd, если handler выбрал
   другую environment: host-native разбор foreign path может показать соседний
   сегмент вместо basename реально прочитанного файла.
+- Нельзя проверять default tool только как `namespace == None`: upstream может
+  заранее нормализовать его в `functions`. При этом любой иной namespace должен
+  оставаться исключённым, чтобы одноимённый extension tool не выглядел как core.

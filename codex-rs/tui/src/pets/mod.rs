@@ -9,9 +9,9 @@
 //! resolving a selected pet id, preparing frames for terminal image protocols,
 //! rendering the ambient sprite and picker preview, and preserving enough
 //! metadata for `/pets` to behave like a first-class configuration surface.
-//! It does not own config persistence or popup orchestration; callers must
-//! ensure a built-in asset exists before loading it and must persist the final
-//! selection only after the load succeeds.
+//! It prepares built-in assets before loading pets, but does not own config
+//! persistence or popup orchestration; callers must persist the final selection
+//! only after the load succeeds.
 
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -35,6 +35,10 @@ pub(crate) use image_protocol::kitty_delete_image as kitty_delete_image_command;
 
 use anyhow::Context;
 use anyhow::Result;
+use codex_http_client::RouteAwareClientPool;
+use codex_utils_absolute_path::AbsolutePathBuf;
+
+use crate::tui::FrameRequester;
 
 use crate::insert_history::TerminalHistoryImage;
 use crate::insert_history::TerminalHistoryImagePayload;
@@ -61,18 +65,39 @@ pub(crate) const DISABLED_PET_ID: &str = "disabled";
 /// Ensure that a selected built-in pet has a locally cached spritesheet.
 ///
 /// Custom pets are intentionally a no-op here because their source of truth is
-/// already local. Callers should invoke this before loading a built-in pet for
-/// preview or selection; skipping it would make first-use preview and
-/// persistence failures depend on deeper image-loading errors instead of the
-/// asset-fetch boundary.
-pub(crate) fn ensure_builtin_pack_for_pet(
+/// already local. Preparing this before loading keeps first-use preview and
+/// persistence failures at the asset-fetch boundary rather than surfacing as
+/// deeper image-loading errors.
+async fn ensure_builtin_pack_for_pet(
     pet_id: &str,
     codex_home: &std::path::Path,
+    http_client: &RouteAwareClientPool,
 ) -> Result<()> {
     if let Some(pet) = catalog::builtin_pet(pet_id) {
-        asset_pack::ensure_builtin_pet(codex_home, pet)?;
+        asset_pack::ensure_builtin_pet(codex_home, pet, http_client).await?;
     }
     Ok(())
+}
+
+/// Prepare a pet's built-in assets and load its synchronous state off the runtime.
+pub(crate) async fn load_pet_with_assets(
+    pet_id: String,
+    codex_home: AbsolutePathBuf,
+    frame_requester: FrameRequester,
+    animations_enabled: bool,
+    http_client: &RouteAwareClientPool,
+) -> Result<AmbientPet> {
+    ensure_builtin_pack_for_pet(&pet_id, &codex_home, http_client).await?;
+    tokio::task::spawn_blocking(move || {
+        AmbientPet::load(
+            Some(&pet_id),
+            &codex_home,
+            frame_requester,
+            animations_enabled,
+        )
+    })
+    .await
+    .context("join pet load task")?
 }
 
 #[derive(Debug)]

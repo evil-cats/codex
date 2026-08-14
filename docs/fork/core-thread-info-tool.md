@@ -255,8 +255,9 @@ tool текущего runtime, а не app-server API и не extension tool.
 3. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
    используется связанной runtime env доработкой.
 4. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
-5. Зарегистрировать `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с
-   `SystemTimeHandler` или ближайшим актуальным core utility block.
+5. Зарегистрировать `ThreadInfoHandler` через `registry.add(...)` в
+   `add_core_utility_tools(...)` рядом с `SystemTimeHandler` или ближайшим
+   актуальным core utility block.
 6. Перенести tests для spec и runtime-контрактов helper-а.
 7. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.

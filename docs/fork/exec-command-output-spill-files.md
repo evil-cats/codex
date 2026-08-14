@@ -430,3 +430,5 @@ Total output lines: <line_count>
   будет отдельно расширить readable roots или выбрать другой Codex-owned path.
 - Если `response_text()` вызовут несколько раз, он не должен повторно создавать
   или перезаписывать файл.
+- Spill-ветка получает retained bytes из уже собранного `collected` и не зависит
+  от прямого импорта `OutputBuffer` в `process_manager.rs`.

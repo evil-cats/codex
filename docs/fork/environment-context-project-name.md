@@ -58,7 +58,8 @@ TUI уже умеет показывать `project-name` в поверхнос�
    ```
 
 2. `RenderedEnvironments` переносит это поле в рендеримый фрагмент, чтобы полный
-   render и diff-render использовали один порядок вывода.
+   render и diff-render использовали один порядок вывода, не вытесняя upstream-
+   флаг `include_primary` для multi-environment представления.
 3. `EnvironmentsSnapshot` переносит это поле в сохраненный базовый снимок
    world-state, чтобы значение участвовало в текущей snapshot-модели diff.
 4. В отрендеренном `<environment_context>` при наличии значения появляется строка:
@@ -74,8 +75,9 @@ TUI уже умеет показывать `project-name` в поверхнос�
    окружения в `TurnEnvironmentSnapshot`. Для обычного запуска в этом checkout
    это дает `codex`; для тестового root `/repo` дает `repo`.
 7. `EnvironmentsState::from_turn_context_with_environments(...)` вычисляет
-   `workspace_roots` один раз через `environments.primary()` и использует один и
-   тот же срез roots для `project_name` и `FileSystemContext`.
+   основное окружение и `workspace_roots` один раз через
+   `environments.primary()` и использует один и тот же срез roots для
+   `project_name` и `FileSystemContext`.
 8. Для текущего diff по world-state значение сохраняется в `EnvironmentsSnapshot`.
    Для совместимого восстановления из `TurnContextItem` отдельное protocol-поле
    не добавляется: значение реконструируется из `workspace_roots`; если старый
@@ -153,7 +155,8 @@ project_name: Option<String>,
 
 То же поле добавить в `RenderedEnvironments` и `EnvironmentsSnapshot`, чтобы
 полный render, diff-render и сохраненный базовый снимок world-state использовали
-один набор значений.
+один набор значений. Сохранить upstream-поле `RenderedEnvironments::include_primary`:
+оно независимо управляет атрибутом `primary` при рендеринге нескольких окружений.
 
 ### 2. Вычислить имя проекта из workspace roots
 

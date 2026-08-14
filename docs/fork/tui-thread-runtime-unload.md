@@ -69,7 +69,7 @@ TUI переключается на другой primary thread
 | `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle |
 | `codex-rs/tui/src/app/event_dispatch.rs` | `/fork` и shutdown-first exit переведены на runtime unload там, где live-runtime больше не нужен |
 | `codex-rs/tui/src/app/safety_buffering.rs` | Safety-buffering retry сначала прикрепляет forked thread, затем выгружает прежние tracked runtimes |
-| `codex-rs/tui/src/app/side.rs` | Side conversation close переведен на runtime unload, а не только interrupt plus unsubscribe |
+| `codex-rs/tui/src/app/side.rs` | Явный и post-switch cleanup side conversation ожидают interrupt plus runtime unload и только затем удаляют локальное UI state |
 | `codex-rs/core/src/agent/control/legacy.rs` | Не менять без новой причины; `close_agent` уже является настоящим shutdown path |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
 | `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, `/fork` и выгрузки runtime при side close |
@@ -150,6 +150,9 @@ discard_side_thread
 
 Если unload завершился ошибкой, side conversation остается видимой или
 восстанавливается в UI, как текущий код уже делает при ошибке cleanup.
+Post-switch cleanup также не должен возвращаться к fire-and-forget
+`thread/unsubscribe`: он ожидает тот же unload path перед удалением локального
+state, даже если пользователь уже переключился на parent thread.
 
 ### Что остается только unsubscribe
 

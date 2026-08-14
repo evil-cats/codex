@@ -1,7 +1,8 @@
-//! Best-effort MCP prewarming.
+//! Выполняет best-effort предварительное обновление MCP runtime.
 //!
-//! A bounded channel coalesces refresh requests. The worker only prepares the
-//! newest thread state; exact model steps remain the correctness path.
+//! Ограниченный канал объединяет запросы refresh, а worker всегда готовит
+//! последнее состояние thread. Незавершённый startup откладывает публикацию,
+//! но не потребляет dirty-состояние и не блокирует model step.
 
 use super::*;
 
@@ -19,7 +20,7 @@ impl Session {
         let session = Arc::downgrade(self);
         let shutdown = self.mcp_prewarm_shutdown.clone();
         let worker = self.services.runtime_handle.spawn(async move {
-            loop {
+            'worker: loop {
                 let auth_changed = tokio::select! {
                     biased;
                     _ = shutdown.cancelled() => break,
@@ -42,10 +43,18 @@ impl Session {
                 if auth_changed {
                     session.mark_mcp_runtime_dirty();
                 }
-                tokio::select! {
-                    biased;
-                    _ = shutdown.cancelled() => break,
-                    _ = session.refresh_mcp_if_dirty() => {},
+
+                while session.mcp_refresh.is_pending() {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => break 'worker,
+                        _ = session.services.mcp_runtime.wait_for_current_startup() => {},
+                    }
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => break 'worker,
+                        _ = session.refresh_mcp_if_dirty() => {},
+                    }
                 }
             }
         });

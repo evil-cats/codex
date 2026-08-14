@@ -91,7 +91,7 @@ pub(crate) async fn build_prompt_input_from_session(
         .await?;
     let world_state_delivery = sess
         .record_context_updates_and_set_reference_context_item(step_context.as_ref())
-        .await;
+        .await?;
 
     if !input.is_empty() {
         let response_item = sess.response_item_from_user_input(input);

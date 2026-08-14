@@ -32,6 +32,7 @@ use crossterm::style::SetColors;
 use crossterm::style::SetForegroundColor;
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
+use ratatui::backend::IntoCrossterm;
 use ratatui::layout::Size;
 use ratatui::prelude::Backend;
 use ratatui::style::Color;
@@ -95,7 +96,7 @@ pub fn insert_history_lines<B>(
     lines: Vec<Line>,
 ) -> io::Result<()>
 where
-    B: Backend + Write,
+    B: Backend<Error = io::Error> + Write,
 {
     insert_history_lines_with_wrap_policy(terminal, lines, HistoryLineWrapPolicy::PreWrap)
 }
@@ -106,7 +107,7 @@ pub fn insert_history_lines_with_wrap_policy<B>(
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
-    B: Backend + Write,
+    B: Backend<Error = io::Error> + Write,
 {
     let items = plain_hyperlink_lines(lines.iter().map(line_to_static).collect())
         .into_iter()
@@ -121,7 +122,7 @@ pub fn insert_history_items_with_wrap_policy<B>(
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
-    B: Backend + Write,
+    B: Backend<Error = io::Error> + Write,
 {
     insert_history_items_with_mode_and_wrap_policy(
         terminal,
@@ -139,7 +140,7 @@ pub(crate) fn insert_history_lines_with_mode_and_wrap_policy<B>(
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
-    B: Backend + Write,
+    B: Backend<Error = io::Error> + Write,
 {
     let items = plain_hyperlink_lines(lines.iter().map(line_to_static).collect())
         .into_iter()
@@ -155,7 +156,7 @@ pub(crate) fn insert_history_items_with_mode_and_wrap_policy<B>(
     wrap_policy: HistoryLineWrapPolicy,
 ) -> io::Result<()>
 where
-    B: Backend + Write,
+    B: Backend<Error = io::Error> + Write,
 {
     let screen_size = terminal.backend().size().unwrap_or(Size::new(0, 0));
 
@@ -405,12 +406,12 @@ fn write_history_line<W: Write>(
             line.line
                 .style
                 .fg
-                .map(std::convert::Into::into)
+                .map(IntoCrossterm::into_crossterm)
                 .unwrap_or(CColor::Reset),
             line.line
                 .style
                 .bg
-                .map(std::convert::Into::into)
+                .map(IntoCrossterm::into_crossterm)
                 .unwrap_or(CColor::Reset)
         ))
     )?;
@@ -612,7 +613,10 @@ where
         if next_fg != fg || next_bg != bg {
             queue!(
                 writer,
-                SetColors(Colors::new(next_fg.into(), next_bg.into()))
+                SetColors(Colors::new(
+                    next_fg.into_crossterm(),
+                    next_bg.into_crossterm()
+                ))
             )?;
             fg = next_fg;
             bg = next_bg;

@@ -9,6 +9,7 @@ use codex_protocol::items::CoreToolActivityItem;
 use codex_protocol::items::CoreToolActivityKind;
 use codex_protocol::items::CoreToolActivityStatus;
 use codex_protocol::items::TurnItem;
+use codex_tools::ToolName;
 use serde_json::Value as JsonValue;
 use std::path::Path;
 use std::time::Instant;
@@ -55,31 +56,19 @@ fn core_tool_activity_item(
     invocation: &ToolInvocation,
     status: CoreToolActivityStatus,
 ) -> Option<CoreToolActivityItem> {
-    if invocation.tool_name.namespace.is_some() {
-        return None;
-    }
     let ToolPayload::Function { arguments } = &invocation.payload else {
         return None;
     };
     let arguments_json = parse_arguments_json(arguments);
-    let (kind, detail) = match invocation.tool_name.name.as_str() {
-        READ_FILE_TOOL_NAME => (
-            CoreToolActivityKind::File,
-            read_file_detail(
-                &arguments_json,
-                &invocation.step_context.environments,
-                invocation.turn.config.cwd.as_path(),
-            ),
+    let kind = core_tool_activity_kind(&invocation.tool_name)?;
+    let detail = match kind {
+        CoreToolActivityKind::File => read_file_detail(
+            &arguments_json,
+            &invocation.step_context.environments,
+            invocation.turn.config.cwd.as_path(),
         ),
-        GET_THREAD_INFO_TOOL_NAME => (
-            CoreToolActivityKind::ThreadInfo,
-            thread_info_detail(&arguments_json),
-        ),
-        GET_SYSTEM_TIME_TOOL_NAME => (
-            CoreToolActivityKind::SystemTime,
-            system_time_detail(&arguments_json),
-        ),
-        _ => return None,
+        CoreToolActivityKind::ThreadInfo => thread_info_detail(&arguments_json),
+        CoreToolActivityKind::SystemTime => system_time_detail(&arguments_json),
     };
 
     Some(CoreToolActivityItem {
@@ -92,6 +81,18 @@ fn core_tool_activity_item(
         error: None,
         duration: None,
     })
+}
+
+fn core_tool_activity_kind(tool_name: &ToolName) -> Option<CoreToolActivityKind> {
+    if !tool_name.is_default_namespace() {
+        return None;
+    }
+    match tool_name.name.as_str() {
+        READ_FILE_TOOL_NAME => Some(CoreToolActivityKind::File),
+        GET_THREAD_INFO_TOOL_NAME => Some(CoreToolActivityKind::ThreadInfo),
+        GET_SYSTEM_TIME_TOOL_NAME => Some(CoreToolActivityKind::SystemTime),
+        _ => None,
+    }
 }
 
 fn parse_arguments_json(arguments: &str) -> JsonValue {

@@ -63,6 +63,7 @@ Fallback остается рядом:
 | Файл | Роль |
 | --- | --- |
 | `codex-rs/tui/src/app/resize_reflow.rs` | `App::prepare_history_insert_items`, rows/config/protocol resolution |
+| `codex-rs/tui/src/app/resize_reflow_tests.rs` | Проверки upstream-контрактов ограничения строк, уведомления о пагинации и initial replay для типизированных display items |
 | `codex-rs/tui/src/insert_history.rs` | `HistoryInsertItem::Line(HyperlinkLine)`, `HistoryInsertItem::Image`, подсчёт строк, граница записи в терминал |
 | `codex-rs/tui/src/tui.rs` | `insert_history_items_with_wrap_policy` boundary |
 | `codex-rs/tui/src/custom_terminal.rs` | Kitty history image tracking and cleanup |
@@ -110,6 +111,9 @@ Fallback остается рядом:
    основному типу строк. `HistoryCellDisplayItem::line()` допустим только для
    потребителей обычных видимых строк и намеренно отбрасывает метаданные
    ссылок.
+10. Уведомление upstream о неполной или пагинированной истории терминала
+    добавляется как `HistoryCellDisplayItem::Line`; оно не должно понижать
+    соседние маркеры изображений до `HyperlinkLine` или обычного текста.
 
 ### Source contract
 
@@ -243,6 +247,12 @@ Resize reflow, initial replay, thread-switch tail replay и overlay-deferred
 history должны работать на `HistoryCellDisplayItem`, а не терять image marker
 при ранней конвертации в `Line`.
 
+При совмещении с ограничением строк и пагинацией upstream нужно сохранять
+`InitialHistoryReplayBuffer.retained_items`, `was_truncated`, уведомление о
+неполном transcript и запрос дозагрузки старой истории. Уведомление вставляется
+в типизированную последовательность элементов до `prepare_history_insert_items`,
+поэтому следующие за ним маркеры `LocalImage` остаются типизированными.
+
 `ChatWidget` replay должен восстанавливать `ThreadItem::ImageView` через тот же
 `on_view_image_tool_call` path.
 
@@ -303,6 +313,10 @@ rows. Cursor movement внутри одной строки недостаточ�
 - `InitialHistoryReplayBuffer`, `ReflowRenderResult` и terminal insertion
   хранят `items`, а не пониженные `lines`; обычные строки остаются
   `HyperlinkLine`, изображения — отдельным `HistoryInsertItem::Image`;
+- `TerminalWidth` из текущего upstream, уведомление об усечении и дозагрузка
+  пагинированной истории сохраняются вокруг типизированных `items`, а
+  `resize_reflow_tests.rs` проверяет тот же контракт через
+  `items`/`retained_items`;
 - `CustomTerminal` инициализирует и очищает Kitty bindings вместе с остальным
   состоянием истории;
 - конфликты соседних lifecycle features не включаются в эту карточку только из-за

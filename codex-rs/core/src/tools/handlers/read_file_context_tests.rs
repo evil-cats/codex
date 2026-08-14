@@ -54,6 +54,7 @@ fn read_call(call_id: &str, args: &ReadFileArgs) -> ResponseItem {
         namespace: None,
         arguments: serialized_args(args),
         call_id: call_id.to_string(),
+        encrypted_function_args: None,
         internal_chat_message_metadata_passthrough: None,
     }
 }

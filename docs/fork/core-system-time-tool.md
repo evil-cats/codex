@@ -309,7 +309,7 @@ Tool будет часто вызываться ради одной строки
 5. Экспортировать `SystemTimeHandler` из `handlers/mod.rs`.
 6. Добавить `use crate::tools::handlers::SystemTimeHandler;` в
    `codex-rs/core/src/tools/spec_plan.rs`.
-7. Добавить `planned_tools.add(SystemTimeHandler);` в
+7. Добавить `registry.add(SystemTimeHandler);` в
    `add_core_utility_tools(...)` сразу после `PlanHandler`, чтобы tool входил в
    базовый набор core utility tools.
 8. Обновить `codex-rs/core/tests/suite/prompt_caching.rs`: добавить

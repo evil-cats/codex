@@ -240,8 +240,10 @@ impl App {
                 .side_threads
                 .values()
                 .any(|state| state.parent_thread_id == active_thread_id)
-                && let Some(binding) =
-                    crate::keymap::primary_binding(&self.keymap.app.toggle_side_conversation)
+                && let Some(binding) = self.keymap.primary_hint(
+                    crate::keymap::KeymapContext::Global,
+                    "toggle_side_conversation",
+                )
             {
                 self.chat_widget
                     .set_side_conversation_context_label(Some(format!(
@@ -269,9 +271,10 @@ impl App {
         if let Some(parent_status) = parent_status {
             label_parts.push(parent_status.label(parent_is_main).to_string());
         }
-        if let Some(binding) =
-            crate::keymap::primary_binding(&self.keymap.app.toggle_side_conversation)
-        {
+        if let Some(binding) = self.keymap.primary_hint(
+            crate::keymap::KeymapContext::Global,
+            "toggle_side_conversation",
+        ) {
             label_parts.push(format!("{} to switch", binding.display_label()));
         }
         label_parts.push("ctrl + c to close".to_string());
@@ -421,6 +424,7 @@ impl App {
             self.chat_widget.add_error_message(message);
             return false;
         }
+        self.abandoned_side_threads.insert(thread_id);
         self.discard_thread_local_state(thread_id).await;
         true
     }
@@ -578,17 +582,9 @@ impl App {
         if self.active_thread_id == Some(thread_id)
             && let Some(side_thread_id) = side_thread_to_discard
         {
-            if self.discard_side_thread(app_server, side_thread_id).await {
-                self.surface_pending_inactive_thread_interactive_requests()
-                    .await?;
-            } else {
-                self.keep_side_thread_visible_after_cleanup_failure(
-                    tui,
-                    app_server,
-                    side_thread_id,
-                )
-                .await;
-            }
+            self.discard_side_thread(app_server, side_thread_id).await;
+            self.surface_pending_inactive_thread_interactive_requests()
+                .await?;
         }
         Ok(())
     }

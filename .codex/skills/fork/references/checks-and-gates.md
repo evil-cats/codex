@@ -45,11 +45,19 @@ commands.
 решением пользователя о возобновлении миграции. Подкоманды `fork migration`
 требуют явный `--version`.
 
-`fork install` по умолчанию устанавливает
+`fork install` по умолчанию устанавливает пару release-fast-артефактов:
 `codex-rs/target/release-fast/codex` в
-`${HOME}/.local/bin/codex-hermione`. Если нужно явно переопределить источник
-или цель, используй `--source PATH` и `--target PATH`; это остается
-skill-owned установкой, а не ручным копированием бинарника.
+`${HOME}/.local/bin/codex-hermione` и соседний `codex-code-mode-host` под его
+каноническим именем в тот же каталог. `--source PATH` и `--target PATH`
+переопределяют основной binary; source и target для host выводятся как соседние
+пути автоматически. Команда до первой замены проверяет оба временных артефакта,
+затем заменяет host и последним основной binary. Это остается skill-owned
+установкой, а не ручным копированием файлов.
+
+`fork build-fast` перед внутренней Cargo-сборкой определяет native rustc target
+и через upstream `scripts/codex_package/v8.py` получает согласованные
+`RUSTY_V8_ARCHIVE` и `RUSTY_V8_SRC_BINDING_PATH`. Fork skill не дублирует URL,
+checksums и cache policy V8 artifacts.
 
 `fork fix` запускает repo lint/fix recipe для всего workspace. Повторяемый
 `--package CRATE` ограничивает запуск выбранными crates и передает каждую из них
@@ -84,8 +92,8 @@ command является workflow-командой; `just`/`cargo` argv внут
 | Артефакты config/app-server schema | `fork generators` | Обновляет schema artifacts |
 | Тесты карточки | `fork tests --mode cards --card CARD` | argv из блока `fork-tests.v1` |
 | Полный регрессионный проход | `fork tests --mode full` | Полный набор тестов и pending snapshots |
-| Быстрая release-сборка | `fork build-fast` | Fast build и проверка бинарника |
-| Установка fork-бинарника | `fork install` | Атомарная установка release-fast бинарника |
+| Быстрая release-сборка | `fork build-fast` | Собирает и проверяет оба runtime binaries |
+| Установка fork-бинарников | `fork install` | Проверяет и заменяет пару binaries |
 
 Если `AGENTS.md` требует шаг, которого нет в этой таблице или другом
 skill-owned command, это пробел workflow. Сначала обнови skill-owned command или
@@ -110,8 +118,8 @@ Rust workflow:
 | `fork tests --mode cards` | Card-level запуск с предусловиями и логами |
 | `fork preflight` | Составной gate для skill/files/cards/JSON map/untracked/conflicts/markdown |
 | `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
-| `fork build-fast` | Fork build gate с проверкой бинарника и версии |
-| `fork install` | Атомарная установка fork-бинарника в `${HOME}/.local/bin/codex-hermione` |
+| `fork build-fast` | Fork build gate с проверкой основного binary и Code Mode host |
+| `fork install` | Проверяет и устанавливает runtime-пару |
 
 ## Skill-owned scripts и логи
 

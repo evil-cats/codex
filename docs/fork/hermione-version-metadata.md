@@ -10,28 +10,28 @@ updated: 2026-08-13
 ## Обзор
 
 Эта карточка фиксирует fork-доработку, которая маркирует CLI и TUI builds как
-Hermione через Cargo build metadata: `0.146.0+hermione`.
+Hermione через Cargo build metadata: `0.147.0+hermione`.
 
 Карточка также фиксирует update-check изменения: сравнение upstream versions
-должно игнорировать build metadata после `+`, чтобы `0.146.0+hermione`
-сравнивался как `0.146.0`.
+должно игнорировать build metadata после `+`, чтобы `0.147.0+hermione`
+сравнивался как `0.147.0`.
 
 ## Зачем это нужно
 
 Hermione fork должен быть отличим от upstream binary при диагностике,
 `--version`, install workflow и локальном сравнении сборок. При этом update
 logic должен продолжать понимать, что base semver остается upstream-compatible:
-`0.146.0+hermione` не должен ломать сравнение с `rust-v0.147.0` или
-`rust-v0.146.0`.
+`0.147.0+hermione` не должен ломать сравнение с `rust-v0.148.0` или
+`rust-v0.147.0`.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/Cargo.toml` | Держит `workspace.package.version = "0.146.0"` без Hermione metadata |
-| `codex-rs/cli/Cargo.toml` | Задаёт explicit `version = "0.146.0+hermione"` для `codex-cli` |
-| `codex-rs/tui/Cargo.toml` | Задаёт explicit `version = "0.146.0+hermione"` для `codex-tui` |
-| `codex-rs/Cargo.lock` | Фиксирует `codex-cli` и `codex-tui` как `0.146.0+hermione`, остальные package-блоки workspace без `source` как `0.146.0` |
+| `codex-rs/Cargo.toml` | Держит `workspace.package.version = "0.147.0"` без Hermione metadata |
+| `codex-rs/cli/Cargo.toml` | Задаёт explicit `version = "0.147.0+hermione"` для `codex-cli` |
+| `codex-rs/tui/Cargo.toml` | Задаёт explicit `version = "0.147.0+hermione"` для `codex-tui` |
+| `codex-rs/Cargo.lock` | Фиксирует `codex-cli` и `codex-tui` как `0.147.0+hermione`, остальные package-блоки workspace без `source` как `0.147.0` |
 | `codex-rs/cli/src/doctor/updates.rs` | Игнорирует build metadata при CLI doctor update comparison |
 | `codex-rs/tui/src/update_versions.rs` | Игнорирует build metadata при TUI update comparison |
 | `codex-rs/tui/src/version.rs` | Использует `env!("CARGO_PKG_VERSION")` вне tests и stable test value |
@@ -44,17 +44,17 @@ logic должен продолжать понимать, что base semver о�
    Hermione metadata:
 
    ```toml
-   version = "0.146.0+hermione"
+   version = "0.147.0+hermione"
    ```
 
 4. При следующем upstream release нужно менять base part:
-   - `0.146.0+hermione` -> `X.Y.Z+hermione`, если base tag `rust-vX.Y.Z`.
+   - `0.147.0+hermione` -> `X.Y.Z+hermione`, если base tag `rust-vX.Y.Z`.
 5. `workspace.package.version` должен оставаться обычной upstream base version
-   без суффикса `+hermione`, сейчас `0.146.0`.
-6. `Cargo.lock` должен отражать явно заданные версии `0.146.0+hermione` для
+   без суффикса `+hermione`, сейчас `0.147.0`.
+6. `Cargo.lock` должен отражать явно заданные версии `0.147.0+hermione` для
    `codex-cli` и `codex-tui`; остальные package-блоки workspace без `source`,
    наследующие `workspace.package.version`, должны иметь обычную версию
-   `0.146.0`.
+   `0.147.0`.
 7. Version comparison для update checks должен отрезать suffix после `+` перед
    parsing semver triplet.
 8. `0.133.0+hermione` должен парситься как `(0, 133, 0)`.
@@ -82,7 +82,7 @@ update parsing удаляет metadata только на границе срав
 ```toml
 [package]
 name = "codex-cli"
-version = "0.146.0+hermione"
+version = "0.147.0+hermione"
 ```
 
 В `codex-rs/tui/Cargo.toml`:
@@ -90,7 +90,7 @@ version = "0.146.0+hermione"
 ```toml
 [package]
 name = "codex-tui"
-version = "0.146.0+hermione"
+version = "0.147.0+hermione"
 ```
 
 Не оставлять `version.workspace = true` для этих двух crates.
@@ -102,21 +102,21 @@ version = "0.146.0+hermione"
 
 ```toml
 name = "codex-cli"
-version = "0.146.0+hermione"
+version = "0.147.0+hermione"
 ```
 
 и:
 
 ```toml
 name = "codex-tui"
-version = "0.146.0+hermione"
+version = "0.147.0+hermione"
 ```
 
 `Cargo.lock` должен различать два вида package-блоков workspace без поля
 `source`:
 
 - `codex-cli` и `codex-tui` — два пакета с явно заданной версией
-  `0.146.0+hermione`;
+  `0.147.0+hermione`;
 - остальные пакеты workspace, наследующие `workspace.package.version`, — с
   обычной base version без `+hermione`.
 
@@ -197,7 +197,7 @@ pub const CODEX_CLI_VERSION: &str = "0.0.0";
 ### Ограничения
 
 - Build metadata `+hermione` не должен попадать в upstream tag parsing.
-  Upstream latest tags имеют вид `rust-v0.146.0`; `extract_version_from_latest_tag`
+  Upstream latest tags имеют вид `rust-v0.147.0`; `extract_version_from_latest_tag`
   по-прежнему отрезает `rust-v`.
 - Не менять workspace package version глобально ради Hermione. Marking нужен
   именно для shipped CLI/TUI crates.

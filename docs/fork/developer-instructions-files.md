@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-08-13
+updated: 2026-08-14
 ---
 
 # Developer instructions files
@@ -85,6 +85,11 @@ Inline `developer_instructions` неудобен для больших profile-d
 9. Итоговое `Config.developer_instructions` передаётся в `TurnContext` и при
    построении начального контекста становится секцией model-visible сообщения с
    ролью `developer`.
+10. Responses Lite сохраняет эту секцию отдельным точным `input_text` внутри
+    обычного агрегированного developer message. Если базовые инструкции
+    одновременно собраны из `model_instructions_files`, Lite adapter добавляет
+    их собственным developer item перед основным input; два текста не сливаются,
+    не заменяют и не дублируют друг друга.
 
 ## Архитектурное решение
 
@@ -190,7 +195,7 @@ paths и default `[]`.
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "ordered merge, override precedence, warnings, errors и developer-message delivery",
+      "purpose": "ordered merge, override precedence, warnings, errors и отдельная Responses Lite delivery",
       "argv": ["just", "test", "-p", "codex-core", "developer_instructions"]
     }
   ]

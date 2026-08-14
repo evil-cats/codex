@@ -170,7 +170,8 @@ async fn record_initial_history_restores_world_state_baseline() {
     let step_context = StepContext::for_test(Arc::clone(&turn_context));
     session
         .record_context_updates_and_set_reference_context_item(&step_context)
-        .await;
+        .await
+        .expect("world state should build");
 
     assert_eq!(
         session.clone_history().await.raw_items(),
@@ -190,7 +191,7 @@ async fn record_initial_history_resumed_bare_turn_context_does_not_hydrate_previ
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -237,7 +238,7 @@ async fn record_initial_history_resumed_hydrates_previous_turn_settings_from_lif
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -1133,6 +1134,7 @@ async fn reconstruct_history_marks_read_file_calls_from_compaction_replacement()
         namespace: None,
         arguments: json!({"path": "example.txt"}).to_string(),
         call_id: call_id.to_string(),
+        encrypted_function_args: None,
         internal_chat_message_metadata_passthrough: None,
     };
     let rollout_items = vec![
@@ -1175,6 +1177,7 @@ async fn reconstruct_history_preserves_read_file_output_above_model_default_limi
         namespace: None,
         arguments: json!({"path": "example.txt"}).to_string(),
         call_id: call_id.to_string(),
+        encrypted_function_args: None,
         internal_chat_message_metadata_passthrough: None,
     };
     let output = ResponseItem::FunctionCallOutput {
@@ -1376,7 +1379,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -1465,7 +1468,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
             workspace_roots: None,
             current_date: turn_context.current_date.clone(),
             timezone: turn_context.timezone.clone(),
-            approval_policy: turn_context.approval_policy.value(),
+            approval_policy: turn_context.approval_policy(),
             approvals_reviewer: None,
             sandbox_policy: turn_context.sandbox_policy(),
             permission_profile: None,
@@ -1497,7 +1500,7 @@ async fn record_initial_history_resumed_aborted_turn_without_id_clears_active_tu
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -1627,7 +1630,7 @@ async fn record_initial_history_resumed_unmatched_abort_preserves_active_turn_fo
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -1754,7 +1757,7 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clea
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,
@@ -1924,7 +1927,7 @@ async fn record_initial_history_resumed_replaced_incomplete_compacted_turn_clear
         workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
-        approval_policy: turn_context.approval_policy.value(),
+        approval_policy: turn_context.approval_policy(),
         approvals_reviewer: None,
         sandbox_policy: turn_context.sandbox_policy(),
         permission_profile: None,

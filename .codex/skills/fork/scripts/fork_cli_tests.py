@@ -8,6 +8,7 @@
 """
 
 import importlib.util
+import os
 import sys
 import tempfile
 import textwrap
@@ -23,6 +24,40 @@ assert SPEC is not None
 fork_cli = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(fork_cli)
+
+
+class RecordingLogSession:
+    instances = []
+
+    def __init__(self, **_kwargs) -> None:
+        self.steps = []
+        self.output = []
+        self.ok_extra = None
+        RecordingLogSession.instances.append(self)
+
+    def write(self, text: str) -> None:
+        self.output.append(text)
+
+    def check_command(self, _name: str) -> str:
+        return "file"
+
+    def run_step(self, label: str, argv: list[str]) -> int:
+        self.steps.append((label, argv))
+        return 0
+
+    def fail(
+        self,
+        *,
+        label: str,
+        exit_code: int = 1,
+        argv: list[str] | tuple[str, ...] | None = None,
+    ) -> int:
+        self.output.append(f"failed: {label}: {argv}")
+        return exit_code
+
+    def ok(self, extra: list[str] | None = None) -> int:
+        self.ok_extra = extra
+        return 0
 
 
 FORK_TESTS_BLOCK = textwrap.dedent(
@@ -52,7 +87,10 @@ FORK_TESTS_BLOCK = textwrap.dedent(
 )
 
 
-class InstallPathTests(unittest.TestCase):
+class ReleaseFastWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        RecordingLogSession.instances.clear()
+
     def test_default_install_target_uses_home_local_bin(self) -> None:
         self.assertEqual(
             fork_cli.default_install_target({"HOME": "/home/slader"}),
@@ -69,6 +107,18 @@ class InstallPathTests(unittest.TestCase):
             Path("/home/slader/.local/bin/codex-hermione.new"),
         )
 
+    def test_rustc_host_target_reads_verbose_version_output(self) -> None:
+        self.assertEqual(
+            fork_cli.rustc_host_target(
+                "rustc 1.89.0\nbinary: rustc\nhost: x86_64-unknown-linux-gnu\n"
+            ),
+            "x86_64-unknown-linux-gnu",
+        )
+
+    def test_rustc_host_target_requires_host_line(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not contain a host target"):
+            fork_cli.rustc_host_target("rustc 1.89.0\nbinary: rustc\n")
+
     def test_install_parser_accepts_source_and_target(self) -> None:
         parser = fork_cli.build_parser()
         args = parser.parse_args(
@@ -84,6 +134,132 @@ class InstallPathTests(unittest.TestCase):
         self.assertEqual(args.command, "install")
         self.assertEqual(args.source, "codex-rs/target/release-fast/codex")
         self.assertEqual(args.target, "/tmp/codex-hermione")
+
+    def test_release_fast_artifacts_include_main_and_code_mode_host(self) -> None:
+        repo_root = Path("/repo")
+
+        self.assertEqual(
+            fork_cli.release_fast_binary_artifacts(repo_root, "posix"),
+            (
+                fork_cli.BinaryArtifact(
+                    contract=fork_cli.RELEASE_FAST_BINARY_CONTRACTS[0],
+                    path=Path("/repo/codex-rs/target/release-fast/codex"),
+                ),
+                fork_cli.BinaryArtifact(
+                    contract=fork_cli.RELEASE_FAST_BINARY_CONTRACTS[1],
+                    path=Path(
+                        "/repo/codex-rs/target/release-fast/codex-code-mode-host"
+                    ),
+                ),
+            ),
+        )
+
+    def test_install_artifacts_derive_code_mode_host_siblings(self) -> None:
+        self.assertEqual(
+            fork_cli.install_binary_artifacts(
+                Path("/build/codex"),
+                Path("/bin/codex-hermione"),
+                "posix",
+            ),
+            (
+                fork_cli.InstallArtifact(
+                    contract=fork_cli.RELEASE_FAST_BINARY_CONTRACTS[0],
+                    source=Path("/build/codex"),
+                    target=Path("/bin/codex-hermione"),
+                ),
+                fork_cli.InstallArtifact(
+                    contract=fork_cli.RELEASE_FAST_BINARY_CONTRACTS[1],
+                    source=Path("/build/codex-code-mode-host"),
+                    target=Path("/bin/codex-code-mode-host"),
+                ),
+            ),
+        )
+
+    def test_install_stages_both_artifacts_and_replaces_main_last(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            source_dir = repo_root / "build"
+            source_dir.mkdir()
+            main_source = source_dir / "codex"
+            host_source = source_dir / "codex-code-mode-host"
+            main_source.write_text("main", encoding="utf-8")
+            host_source.write_text("host", encoding="utf-8")
+            main_source.chmod(0o755)
+            host_source.chmod(0o755)
+            main_target = repo_root / "install/codex-hermione"
+            host_target = main_target.with_name("codex-code-mode-host")
+            replacements = []
+            real_replace = os.replace
+
+            def recording_replace(source: Path, target: Path) -> None:
+                replacements.append((Path(source), Path(target)))
+                real_replace(source, target)
+
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--source",
+                    str(main_source),
+                    "--target",
+                    str(main_target),
+                ]
+            )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli.os, "replace", side_effect=recording_replace
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(main_target.read_text(encoding="utf-8"), "main")
+            self.assertEqual(host_target.read_text(encoding="utf-8"), "host")
+            self.assertEqual(
+                [target for _source, target in replacements],
+                [host_target, main_target],
+            )
+            self.assertIn(
+                (
+                    "Code Mode host source binary probe",
+                    [str(host_source), "--help"],
+                ),
+                RecordingLogSession.instances[0].steps,
+            )
+
+    def test_install_requires_host_before_replacing_main(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            main_source = repo_root / "codex"
+            main_source.write_text("new main", encoding="utf-8")
+            main_source.chmod(0o755)
+            main_target = repo_root / "install/codex-hermione"
+            main_target.parent.mkdir()
+            main_target.write_text("old main", encoding="utf-8")
+            main_target.chmod(0o755)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--source",
+                    str(main_source),
+                    "--target",
+                    str(main_target),
+                ]
+            )
+
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ):
+                result = fork_cli.cmd_install(args)
+
+            self.assertEqual(result, 1)
+            self.assertEqual(main_target.read_text(encoding="utf-8"), "old main")
 
 
 class FixCommandTests(unittest.TestCase):

@@ -56,12 +56,17 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/ext/extension-api/src/capabilities/events.rs` | Даёт extension host-owned канал уведомления об очищенной goal |
 | `codex-rs/core/src/compact.rs` | Не переносит extension context в local summary как пользовательское сообщение |
 | `codex-rs/core/src/compact_remote.rs` | Удаляет extension context из remote replacement перед актуальным initial context |
+| `codex-rs/core/src/compact_remote_v2.rs` | Использует общий replacement processor для remote V2 compaction |
+| `codex-rs/core/src/compact_remote_history.rs` | Сохраняет source item вместе с attached notice при фильтрации remote replacement |
+| `codex-rs/core/src/compact_token_budget.rs` | Устанавливает свежий WorldState как новое окно без summary request |
 | `codex-rs/core/src/context/world_state/mod.rs` | Разделяет сохраняемые и одноразовые WorldState fragments |
 | `codex-rs/core/src/context_manager/history.rs` | Продвигает snapshot, не записывая одноразовый fragment в history |
+| `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет разделение snapshot, history и одноразовой доставки на уровне context manager |
 | `codex-rs/core/src/prompt_debug.rs` | Показывает одноразовый fragment в том же prompt, который получает sampling |
 | `codex-rs/core/src/session/mod.rs` | Возвращает одноразовые WorldState items вызывающему sampling path |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Не восстанавливает extension prompt state как user message в legacy replacement path |
 | `codex-rs/core/src/session/turn.rs` | Добавляет одноразовые items только в ближайший Responses request |
+| `codex-rs/core/src/session/world_state.rs` | Строит актуальный extension-owned WorldState для sampling и replacement history |
 | `codex-rs/app-server/src/extensions.rs` | Преобразует tool-side clear в `thread/goal/cleared` |
 | `codex-rs/ext/goal/tests/goal_extension_backend.rs` | Проверяет немедленное удаление goal и clear event |
 | `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет active, never-active и terminal goal context до и после compaction |
@@ -170,6 +175,13 @@ step.
 - thread, в котором goal никогда не создавалась, не получает
   `<thread_goal_context>` после local или `TokenBudget` compaction.
 
+Если tool call меняет goal в том же sampling step, который достигает порога
+compaction, runtime повторно строит `WorldState` перед заменой history. Full
+replacement получает уже новое состояние, а одноразовый terminal fragment
+остаётся отложенным до следующего обычного sampling. Поэтому создание goal не
+дублирует active context, а terminal transition не оставляет старый active
+fragment внутри нового окна.
+
 Первый post-compaction model request обязан содержать objective дословно после
 XML escaping, даже если compaction output намеренно не содержит goal.
 
@@ -257,14 +269,20 @@ markers внутри extension. Local, remote и legacy rollout-reconstruction p
    contributors в новом upstream.
 2. Подтвердить, что compaction по-прежнему восстанавливает extension-owned
    `WorldState` через общий initial-context path.
-3. Добавить стабильную секцию active goal рядом с runtime goal extension, а не
+3. Если remote history группирует source item с attached notices, фильтровать
+   extension context на source group до `flat_map`, сохраняя notices только у
+   оставшихся source items.
+4. Добавить стабильную секцию active goal рядом с runtime goal extension, а не
    в общий `codex-core`.
-4. Сохранить role `user`, XML escaping и ограничение размера objective.
-5. Разделить устойчивый active-goal context и динамический continuation
+5. Сохранить role `user`, XML escaping и ограничение размера objective.
+6. Разделить устойчивый active-goal context и динамический continuation
    steering, не допуская двойного objective.
-6. Проверить local summary compaction и context-window reset, при которых
+7. Проверить local summary compaction и context-window reset, при которых
    compaction output не содержит objective.
-7. Если upstream изменил владельца goal prompts, перенести шаблоны к актуальному
+8. Проверить terminal transition в model step, который сам запускает
+   compaction: replacement не содержит старую active goal, а следующий sampling
+   получает ровно один clearing fragment.
+9. Если upstream изменил владельца goal prompts, перенести шаблоны к актуальному
    production-owner и удалить либо синхронизировать ставшие активными legacy
    копии.
 
@@ -311,6 +329,9 @@ markers внутри extension. Local, remote и legacy rollout-reconstruction p
   continuation item: существующий objective cap плюс статический шаблон.
 - Стабильный section ID и markers становятся rollout/model-context contract и
   не должны переименовываться без migration-разбора retained history.
+- Post-sampling rebuild перед compaction обязан использовать тот же
+  request-scoped `StepContext`: повторный захват окружения в середине шага может
+  рассинхронизировать advertised tools, context и фактический tool execution.
 - Legacy goal helpers в `codex-prompts` не изменяются, пока у них нет
   production-callers. Появление такого caller требует синхронизации или
   удаления дублирования.

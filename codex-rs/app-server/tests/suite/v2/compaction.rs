@@ -800,7 +800,19 @@ async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) ->
                 "update_goal",
                 &serde_json::json!({ "status": action.status() }).to_string(),
             ),
-            responses::ev_completed_with_tokens("terminal-goal", /*total_tokens*/ 100),
+            responses::ev_completed_with_tokens("terminal-goal", /*total_tokens*/ 330_000),
+        ]),
+    )
+    .await;
+    let compact = responses::mount_sse_once(
+        &server,
+        responses::sse(vec![
+            responses::ev_response_created("compact-terminal-goal"),
+            responses::ev_assistant_message(
+                "compact-terminal-summary",
+                "A deliberately terminal-goal-free compact summary.",
+            ),
+            responses::ev_completed_with_tokens("compact-terminal-goal", /*total_tokens*/ 200),
         ]),
     )
     .await;
@@ -819,22 +831,7 @@ async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) ->
                 })
                 .to_string(),
             ),
-            responses::ev_completed_with_tokens(
-                "clearing-follow-up",
-                /*total_tokens*/ 330_000,
-            ),
-        ]),
-    )
-    .await;
-    let compact = responses::mount_sse_once(
-        &server,
-        responses::sse(vec![
-            responses::ev_response_created("compact-terminal-goal"),
-            responses::ev_assistant_message(
-                "compact-terminal-summary",
-                "A deliberately terminal-goal-free compact summary.",
-            ),
-            responses::ev_completed_with_tokens("compact-terminal-goal", /*total_tokens*/ 200),
+            responses::ev_completed_with_tokens("clearing-follow-up", /*total_tokens*/ 100),
         ]),
     )
     .await;
@@ -876,12 +873,9 @@ async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) ->
         1,
         "terminal transition should be delivered to exactly one sampling request"
     );
+    let compact_body = compact.single_request().body_json().to_string();
     assert!(
-        !compact
-            .single_request()
-            .body_json()
-            .to_string()
-            .contains("previously active thread goal is no longer active"),
+        !compact_body.contains("previously active thread goal is no longer active"),
         "the clearing fragment must not be persisted into compaction input"
     );
     let post_compact_body = post_compact.single_request().body_json().to_string();

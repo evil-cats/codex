@@ -65,7 +65,7 @@ Owner-файлы реализации:
 | `codex-rs/core/src/tools/handlers/read_file_tests.rs` | Unit tests runtime-контракта: диапазоны, right-tail line trimming, long line, пустой файл и `line_numbers=false` |
 | `codex-rs/core/src/tools/handlers/read_file_spec_tests.rs` | Tests spec-контракта: имя tool, default `line_numbers`, отсутствие argument для token limit и описание поведения `complete=no` |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает handler и spec-модуль |
-| `codex-rs/core/src/tools/spec_plan.rs` | Регистрирует `ReadFileHandler` рядом с core utility tools |
+| `codex-rs/core/src/tools/spec_plan.rs` | Регистрирует `ReadFileHandler` через текущий `ToolRegistry` рядом с core utility tools |
 | `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет visibility для environment-backed tools и `DirectModelOnly`: `read_file` остается прямым при code mode и не входит в описание nested `exec` |
 | `codex-rs/config/src/config_toml.rs` | Добавляет TOML config `[tools.read_file].content_max_tokens` |
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective config field, default `10_000` и resolver для лимита `read_file` |

@@ -221,6 +221,44 @@ class CardTestException:
     reason: str
 
 
+@dataclass(frozen=True)
+class BinaryArtifactContract:
+    label: str
+    binary_name: str
+    probe_args: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BinaryArtifact:
+    contract: BinaryArtifactContract
+    path: Path
+
+
+@dataclass(frozen=True)
+class InstallArtifact:
+    contract: BinaryArtifactContract
+    source: Path
+    target: Path
+
+    @property
+    def temporary(self) -> Path:
+        return install_temp_path(self.target)
+
+
+RELEASE_FAST_BINARY_CONTRACTS = (
+    BinaryArtifactContract(
+        label="Codex",
+        binary_name="codex",
+        probe_args=("--version",),
+    ),
+    BinaryArtifactContract(
+        label="Code Mode host",
+        binary_name="codex-code-mode-host",
+        probe_args=("--help",),
+    ),
+)
+
+
 def card_test(card_id: str, purpose: str, *argv: str) -> CardTest:
     return CardTest(card_id=card_id, purpose=purpose, argv=argv)
 
@@ -395,6 +433,56 @@ def install_temp_path(target: Path) -> Path:
     return target.with_name(f"{target.name}.new")
 
 
+def platform_binary_name(binary_name: str, platform_name: str | None = None) -> str:
+    effective_platform = os.name if platform_name is None else platform_name
+    suffix = ".exe" if effective_platform == "nt" else ""
+    return f"{binary_name}{suffix}"
+
+
+def release_fast_binary_artifacts(
+    repo_root: Path, platform_name: str | None = None
+) -> tuple[BinaryArtifact, ...]:
+    binary_dir = repo_root / "codex-rs/target/release-fast"
+    return tuple(
+        BinaryArtifact(
+            contract=contract,
+            path=binary_dir
+            / platform_binary_name(contract.binary_name, platform_name),
+        )
+        for contract in RELEASE_FAST_BINARY_CONTRACTS
+    )
+
+
+def install_binary_artifacts(
+    main_source: Path,
+    main_target: Path,
+    platform_name: str | None = None,
+) -> tuple[InstallArtifact, ...]:
+    main_contract, host_contract = RELEASE_FAST_BINARY_CONTRACTS
+    host_name = platform_binary_name(host_contract.binary_name, platform_name)
+    return (
+        InstallArtifact(
+            contract=main_contract,
+            source=main_source,
+            target=main_target,
+        ),
+        InstallArtifact(
+            contract=host_contract,
+            source=main_source.with_name(host_name),
+            target=main_target.with_name(host_name),
+        ),
+    )
+
+
+def rustc_host_target(version_output: str) -> str:
+    for line in version_output.splitlines():
+        if line.startswith("host: "):
+            target = line.removeprefix("host: ").strip()
+            if target:
+                return target
+    raise ValueError("rustc -vV output does not contain a host target")
+
+
 def timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
@@ -559,15 +647,29 @@ class LogSession:
         self.write(f"required command not found: {name}\n")
         return None
 
-    def run_step(self, label: str, argv: list[str]) -> int:
+    def run_step(
+        self,
+        label: str,
+        argv: list[str],
+        *,
+        env_overrides: Mapping[str, str] | None = None,
+    ) -> int:
         print()
         print(f"==> {label}")
         self.log_command(label, argv)
+        env = command_env()
+        if env_overrides:
+            self.write(
+                "environment overrides: "
+                + ", ".join(sorted(env_overrides))
+                + "\n"
+            )
+            env.update(env_overrides)
         with self.log_file.open("a", encoding="utf-8") as log:
             result = subprocess.run(
                 argv,
                 cwd=self.repo_root,
-                env=command_env(),
+                env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -613,6 +715,46 @@ class LogSession:
         if stderr:
             print(stderr, end="", file=sys.stderr)
         return self.fail(label=label, exit_code=status, argv=argv)
+
+
+def resolve_release_fast_cargo_env(
+    session: LogSession, repo_root: Path
+) -> tuple[int, dict[str, str]]:
+    rustc = session.check_command("rustc")
+    if not rustc:
+        return session.fail(label="require command: rustc"), {}
+
+    status, stdout, stderr = session.run_capture("rustc host target", [rustc, "-vV"])
+    if status != 0:
+        if stderr:
+            session.write(stderr)
+        return session.fail(label="rustc host target", exit_code=status), {}
+
+    try:
+        host_target = rustc_host_target(stdout)
+    except ValueError as exc:
+        session.write(f"{exc}\n")
+        return session.fail(label="parse rustc host target"), {}
+
+    repo_root_text = str(repo_root)
+    sys.path.insert(0, repo_root_text)
+    try:
+        from scripts.codex_package.targets import TARGET_SPECS
+        from scripts.codex_package.v8 import resolve_codex_v8_cargo_env
+
+        spec = TARGET_SPECS.get(host_target)
+        if spec is None:
+            session.write(f"unsupported native Cargo target: {host_target}\n")
+            return session.fail(label="resolve native Cargo target"), {}
+        session.write(f"native Cargo target: {host_target}\n")
+        cargo_env = resolve_codex_v8_cargo_env(spec)
+    except Exception as exc:
+        session.write(f"failed to resolve Codex V8 build artifacts: {exc}\n")
+        return session.fail(label="resolve Codex V8 build artifacts"), {}
+    finally:
+        sys.path.remove(repo_root_text)
+
+    return 0, cargo_env
 
 
 def markdownlint_config(repo_root: Path) -> Path:
@@ -1475,34 +1617,54 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
     if not file_cmd:
         return session.fail(label="require command: file")
 
-    result = session.run_step("release-fast build", [just, "build-fast-release"])
+    result, cargo_env = resolve_release_fast_cargo_env(session, repo_root)
     if result != 0:
         return result
 
-    binary_path = repo_root / "codex-rs/target/release-fast/codex"
-    if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
-        session.write(f"expected executable not found: {binary_path}\n")
-        return session.fail(label="binary existence")
+    result = session.run_step(
+        "release-fast build",
+        [just, "build-fast-release"],
+        env_overrides=cargo_env,
+    )
+    if result != 0:
+        return result
 
-    for label, argv in (
-        ("binary file metadata", [file_cmd, str(binary_path)]),
-        ("binary version", [str(binary_path), "--version"]),
-    ):
-        result = session.run_step(label, argv)
-        if result != 0:
-            return result
+    artifacts = release_fast_binary_artifacts(repo_root)
+    for artifact in artifacts:
+        binary_path = artifact.path
+        label = artifact.contract.label
+        if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
+            session.write(f"expected {label} executable not found: {binary_path}\n")
+            return session.fail(label=f"{label} binary existence")
 
-    return session.ok([f"BINARY: {binary_path}"])
+        for step_label, argv in (
+            (f"{label} binary file metadata", [file_cmd, str(binary_path)]),
+            (
+                f"{label} binary probe",
+                [str(binary_path), *artifact.contract.probe_args],
+            ),
+        ):
+            result = session.run_step(step_label, argv)
+            if result != 0:
+                return result
+
+    return session.ok(
+        [
+            f"BINARY: {artifacts[0].path}",
+            f"CODE_MODE_HOST_BINARY: {artifacts[1].path}",
+        ]
+    )
 
 
 def cmd_install(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     session = LogSession(repo_root=repo_root, log_kind="install", mode="install")
 
+    release_fast_artifacts = release_fast_binary_artifacts(repo_root)
     source_path = (
         resolve_path_arg(args.source, repo_root)
         if args.source
-        else repo_root / "codex-rs/target/release-fast/codex"
+        else release_fast_artifacts[0].path
     )
     try:
         target_path = (
@@ -1514,68 +1676,129 @@ def cmd_install(args: argparse.Namespace) -> int:
         session.write(f"{exc}\n")
         return session.fail(label="resolve install target")
 
-    temp_path = install_temp_path(target_path)
-    session.write(f"source: {source_path}\n")
-    session.write(f"target: {target_path}\n")
-    session.write(f"temporary: {temp_path}\n")
+    artifacts = install_binary_artifacts(source_path, target_path)
+    for artifact in artifacts:
+        label = artifact.contract.label
+        session.write(f"{label} source: {artifact.source}\n")
+        session.write(f"{label} target: {artifact.target}\n")
+        session.write(f"{label} temporary: {artifact.temporary}\n")
 
     file_cmd = session.check_command("file")
     if not file_cmd:
         return session.fail(label="require command: file")
 
-    if not source_path.is_file():
-        session.write(f"source binary not found: {source_path}\n")
-        return session.fail(label="source binary exists")
-    if not os.access(source_path, os.X_OK):
-        session.write(f"source binary is not executable: {source_path}\n")
-        return session.fail(label="source binary executable")
+    resolved_targets = {
+        artifact.target.resolve(strict=False) for artifact in artifacts
+    }
+    if len(resolved_targets) != len(artifacts):
+        session.write("install targets resolve to the same path\n")
+        return session.fail(label="install targets distinct")
 
-    if source_path.resolve() == target_path.resolve(strict=False):
-        session.write("source and target resolve to the same path\n")
-        return session.fail(label="source target distinct")
-    if source_path.resolve() == temp_path.resolve(strict=False):
-        session.write("source and temporary path resolve to the same path\n")
-        return session.fail(label="source temporary distinct")
+    for artifact in artifacts:
+        label = artifact.contract.label
+        if not artifact.source.is_file():
+            session.write(f"{label} source binary not found: {artifact.source}\n")
+            return session.fail(label=f"{label} source binary exists")
+        if not os.access(artifact.source, os.X_OK):
+            session.write(
+                f"{label} source binary is not executable: {artifact.source}\n"
+            )
+            return session.fail(label=f"{label} source binary executable")
 
-    for label, argv in (
-        ("source binary metadata", [file_cmd, str(source_path)]),
-        ("source binary version", [str(source_path), "--version"]),
-    ):
-        result = session.run_step(label, argv)
-        if result != 0:
-            return result
+        if artifact.source.resolve() == artifact.target.resolve(strict=False):
+            session.write(f"{label} source and target resolve to the same path\n")
+            return session.fail(label=f"{label} source target distinct")
+        if artifact.source.resolve() == artifact.temporary.resolve(strict=False):
+            session.write(
+                f"{label} source and temporary path resolve to the same path\n"
+            )
+            return session.fail(label=f"{label} source temporary distinct")
+
+        for step_label, argv in (
+            (
+                f"{label} source binary metadata",
+                [file_cmd, str(artifact.source)],
+            ),
+            (
+                f"{label} source binary probe",
+                [str(artifact.source), *artifact.contract.probe_args],
+            ),
+        ):
+            result = session.run_step(step_label, argv)
+            if result != 0:
+                return result
+
+    def cleanup_temporary_artifacts() -> None:
+        for artifact in artifacts:
+            try:
+                artifact.temporary.unlink(missing_ok=True)
+            except OSError as exc:
+                session.write(
+                    f"failed to remove {artifact.contract.label} temporary binary: {exc}\n"
+                )
 
     try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, temp_path)
-        temp_path.chmod(0o755)
+        for artifact in artifacts:
+            artifact.target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(artifact.source, artifact.temporary)
+            artifact.temporary.chmod(0o755)
     except OSError as exc:
-        session.write(f"failed to copy temporary binary: {exc}\n")
-        return session.fail(label="copy temporary binary")
+        session.write(f"failed to stage install binaries: {exc}\n")
+        cleanup_temporary_artifacts()
+        return session.fail(label="stage install binaries")
 
-    for label, argv in (
-        ("temporary binary metadata", [file_cmd, str(temp_path)]),
-        ("temporary binary version", [str(temp_path), "--version"]),
-    ):
-        result = session.run_step(label, argv)
-        if result != 0:
-            return result
+    for artifact in artifacts:
+        label = artifact.contract.label
+        for step_label, argv in (
+            (
+                f"{label} temporary binary metadata",
+                [file_cmd, str(artifact.temporary)],
+            ),
+            (
+                f"{label} temporary binary probe",
+                [str(artifact.temporary), *artifact.contract.probe_args],
+            ),
+        ):
+            result = session.run_step(step_label, argv)
+            if result != 0:
+                cleanup_temporary_artifacts()
+                return result
 
     try:
-        os.replace(temp_path, target_path)
+        # Install the host first and the main binary last. Both artifacts have
+        # already passed their probes, so a new Codex binary never points at an
+        # old or missing sidecar after a successful install.
+        for artifact in reversed(artifacts):
+            os.replace(artifact.temporary, artifact.target)
     except OSError as exc:
-        session.write(f"failed to replace installed binary: {exc}\n")
-        return session.fail(label="replace installed binary")
+        session.write(f"failed to replace installed binaries: {exc}\n")
+        cleanup_temporary_artifacts()
+        return session.fail(label="replace installed binaries")
 
-    for label, argv in (
-        ("installed binary metadata", [file_cmd, str(target_path)]),
-        ("installed binary version", [str(target_path), "--version"]),
-    ):
-        result = session.run_step(label, argv)
-        if result != 0:
-            return result
+    for artifact in artifacts:
+        label = artifact.contract.label
+        for step_label, argv in (
+            (
+                f"{label} installed binary metadata",
+                [file_cmd, str(artifact.target)],
+            ),
+            (
+                f"{label} installed binary probe",
+                [str(artifact.target), *artifact.contract.probe_args],
+            ),
+        ):
+            result = session.run_step(step_label, argv)
+            if result != 0:
+                return result
 
-    return session.ok([f"SOURCE: {source_path}", f"TARGET: {target_path}"])
+    return session.ok(
+        [
+            f"SOURCE: {artifacts[0].source}",
+            f"TARGET: {artifacts[0].target}",
+            f"CODE_MODE_HOST_SOURCE: {artifacts[1].source}",
+            f"CODE_MODE_HOST_TARGET: {artifacts[1].target}",
+        ]
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1664,11 +1887,17 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--repo-root")
     install.add_argument(
         "--source",
-        help="Binary to install. Defaults to codex-rs/target/release-fast/codex.",
+        help=(
+            "Main binary to install. The Code Mode host is read from the same "
+            "directory. Defaults to codex-rs/target/release-fast/codex."
+        ),
     )
     install.add_argument(
         "--target",
-        help="Install target. Defaults to ${HOME}/.local/bin/codex-hermione.",
+        help=(
+            "Main install target. The Code Mode host is installed beside it. "
+            "Defaults to ${HOME}/.local/bin/codex-hermione."
+        ),
     )
     install.set_defaults(func=cmd_install)
 
