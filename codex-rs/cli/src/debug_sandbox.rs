@@ -260,7 +260,6 @@ async fn run_command_under_sandbox(
     let env = create_env(
         &config.permissions.shell_environment_policy,
         /*thread_id*/ None,
-        /*agent_name*/ None,
     );
     let mut permission_profile = match sandbox_state.as_ref() {
         Some(state) => match &state.permission_profile {
@@ -490,7 +489,7 @@ async fn run_command_under_windows_session(
         cwd: cwd.as_path(),
         env_map: env,
         windows_sandbox_level: WindowsSandboxLevel::from_config(config),
-        proxy_settings_mode: WindowsSandboxProxySettingsMode::Reconcile,
+        proxy_settings_mode: WindowsSandboxProxySettingsMode::Preserve,
         proxy_enforced: false,
         network_proxy_restricting_sid: None,
         timeout_ms: None,

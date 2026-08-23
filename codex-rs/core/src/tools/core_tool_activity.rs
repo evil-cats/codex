@@ -113,7 +113,7 @@ fn read_file_detail(
         |environment_id| {
             environments
                 .turn_environments()
-                .find(|environment| environment.environment_id == environment_id)
+                .find(|environment| environment.selection.environment_id == environment_id)
         },
     );
     if let Some(resolved_path) =

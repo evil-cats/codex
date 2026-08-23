@@ -7,7 +7,51 @@ use std::path::Path;
 pub const CODEX_AGENT_ENV_VAR: &str = "CODEX_AGENT";
 pub const CODEX_CALL_ID_ENV_VAR: &str = "CODEX_CALL_ID";
 pub const CODEX_ROLLOUT_ENV_VAR: &str = "CODEX_ROLLOUT";
+pub const CODEX_SESSION_ID_ENV_VAR: &str = "CODEX_SESSION_ID";
 pub const CODEX_THREAD_ID_ENV_VAR: &str = "CODEX_THREAD_ID";
+pub const CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR: &str = "CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN";
+pub const OPENAI_FEDERATION_RULE_ID_ENV_VAR: &str = "OPENAI_FEDERATION_RULE_ID";
+pub const OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR: &str = "OPENAI_IDENTITY_TOKEN_FILE";
+pub const OPENAI_WORKLOAD_IDENTITY_CONTEXT_ENV_VAR: &str = "OPENAI_WORKLOAD_IDENTITY_CONTEXT";
+
+/// Environment variables that model-reachable child processes must not inherit.
+pub const NON_INHERITABLE_ENV_VARS: &[&str] = &[
+    CODEX_EXEC_SERVER_NOISE_AUTH_TOKEN_ENV_VAR,
+    "NODE_REPL_AUTH_TOKEN",
+    OPENAI_FEDERATION_RULE_ID_ENV_VAR,
+    OPENAI_IDENTITY_TOKEN_FILE_ENV_VAR,
+    OPENAI_WORKLOAD_IDENTITY_CONTEXT_ENV_VAR,
+];
+
+pub fn is_non_inheritable_env_var(name: &str) -> bool {
+    NON_INHERITABLE_ENV_VARS
+        .iter()
+        .any(|restricted| restricted.eq_ignore_ascii_case(name))
+}
+
+/// Configures a child command to omit non-inheritable variables from the
+/// process environment and explicit command overrides.
+///
+/// This prevents accidental propagation of Codex launch context; it is not a
+/// filesystem security boundary for the referenced identity-token file.
+pub fn scrub_non_inheritable_env_vars(command: &mut std::process::Command) {
+    let configured_names = command
+        .get_envs()
+        .map(|(name, _)| name.to_os_string())
+        .collect::<Vec<_>>();
+
+    for name in NON_INHERITABLE_ENV_VARS {
+        command.env_remove(name);
+    }
+    for name in std::env::vars_os()
+        .map(|(name, _)| name)
+        .chain(configured_names)
+    {
+        if name.to_str().is_some_and(is_non_inheritable_env_var) {
+            command.env_remove(name);
+        }
+    }
+}
 
 /// Runtime identity values that Codex injects after shell environment policy
 /// filters have been applied.
@@ -24,11 +68,11 @@ pub struct RuntimeEnv<'a> {
 pub fn create_env(
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String> {
-    create_env_from_vars(std::env::vars(), policy, thread_id, agent_name)
+    create_env_from_vars(std::env::vars(), policy, thread_id)
 }
 
+/// Строит shell environment и после policy-фильтров добавляет runtime identity.
 pub fn create_env_with_runtime(
     policy: &ShellEnvironmentPolicy,
     runtime: RuntimeEnv<'_>,
@@ -40,7 +84,6 @@ pub fn create_env_from_vars<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
@@ -50,12 +93,12 @@ where
         policy,
         RuntimeEnv {
             thread_id,
-            agent_name,
             ..Default::default()
         },
     )
 }
 
+/// Строит shell environment из заданных переменных и полного runtime context.
 pub fn create_env_from_vars_with_runtime<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
@@ -89,7 +132,6 @@ pub fn populate_env<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<&str>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
@@ -99,12 +141,12 @@ where
         policy,
         RuntimeEnv {
             thread_id,
-            agent_name,
             ..Default::default()
         },
     )
 }
 
+/// Применяет shell policy и затем добавляет переданные runtime-переменные.
 pub fn populate_env_with_runtime<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
@@ -183,6 +225,10 @@ where
         env_map.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
     }
 
+    // Restricted launch context cannot be restored through user-provided shell
+    // environment overrides.
+    env_map.retain(|name, _| !is_non_inheritable_env_var(name));
+
     env_map
 }
 
@@ -226,50 +272,8 @@ pub const WINDOWS_CORE_ENV_VARS: &[&str] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn populate_env_injects_runtime_identity_after_include_only() {
-        let vars = vec![
-            ("CODEX_AGENT".to_string(), "from-parent-env".to_string()),
-            ("CODEX_CALL_ID".to_string(), "from-parent-env".to_string()),
-            ("CODEX_ROLLOUT".to_string(), "from-parent-env".to_string()),
-            ("CODEX_THREAD_ID".to_string(), "from-parent-env".to_string()),
-            ("PATH".to_string(), "/usr/bin".to_string()),
-            ("OTHER".to_string(), "ignored".to_string()),
-        ];
-        let policy = ShellEnvironmentPolicy {
-            ignore_default_excludes: true,
-            include_only: vec![EnvironmentVariablePattern::new_case_insensitive("PATH")],
-            ..Default::default()
-        };
-
-        let result = populate_env_with_runtime(
-            vars,
-            &policy,
-            RuntimeEnv {
-                thread_id: Some("thread-1"),
-                agent_name: Some("Hermione"),
-                call_id: Some("call-1"),
-                rollout_path: Some(std::path::Path::new("/tmp/rollout.jsonl")),
-            },
-        );
-        let expected = HashMap::from([
-            ("PATH".to_string(), "/usr/bin".to_string()),
-            ("CODEX_AGENT".to_string(), "Hermione".to_string()),
-            ("CODEX_CALL_ID".to_string(), "call-1".to_string()),
-            (
-                "CODEX_ROLLOUT".to_string(),
-                "/tmp/rollout.jsonl".to_string(),
-            ),
-            ("CODEX_THREAD_ID".to_string(), "thread-1".to_string()),
-        ]);
-
-        assert_eq!(result, expected);
-    }
-}
+#[path = "shell_environment_tests.rs"]
+mod tests;
 
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
@@ -301,9 +305,7 @@ mod windows_tests {
         };
 
         // Check a few sample vars instead of the full Windows core list.
-        let result = populate_env(
-            vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
-        );
+        let result = populate_env(vars, &policy, /*thread_id*/ None);
         let expected = HashMap::from([
             (
                 "Shell".to_string(),
@@ -329,12 +331,7 @@ mod windows_tests {
             ..Default::default()
         };
 
-        let result = create_env_from_vars(
-            Vec::new(),
-            &policy,
-            /*thread_id*/ None,
-            /*agent_name*/ None,
-        );
+        let result = create_env_from_vars(Vec::new(), &policy, /*thread_id*/ None);
         let expected = HashMap::from([("PATHEXT".to_string(), ".COM;.EXE;.BAT;.CMD".to_string())]);
 
         assert_eq!(result, expected);
@@ -368,9 +365,7 @@ mod non_windows_tests {
             ..Default::default()
         };
 
-        let result = populate_env(
-            vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
-        );
+        let result = populate_env(vars, &policy, /*thread_id*/ None);
         let expected = HashMap::from([
             ("path".to_string(), "/usr/bin".to_string()),
             ("home".to_string(), "/home/codex".to_string()),

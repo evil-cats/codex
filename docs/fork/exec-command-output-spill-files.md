@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-08-13
+updated: 2026-08-22
 ---
 
 # Spill-файлы для длинного output `exec_command`
@@ -49,12 +49,14 @@ cache и дает более удобный путь восстановлени�
 | `codex-rs/core/config.schema.json` | Сгенерированный schema artifact для нового key `[tools.exec].inline_output_max_tokens` |
 | `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Передать обычный exec request в process manager и оставить `SandboxDenied` вне цепочки spill |
 | `codex-rs/core/src/unified_exec/mod.rs` | Добавить request/result поля или helper types для exec output spill |
+| `codex-rs/core/src/unified_exec/output_spill.rs` | Рассчитать действующий inline-лимит, построить безопасный путь и записать сохранённые байты |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch записать `raw_output` в файл при превышении лимита |
 | `codex-rs/core/src/tools/context.rs` | Отрендерить spill metadata, `Output saved to` и `Output excerpt` для `ExecCommandToolOutput` |
 | `codex-rs/utils/path-utils/src/lib.rs` | При необходимости добавить atomic bytes write helper |
 | `codex-rs/core/src/tools/context_tests.rs` | Проверить model-visible formatting для spill и non-spill cases |
 | `codex-rs/core/src/unified_exec/*tests.rs` | Проверить immediate-finished branch, отсутствие spill для running process и запись файла |
 | `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
+| `codex-rs/core/tests/suite/unified_exec.rs` | Сквозно проверить spill завершённого `exec_command` и видимую модели ссылку на файл |
 | `docs/fork/exec-command-output-spill-files.md` | Owner handoff этой fork-доработки |
 
 Намеренно не меняется в MVP:

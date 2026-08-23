@@ -238,6 +238,11 @@ impl App {
             tui.insert_history_items_with_wrap_policy(items, self.history_line_wrap_policy());
         }
         self.overlay = None;
+        if self.pending_thread_usage_history_refresh
+            && let Err(err) = self.refresh_thread_usage_history_tail(tui)
+        {
+            tracing::warn!(error = %err, "failed to refresh thread usage after closing overlay");
+        }
         self.backtrack.overlay_preview_active = false;
         tui.frame_requester().schedule_frame();
         if was_backtrack {

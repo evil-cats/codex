@@ -18,6 +18,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadGoalClearedNotification;
+use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -207,6 +208,118 @@ async fn active_goal_world_state_survives_mid_turn_local_compaction() -> Result<
             .to_string()
             .contains("previously active thread goal is no longer active"),
         "completing the goal should clear its active WorldState"
+    );
+
+    Ok(())
+}
+
+/// Проверяет, что Remote V2 не сохраняет старый goal fragment рядом со свежим `WorldState`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_goal_world_state_survives_mid_turn_remote_v2_compaction_once() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    const REMOTE_V2_AUTO_COMPACT_LIMIT: i64 = 200_000;
+
+    let server = responses::start_mock_server().await;
+    let responses_log = responses::mount_sse_sequence(
+        &server,
+        vec![
+            responses::sse(vec![
+                responses::ev_response_created("trigger-compaction"),
+                responses::ev_function_call(
+                    "call-update-plan",
+                    "update_plan",
+                    &serde_json::json!({
+                        "plan": [{
+                            "step": "Verify Remote V2 goal context",
+                            "status": "in_progress",
+                        }],
+                    })
+                    .to_string(),
+                ),
+                responses::ev_completed_with_tokens(
+                    "trigger-compaction",
+                    /*total_tokens*/ 330_000,
+                ),
+            ]),
+            responses::sse(vec![
+                serde_json::json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "compaction",
+                        "encrypted_content": "REMOTE_V2_GOAL_FREE_COMPACTION",
+                    },
+                }),
+                responses::ev_completed("remote-v2-compaction"),
+            ]),
+            responses::sse(vec![
+                responses::ev_response_created("post-compaction"),
+                responses::ev_assistant_message("final-message", "done"),
+                responses::ev_completed_with_tokens("post-compaction", /*total_tokens*/ 120),
+            ]),
+        ],
+    )
+    .await;
+
+    let codex_home = TempDir::new()?;
+    compaction_config(&server.uri(), REMOTE_V2_AUTO_COMPACT_LIMIT)
+        .enable_feature(Feature::Goals)
+        .enable_feature(Feature::RemoteCompactionV2)
+        .with_provider_name("OpenAI")
+        .with_provider_config("requires_openai_auth = true")
+        .write(codex_home.path())?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("access-chatgpt").plan_type("pro"),
+        AuthCredentialsStoreMode::File,
+    )?;
+
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .with_env_overrides(&[("OPENAI_API_KEY", None)])
+        .build_initialized_with_timeout(DEFAULT_READ_TIMEOUT)
+        .await?;
+    let thread_id = start_thread(&mut mcp).await?;
+    let goal_request_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(serde_json::json!({
+                "threadId": thread_id.clone(),
+                "objective": ACTIVE_GOAL_OBJECTIVE,
+                "status": "active",
+            })),
+        )
+        .await?;
+    let _: ThreadGoalSetResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(goal_request_id)).await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/goal/updated"),
+    )
+    .await??;
+
+    send_turn_and_wait(
+        &mut mcp,
+        &thread_id,
+        "trigger Remote V2 compaction while the goal is active",
+    )
+    .await?;
+
+    let requests = responses_log.requests();
+    assert_eq!(requests.len(), 3);
+    let compact_body = requests[1].body_json().to_string();
+    assert_eq!(
+        compact_body.matches(ESCAPED_ACTIVE_GOAL_OBJECTIVE).count(),
+        1,
+        "the Remote V2 input should contain the active objective once"
+    );
+    let post_compact_body = requests[2].body_json().to_string();
+    assert!(post_compact_body.contains("<thread_goal_context>"));
+    assert_eq!(
+        post_compact_body
+            .matches(ESCAPED_ACTIVE_GOAL_OBJECTIVE)
+            .count(),
+        1,
+        "Remote V2 replacement should contain only the fresh WorldState objective"
     );
 
     Ok(())

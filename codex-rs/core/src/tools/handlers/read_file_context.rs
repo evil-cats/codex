@@ -108,14 +108,14 @@ impl ReadFileContextIndex {
     /// Вызовы из replacement-history последней сохранившейся compaction намеренно
     /// исключаются: сам факт их копирования механизмом compaction не доказывает,
     /// что точный output с содержимым файла прочитан в новом окне.
-    pub(super) fn restore(
+    pub(super) fn restore<'a>(
         &self,
         window_id: String,
-        history: &[ResponseItem],
+        history: impl IntoIterator<Item = &'a ResponseItem>,
         replacement_history_call_ids: &HashSet<String>,
     ) {
         let calls = history
-            .iter()
+            .into_iter()
             .filter_map(|item| match item {
                 ResponseItem::FunctionCall { name, call_id, .. }
                     if name == READ_FILE_TOOL_NAME

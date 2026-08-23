@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-08-13
+updated: 2026-08-22
 ---
 
 # Terminal title: `session-label`
@@ -35,6 +35,7 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/tui/src/terminal_title.rs` | Санитизирует итоговый title и безопасно пишет или очищает OSC title |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
 | `codex-rs/tui/src/app/session_lifecycle.rs` | Переносит кэш последнего terminal title в новый `ChatWidget` при смене текущего thread |
+| `codex-rs/tui/src/app/tests.rs` | Проверяет общий перенос кэша terminal title при замене `ChatWidget` |
 | `codex-rs/tui/src/app.rs` | Очищает управляемый Codex title при завершении `App`; предыдущий title терминала не восстанавливается |
 | TUI snapshots | Обновляют popup со строкой `session-label` |
 
@@ -215,7 +216,10 @@ TerminalTitleItem::SessionLabel => {
 `last_terminal_title` переносится в новый `ChatWidget`. Это сохраняет общий
 контракт кэширования и жизненного цикла после разделения lifecycle-кода `App` по
 модулям и не допускает видимого мерцания из-за лишней последовательности очистки
-и записи.
+и записи. Пути нового, возобновлённого и ответвлённого thread структурно сходятся
+в этом общем методе. Тест `replace_chat_widget_preserves_terminal_title_cache`
+защищает сам перенос кэша внутри вспомогательного метода; он не заменяет
+интеграционные проверки трёх веток жизненного цикла.
 
 Низкоуровневый `set_terminal_title` владеет санитизацией всей итоговой строки,
 включая значение `session-label`. Этот слой удаляет управляющие и

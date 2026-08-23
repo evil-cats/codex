@@ -1,3 +1,5 @@
+//! Определяет model-visible контракт `view_image` и схему его структурированного результата.
+
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -9,6 +11,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewImageToolOptions {
     pub can_request_original_image_detail: bool,
+    pub unified_image_budget: bool,
     pub include_environment_id: bool,
 }
 
@@ -17,7 +20,7 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
         "path".to_string(),
         JsonSchema::string(Some("Local filesystem path to an image file.".to_string())),
     )]);
-    if options.can_request_original_image_detail {
+    if options.can_request_original_image_detail && !options.unified_image_budget {
         properties.insert(
             "detail".to_string(),
             JsonSchema::string_enum(
@@ -55,37 +58,43 @@ pub fn create_view_image_tool(options: ViewImageToolOptions) -> ToolSpec {
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(properties, Some(vec!["path".to_string()]), Some(false.into())),
-        output_schema: Some(view_image_output_schema()),
+        output_schema: Some(view_image_output_schema(options)),
     })
 }
 
-fn view_image_output_schema() -> Value {
-    json!({
+fn view_image_output_schema(options: ViewImageToolOptions) -> Value {
+    let mut schema = json!({
         "type": "object",
         "properties": {
             "image_url": {
                 "type": "string",
                 "description": "Data URL for the loaded image."
-            },
-            "detail": {
-                "type": "string",
-                "enum": ["high", "original"],
-                "description": "Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved."
             }
         },
-        "required": ["image_url", "detail"],
+        "required": ["image_url"],
         "additionalProperties": false
-    })
+    });
+    if !options.unified_image_budget {
+        schema["properties"]["detail"] = json!({
+            "type": "string",
+            "enum": ["high", "original"],
+            "description": "Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved."
+        });
+        schema["required"] = json!(["image_url", "detail"]);
+    }
+    schema
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Проверяет ограниченный enum размера preview и отсутствие числового `preview_rows` в API.
     #[test]
     fn view_image_schema_exposes_preview_size_but_not_preview_rows() {
         let ToolSpec::Function(tool) = create_view_image_tool(ViewImageToolOptions {
             can_request_original_image_detail: false,
+            unified_image_budget: false,
             include_environment_id: false,
         }) else {
             panic!("expected function tool");

@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # Environment context: `project_name`
@@ -299,6 +299,12 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
   ]
 }
 ```
+
+Тестовые экземпляры `TurnContextItem` в
+`codex-rs/core/src/context/world_state/environment_render_tests.rs` должны явно
+задавать `active_permission_profile: None`. Так сценарии `project_name` не
+включают именованный профиль разрешений и проверяют только принадлежащий
+карточке контракт.
 
 ## Риски и ограничения
 

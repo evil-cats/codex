@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # Утилитарный core tool `read_file`
@@ -113,6 +113,12 @@ history; поэтому live-запись и последовательный ro
 используется. Публичный wire-формат и persisted rollout не получают
 fork-specific флаг: при resume та же связь восстанавливается из сохранённой
 typed пары.
+
+History хранит `ResponseItemEnvelope` с metadata, предназначенной только для
+history. Политика `read_file` обрабатывает только вложенный `ResponseItem`,
+сохраняет metadata исходного envelope без изменений и при replay передаёт
+механизму сопоставления только вложенные raw items, не отбрасывая metadata из
+восстанавливаемой history.
 
 Намеренно не входит в MVP:
 

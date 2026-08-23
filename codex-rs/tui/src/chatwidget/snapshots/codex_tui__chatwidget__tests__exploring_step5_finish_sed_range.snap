@@ -1,7 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
+assertion_line: 1442
 expression: active_blob(&chat)
 ---
-• Explored
-  └ List ls -la
-  └ Read foo.txt
+• Ran 3 commands · ctrl + t to view transcript

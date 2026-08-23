@@ -31,6 +31,7 @@ class RecordingLogSession:
 
     def __init__(self, **_kwargs) -> None:
         self.steps = []
+        self.env_overrides = []
         self.output = []
         self.ok_extra = None
         RecordingLogSession.instances.append(self)
@@ -41,8 +42,15 @@ class RecordingLogSession:
     def check_command(self, _name: str) -> str:
         return "file"
 
-    def run_step(self, label: str, argv: list[str]) -> int:
+    def run_step(
+        self,
+        label: str,
+        argv: list[str],
+        *,
+        env_overrides: dict[str, str] | None = None,
+    ) -> int:
         self.steps.append((label, argv))
+        self.env_overrides.append(env_overrides)
         return 0
 
     def fail(
@@ -118,6 +126,59 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
     def test_rustc_host_target_requires_host_line(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not contain a host target"):
             fork_cli.rustc_host_target("rustc 1.89.0\nbinary: rustc\n")
+
+    def test_codex_v8_cargo_env_scopes_repo_root_to_package_imports(self) -> None:
+        """Передаёт package imports правильный root и восстанавливает process state."""
+        repo_root = Path("/repo")
+        host_target = "x86_64-unknown-linux-gnu"
+        target_spec = object()
+        observed_repo_roots: list[str | None] = []
+        real_import = __import__
+
+        def import_with_observed_repo_root(
+            name: str,
+            globals_: dict | None = None,
+            locals_: dict | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "scripts.codex_package.targets":
+                observed_repo_roots.append(os.environ.get("CODEX_REPO_ROOT"))
+                return unittest.mock.Mock(TARGET_SPECS={host_target: target_spec})
+            if name == "scripts.codex_package.v8":
+                observed_repo_roots.append(os.environ.get("CODEX_REPO_ROOT"))
+                return unittest.mock.Mock(
+                    resolve_codex_v8_cargo_env=lambda spec: {
+                        "TARGET_SPEC_MATCHED": str(spec is target_spec)
+                    }
+                )
+            return real_import(name, globals_, locals_, fromlist, level)
+
+        session = unittest.mock.Mock()
+        session.check_command.return_value = "rustc"
+        session.run_capture.return_value = (
+            0,
+            f"rustc 1.89.0\nbinary: rustc\nhost: {host_target}\n",
+            "",
+        )
+        previous_path_count = sys.path.count(str(repo_root))
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"CODEX_REPO_ROOT": "/previous/repo"}, clear=False
+            ),
+            unittest.mock.patch(
+                "builtins.__import__", side_effect=import_with_observed_repo_root
+            ),
+        ):
+            status, cargo_env = fork_cli.resolve_codex_v8_cargo_env_for_host(
+                session, repo_root
+            )
+
+            self.assertEqual(status, 0)
+            self.assertEqual(cargo_env, {"TARGET_SPEC_MATCHED": "True"})
+            self.assertEqual(observed_repo_roots, [str(repo_root), str(repo_root)])
+            self.assertEqual(os.environ["CODEX_REPO_ROOT"], "/previous/repo")
+            self.assertEqual(sys.path.count(str(repo_root)), previous_path_count)
 
     def test_install_parser_accepts_source_and_target(self) -> None:
         parser = fork_cli.build_parser()
@@ -263,6 +324,9 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
 
 
 class FixCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        RecordingLogSession.instances.clear()
+
     def test_fix_parser_accepts_repeated_packages(self) -> None:
         parser = fork_cli.build_parser()
         args = parser.parse_args(
@@ -302,6 +366,31 @@ class FixCommandTests(unittest.TestCase):
                 "codex-goal-extension",
             ],
         )
+
+    def test_fix_passes_codex_v8_environment_to_lint_recipe(self) -> None:
+        """Передаёт разрешённые Codex V8 artifacts в запускаемый `just fix`."""
+        cargo_env = {
+            "RUSTY_V8_ARCHIVE": "/cache/v8.a",
+            "RUSTY_V8_SRC_BINDING_PATH": "/cache/src_binding.rs",
+        }
+        args = unittest.mock.Mock(repo_root="/repo", package=None)
+
+        with (
+            unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ),
+            unittest.mock.patch.object(
+                fork_cli,
+                "resolve_codex_v8_cargo_env_for_host",
+                return_value=(0, cargo_env),
+            ),
+        ):
+            result = fork_cli.cmd_fix(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[-1]
+        self.assertEqual(session.steps, [("rust lint fix", ["file", "fix"])])
+        self.assertEqual(session.env_overrides, [cargo_env])
 
 
 class CardTestFilterTests(unittest.TestCase):

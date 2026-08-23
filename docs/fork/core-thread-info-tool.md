@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-08-13
+updated: 2026-08-22
 ---
 
 # Утилитарный core tool `get_thread_info`
@@ -35,6 +35,7 @@ updated: 2026-08-13
 | --- | --- |
 | `codex-rs/core/src/agent/agent_name.rs` | Общий helper для вычисления `agent_name`: текущий root через config/profile, текущий subagent через `SessionSource`, persisted thread через сохраненные поля |
 | `codex-rs/core/src/agent/agent_name_tests.rs` | Unit tests для fallback-контракта `agent_name`: root config/profile, metadata текущего subagent и поля persisted thread |
+| `codex-rs/core/src/agent/mod.rs` | Подключает общий модуль `agent_name` |
 | `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime-обработчик: разбор `thread_id`, чтение текущей или persisted thread metadata, materialize текущего rollout, использование общего helper-а `agent_name`, model-facing ошибки |
 | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` | Описание Responses API tool: имя, описание, input schema, output schema |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing `thread_id` |
@@ -42,6 +43,7 @@ updated: 2026-08-13
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `thread_info` и `thread_info_spec`, экспортирует `ThreadInfoHandler` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Отображает вызов `get_thread_info` в core tool activity как `kind = ThreadInfo` с кратким полем `detail` по текущему или указанному `thread_id` |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет, что `get_thread_info` остаётся видимым core tool activity с `kind = ThreadInfo` |
 | `codex-rs/protocol/src/items.rs` | Содержит `CoreToolActivityKind::ThreadInfo` для `CoreToolActivityItem` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `docs/fork/core-thread-info-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
@@ -111,7 +113,7 @@ Output schema содержит объект с required ключами:
 ### Текущий thread
 
 Для текущего thread handler сначала вызывает
-`Session::try_ensure_rollout_materialized()`, затем
+`Session::try_ensure_rollout_materialized(PersistContext::Standard)`, затем
 `Session::current_rollout_path()`. Это важно: вызов tool должен вернуть path к
 уже материализованному rollout, если текущая session поддерживает локальное
 persisted хранилище.
@@ -277,8 +279,18 @@ tool текущего runtime, а не app-server API и не extension tool.
       "argv": ["just", "test", "-p", "codex-core", "agent_name"]
     },
     {
-      "purpose": "metadata текущего и persisted thread, session tree и rollout path",
+      "purpose": "разбор thread_id, строгие аргументы и видимые модели схемы входа и выхода",
       "argv": ["just", "test", "-p", "codex-core", "thread_info"]
+    },
+    {
+      "purpose": "get_thread_info отображается как core tool activity вида ThreadInfo",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "normalized_default_namespace_remains_visible"
+      ]
     },
     {
       "purpose": "direct core tool остаётся доступным в cached tool set",
@@ -304,6 +316,9 @@ tool текущего runtime, а не app-server API и не extension tool.
   `StoredThread` не хранит top-level profile `name`.
 - Для текущего root thread `agent_name` зависит от effective config на момент
   вызова tool.
+- Проверки уровня карточки покрывают разбор аргументов, видимые модели схемы,
+  регистрацию и core tool activity, но не исполняют обработчик на текущей `Session`
+  или цепочке `parent_thread_id` сохранённого thread.
 - Tool не является API для чтения истории, transcript или contents rollout.
 - Tool не должен расширяться до unbounded scan/search без отдельного design
   review.

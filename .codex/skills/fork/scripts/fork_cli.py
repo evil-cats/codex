@@ -717,9 +717,10 @@ class LogSession:
         return self.fail(label=label, exit_code=status, argv=argv)
 
 
-def resolve_release_fast_cargo_env(
+def resolve_codex_v8_cargo_env_for_host(
     session: LogSession, repo_root: Path
 ) -> tuple[int, dict[str, str]]:
+    """Разрешает Codex V8 artifacts для native Cargo target без утечки process state."""
     rustc = session.check_command("rustc")
     if not rustc:
         return session.fail(label="require command: rustc"), {}
@@ -737,6 +738,8 @@ def resolve_release_fast_cargo_env(
         return session.fail(label="parse rustc host target"), {}
 
     repo_root_text = str(repo_root)
+    previous_repo_root = os.environ.get("CODEX_REPO_ROOT")
+    os.environ["CODEX_REPO_ROOT"] = repo_root_text
     sys.path.insert(0, repo_root_text)
     try:
         from scripts.codex_package.targets import TARGET_SPECS
@@ -753,6 +756,10 @@ def resolve_release_fast_cargo_env(
         return session.fail(label="resolve Codex V8 build artifacts"), {}
     finally:
         sys.path.remove(repo_root_text)
+        if previous_repo_root is None:
+            os.environ.pop("CODEX_REPO_ROOT", None)
+        else:
+            os.environ["CODEX_REPO_ROOT"] = previous_repo_root
 
     return 0, cargo_env
 
@@ -1490,7 +1497,13 @@ def cmd_fix(args: argparse.Namespace) -> int:
     if not session.check_command("cargo"):
         return session.fail(label="require command: cargo")
 
-    result = session.run_step("rust lint fix", fix_argv(just, packages))
+    result, cargo_env = resolve_codex_v8_cargo_env_for_host(session, repo_root)
+    if result != 0:
+        return result
+
+    result = session.run_step(
+        "rust lint fix", fix_argv(just, packages), env_overrides=cargo_env
+    )
     if result != 0:
         return result
     return session.ok()
@@ -1617,7 +1630,7 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
     if not file_cmd:
         return session.fail(label="require command: file")
 
-    result, cargo_env = resolve_release_fast_cargo_env(session, repo_root)
+    result, cargo_env = resolve_codex_v8_cargo_env_for_host(session, repo_root)
     if result != 0:
         return result
 

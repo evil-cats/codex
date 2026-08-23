@@ -24,6 +24,8 @@ use crate::tools::handlers::read_file_spec::create_read_file_tool;
 use crate::tools::handlers::resolve_tool_environment;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
+use codex_exec_server::GetMetadataOptions;
+use codex_exec_server::ReadFileOptions;
 use codex_protocol::models::ResponseItem;
 use codex_tools::ToolExposure;
 use codex_tools::ToolName;
@@ -52,10 +54,10 @@ impl ReadFileHandler {
 ///
 /// Вызовы, принесённые replacement-history последней compaction, исключаются;
 /// допустимы только прямые вызовы, записанные после этой границы.
-pub(crate) fn restore_read_file_context_index(
+pub(crate) fn restore_read_file_context_index<'a>(
     session: &Session,
     window_id: String,
-    history: &[ResponseItem],
+    history: impl IntoIterator<Item = &'a ResponseItem>,
     replacement_history_call_ids: &HashSet<String>,
 ) {
     session
@@ -114,6 +116,12 @@ impl ToolExecutor<ToolInvocation> for ReadFileHandler {
 }
 
 impl ReadFileHandler {
+    /// Читает файл через filesystem выбранного environment и формирует model-visible output.
+    ///
+    /// Metadata и содержимое читаются с `GetMetadataOptions::default()`,
+    /// `ReadFileOptions::default()` и действующим sandbox. После нормализации
+    /// диапазона результат либо ссылается на один проверенный output текущего
+    /// окна, либо возвращает свежий текст.
     async fn handle_call(
         &self,
         invocation: ToolInvocation,
@@ -162,7 +170,7 @@ impl ReadFileHandler {
         let fs = turn_environment.environment.get_filesystem();
 
         let metadata = fs
-            .get_metadata(&path_uri, Some(&sandbox))
+            .get_metadata(&path_uri, GetMetadataOptions::default(), Some(&sandbox))
             .await
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
@@ -177,7 +185,7 @@ impl ReadFileHandler {
         }
 
         let content = fs
-            .read_file_text(&path_uri, Some(&sandbox))
+            .read_file_text(&path_uri, ReadFileOptions::default(), Some(&sandbox))
             .await
             .map_err(|error| {
                 FunctionCallError::RespondToModel(format!(
@@ -186,8 +194,10 @@ impl ReadFileHandler {
             })?;
         let lines = split_lines_preserving_endings(&content);
         let requested_range = normalize_range(&args, lines.len())?;
-        let current_source =
-            ReadFileSource::new(turn_environment.environment_id.clone(), path_uri.clone());
+        let current_source = ReadFileSource::new(
+            turn_environment.selection.environment_id.clone(),
+            path_uri.clone(),
+        );
         let context_index = session
             .services
             .thread_extension_data

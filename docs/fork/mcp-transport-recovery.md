@@ -2,7 +2,7 @@
 id: fork-mcp-transport-recovery
 status: active
 created: 2026-07-30
-updated: 2026-08-13
+updated: 2026-08-22
 ---
 
 # Восстановление транспорта MCP stdio
@@ -65,6 +65,9 @@ legacy lifecycle и к явно включённому MCP `2026-07-28`: пов�
 использует сохранённый `McpProtocolMode`, а `connect_pending_transport`
 повторно выбирает соответствующий `ClientLifecycleMode`. Для Streamable HTTP
 сохраняется существующее отдельное восстановление после `SessionExpired404`.
+Варианты `PendingTransport::StreamableHttpWithOAuth` и
+`PendingTransport::StreamableHttpWithAccessTokenOnly` не получают stdio-дескриптор
+и не входят в эту ветку восстановления.
 
 Транспорт in-process не получает новое правило повтора.
 
@@ -78,6 +81,11 @@ legacy lifecycle и к явно включённому MCP `2026-07-28`: пов�
 - явное завершение через дескриптор процесса также помечает запуск мёртвым;
 - признак не содержит `launch_id`, stderr, временную метку или диагностические
   метаданные.
+
+Признак `dead` независим от `terminated` и конкретного локального механизма
+завершения дерева процессов, включая Windows-варианты `Job` и `Process`:
+усиленная очистка процессов не заменяет сигнал для ленивого восстановления
+транспорта.
 
 Для локальных `LocalLegacy` и `LocalModern`, а также запускаемого через executor
 stdio используется один `StdioServerTransport`, поэтому признак не требует
@@ -190,7 +198,9 @@ stdio, но оба варианта сходятся в `StdioServerTransport`. 
 1. Проверить текущую форму `RmcpClient`, `TransportRecipe`,
    `InitializeContext` и существующего восстановления HTTP-сессии.
 2. Сохранить один заменяемый дескриптор процесса stdio на клиент, не меняя
-   stable binding connection manager.
+   stable binding connection manager; вспомогательная функция извлечения
+   дескриптора должна исчерпывающе возвращать `None` для всех вариантов
+   `PendingTransport`, кроме `Stdio`.
 3. Добавить минимальный признак смерти к дескриптору процесса и выставлять его
    при EOF, `BrokenPipe` и вызове `terminate`; оборачивать этим признаком все
    актуальные варианты `LocalLegacy`, `LocalModern` и executor transport.

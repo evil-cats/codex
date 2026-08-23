@@ -1,8 +1,8 @@
 //! Выполняет best-effort предварительное обновление MCP runtime.
 //!
 //! Ограниченный канал объединяет запросы refresh, а worker всегда готовит
-//! последнее состояние thread. Незавершённый startup откладывает публикацию,
-//! но не потребляет dirty-состояние и не блокирует model step.
+//! последнее состояние thread. Согласование не ждёт pending startup; если
+//! разделённый startup завершился ошибкой, worker запускает одну замену.
 
 use super::*;
 
@@ -12,6 +12,7 @@ impl Session {
         self.schedule_mcp_prewarm();
     }
 
+    /// Запускает worker объединённых refresh и одной замены после общего `Failed`.
     pub(super) fn start_mcp_prewarm_worker(
         self: &Arc<Self>,
         requests: async_channel::Receiver<()>,
@@ -44,17 +45,33 @@ impl Session {
                     session.mark_mcp_runtime_dirty();
                 }
 
-                while session.mcp_refresh.is_pending() {
-                    tokio::select! {
+                loop {
+                    session.refresh_mcp_if_dirty().await;
+                    let reused_pending_startup_failed = tokio::select! {
                         biased;
                         _ = shutdown.cancelled() => break 'worker,
-                        _ = session.services.mcp_runtime.wait_for_current_startup() => {},
+                        request = requests.recv() => {
+                            if request.is_err() {
+                                break 'worker;
+                            }
+                            continue;
+                        },
+                        auth_change = auth_changes.changed() => {
+                            if auth_change.is_err() {
+                                break 'worker;
+                            }
+                            session.mark_mcp_runtime_dirty();
+                            continue;
+                        },
+                        failed = session
+                            .services
+                            .mcp_runtime
+                            .wait_for_current_reused_pending_startup_failure() => failed,
+                    };
+                    if !reused_pending_startup_failed {
+                        break;
                     }
-                    tokio::select! {
-                        biased;
-                        _ = shutdown.cancelled() => break 'worker,
-                        _ = session.refresh_mcp_if_dirty() => {},
-                    }
+                    session.mark_mcp_runtime_dirty();
                 }
             }
         });

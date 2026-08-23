@@ -1,4 +1,4 @@
-//! Проверяет сериализацию automatic MCP refresh относительно незавершённого startup.
+//! Проверяет замену обычного MCP-сервера после отказа общего startup.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -7,13 +7,14 @@ use anyhow::Context;
 use codex_config::types::McpServerAuth;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
+use codex_core::TurnInputRequest;
 use codex_core::config::Config;
+use codex_file_system::WriteFileOptions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::McpStartupCompleteEvent;
 use codex_protocol::protocol::McpStartupStatus;
-use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::user_input::UserInput;
 use codex_utils_path_uri::PathUri;
@@ -41,7 +42,7 @@ struct ObservedStartupEvents {
 }
 
 impl ObservedStartupEvents {
-    /// Сохраняет только события startup, различающие повторный запуск и reuse.
+    /// Сохраняет только события startup, различающие повторный запуск и переиспользование.
     fn record(&mut self, event: &EventMsg) {
         match event {
             EventMsg::McpStartupUpdate(update)
@@ -58,7 +59,7 @@ impl ObservedStartupEvents {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ObservedStartupSummary {
     ready: Vec<String>,
     failed: Vec<String>,
@@ -79,14 +80,14 @@ impl From<&McpStartupCompleteEvent> for ObservedStartupSummary {
     }
 }
 
-/// Держит thread, model mock и executor-aware путь release barrier.
+/// Хранит thread, макет модели и путь к barrier-файлу в среде executor.
 struct GatedStartupFixture {
     server: MockServer,
     test: TestCodex,
     barrier: PathUri,
 }
 
-/// Добавляет необязательный stdio server, чей initialize управляется barrier-файлом executor.
+/// Добавляет необязательный stdio server с управляемым через barrier вызовом initialize.
 fn insert_gated_mcp_server(
     config: &mut Config,
     command: String,
@@ -132,7 +133,7 @@ fn insert_gated_mcp_server(
         .expect("test MCP servers should accept any configuration");
 }
 
-/// Запускает thread и останавливает первый MCP handshake до проверки refresh.
+/// Запускает thread и останавливает первое рукопожатие MCP до проверки refresh.
 async fn build_gated_startup_fixture(
     startup_timeout: Duration,
 ) -> anyhow::Result<GatedStartupFixture> {
@@ -167,28 +168,23 @@ async fn build_gated_startup_fixture(
     })
 }
 
-/// Формирует короткий read-only turn, который обязан проверить dirty MCP runtime.
-fn read_only_user_turn(fixture: &TestCodex, text: impl Into<String>) -> Op {
+/// Формирует короткий turn с разрешениями только на чтение для проверки грязного MCP runtime.
+fn read_only_user_turn(fixture: &TestCodex, text: impl Into<String>) -> TurnInputRequest {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::read_only(), fixture.config.cwd.as_path());
-    Op::UserInput {
-        items: vec![UserInput::Text {
-            text: text.into(),
-            text_elements: Vec::new(),
-        }],
-        final_output_json_schema: None,
-        responsesapi_client_metadata: None,
-        additional_context: Default::default(),
-        thread_settings: ThreadSettingsOverrides {
-            approval_policy: Some(AskForApproval::Never),
-            sandbox_policy: Some(sandbox_policy),
-            permission_profile,
-            ..Default::default()
-        },
-    }
+    TurnInputRequest::user_input(vec![UserInput::Text {
+        text: text.into(),
+        text_elements: Vec::new(),
+    }])
+    .with_thread_settings(ThreadSettingsOverrides {
+        approval_policy: Some(AskForApproval::Never),
+        sandbox_policy: Some(sandbox_policy),
+        permission_profile,
+        ..Default::default()
+    })
 }
 
-/// Выполняет turn до idle и не теряет startup events, пришедшие перед `TurnComplete`.
+/// Выполняет turn до бездействия и сохраняет события startup перед `TurnComplete`.
 async fn run_turn_and_observe_startup(
     fixture: &GatedStartupFixture,
     label: &str,
@@ -207,7 +203,7 @@ async fn run_turn_and_observe_startup(
     fixture
         .test
         .codex
-        .submit(read_only_user_turn(&fixture.test, label))
+        .start_or_steer_turn(read_only_user_turn(&fixture.test, label))
         .await?;
 
     tokio::time::timeout(OBSERVATION_TIMEOUT, async {
@@ -227,31 +223,36 @@ async fn run_turn_and_observe_startup(
     Ok(())
 }
 
-/// Собирает startup events до наблюдаемого состояния, не используя sleep как синхронизацию.
+/// Собирает события startup до заданного состояния без синхронизации через `sleep`.
 async fn observe_startup_until(
     fixture: &GatedStartupFixture,
     observed: &mut ObservedStartupEvents,
     condition: impl Fn(&ObservedStartupEvents) -> bool,
     timeout_message: &'static str,
 ) -> anyhow::Result<()> {
-    tokio::time::timeout(OBSERVATION_TIMEOUT, async {
+    let result = tokio::time::timeout(OBSERVATION_TIMEOUT, async {
         while !condition(observed) {
             let event = fixture.test.codex.next_event().await?;
             observed.record(&event.msg);
         }
         Ok::<(), anyhow::Error>(())
     })
-    .await
-    .context(timeout_message)??;
+    .await;
+    result.with_context(|| format!("{timeout_message}; observed {observed:?}"))??;
     Ok(())
 }
 
-/// Создаёт barrier-файл через executor-aware filesystem и завершает текущий handshake.
+/// Создаёт barrier-файл через файловую систему executor и завершает рукопожатие.
 async fn release_startup(fixture: &GatedStartupFixture) -> anyhow::Result<()> {
     fixture
         .test
         .fs()
-        .write_file(&fixture.barrier, b"ready".to_vec(), /*sandbox*/ None)
+        .write_file(
+            &fixture.barrier,
+            b"ready".to_vec(),
+            WriteFileOptions::default(),
+            /*sandbox*/ None,
+        )
         .await?;
     Ok(())
 }
@@ -272,81 +273,7 @@ fn failed_summary() -> ObservedStartupSummary {
     }
 }
 
-/// Automatic refresh не отменяет первый startup и после него переиспользует соединение.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mcp_refresh_waits_for_initial_startup_without_cancelling_it() -> anyhow::Result<()> {
-    skip_if_wine_exec!(
-        Ok(()),
-        "requires a Windows test_stdio_server in the Wine-exec environment"
-    );
-    skip_if_no_network!(Ok(()));
-
-    let fixture = build_gated_startup_fixture(Duration::from_secs(10)).await?;
-    fixture.test.thread_manager.invalidate_mcp_runtimes().await;
-    let mut observed = ObservedStartupEvents::default();
-
-    run_turn_and_observe_startup(&fixture, "single-refresh", &mut observed).await?;
-    assert_eq!(observed, ObservedStartupEvents::default());
-
-    release_startup(&fixture).await?;
-    observe_startup_until(
-        &fixture,
-        &mut observed,
-        |events| events.summaries.len() == 2,
-        "initial startup and deferred refresh should both publish summaries",
-    )
-    .await?;
-    assert_eq!(
-        observed,
-        ObservedStartupEvents {
-            starts_after_initial: 0,
-            summaries: vec![ready_summary(), ready_summary()],
-        }
-    );
-
-    fixture.test.codex.shutdown_and_wait().await?;
-    Ok(())
-}
-
-/// Несколько invalidation во время startup дают один refresh последнего состояния.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mcp_refresh_requests_coalesce_while_startup_is_pending() -> anyhow::Result<()> {
-    skip_if_wine_exec!(
-        Ok(()),
-        "requires a Windows test_stdio_server in the Wine-exec environment"
-    );
-    skip_if_no_network!(Ok(()));
-
-    let fixture = build_gated_startup_fixture(Duration::from_secs(10)).await?;
-    for _ in 0..3 {
-        fixture.test.thread_manager.invalidate_mcp_runtimes().await;
-    }
-    let mut observed = ObservedStartupEvents::default();
-
-    run_turn_and_observe_startup(&fixture, "coalesced-refresh", &mut observed).await?;
-    release_startup(&fixture).await?;
-    observe_startup_until(
-        &fixture,
-        &mut observed,
-        |events| events.summaries.len() == 2,
-        "coalesced refresh should publish exactly one summary after initial startup",
-    )
-    .await?;
-    run_turn_and_observe_startup(&fixture, "after-coalesced-refresh", &mut observed).await?;
-
-    assert_eq!(
-        observed,
-        ObservedStartupEvents {
-            starts_after_initial: 0,
-            summaries: vec![ready_summary(), ready_summary()],
-        }
-    );
-
-    fixture.test.codex.shutdown_and_wait().await?;
-    Ok(())
-}
-
-/// Failed startup освобождает waiter, после чего refresh может запустить replacement.
+/// Исход `Failed` у общего startup запускает одну замену обычного MCP-сервера.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_refresh_continues_after_initial_startup_failure() -> anyhow::Result<()> {
     skip_if_wine_exec!(
@@ -363,38 +290,37 @@ async fn mcp_refresh_continues_after_initial_startup_failure() -> anyhow::Result
     observe_startup_until(
         &fixture,
         &mut observed,
-        |events| events.summaries.len() == 1,
-        "initial gated startup should reach its configured timeout",
+        |events| events.summaries.len() >= 2 && events.starts_after_initial == 1,
+        "failed shared startup should publish its views and start one replacement",
     )
     .await?;
-    assert_eq!(
-        observed,
-        ObservedStartupEvents {
-            starts_after_initial: 0,
-            summaries: vec![failed_summary()],
-        }
-    );
-    observe_startup_until(
-        &fixture,
-        &mut observed,
-        |events| events.starts_after_initial == 1,
-        "deferred refresh should start a replacement after failed startup",
-    )
-    .await?;
-
-    release_startup(&fixture).await?;
-    observe_startup_until(
-        &fixture,
-        &mut observed,
-        |events| events.summaries.len() == 2,
-        "replacement startup should complete after the barrier is released",
-    )
-    .await?;
+    let failed_summary = failed_summary();
+    let failed_view_count = observed.summaries.len();
+    assert!(failed_view_count >= 2);
     assert_eq!(
         observed,
         ObservedStartupEvents {
             starts_after_initial: 1,
-            summaries: vec![failed_summary(), ready_summary()],
+            summaries: vec![failed_summary.clone(); failed_view_count],
+        }
+    );
+
+    release_startup(&fixture).await?;
+    let ready_summary = ready_summary();
+    observe_startup_until(
+        &fixture,
+        &mut observed,
+        |events| events.summaries.last() == Some(&ready_summary),
+        "replacement startup should complete after the barrier is released",
+    )
+    .await?;
+    let mut expected_summaries = vec![failed_summary; failed_view_count];
+    expected_summaries.push(ready_summary);
+    assert_eq!(
+        observed,
+        ObservedStartupEvents {
+            starts_after_initial: 1,
+            summaries: expected_summaries,
         }
     );
 

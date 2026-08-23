@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # TUI history image previews
@@ -45,7 +45,7 @@ Fallback остается рядом:
 | `codex-rs/tui/src/history_cell/mod.rs` | `HistoryCellDisplayItem::Line(HyperlinkLine)`, `HistoryCellDisplayItem::LocalImage`, `display_items_for_mode`, вспомогательные функции преобразования |
 | `codex-rs/tui/src/history_cell/messages.rs` | `UserHistoryCell.local_image_paths`, fallback labels и default `ImagePreviewSize::Normal` |
 | `codex-rs/tui/src/history_cell/local_image.rs` | `LocalImageHistoryCell` для controlled assistant/tool images |
-| `codex-rs/tui/src/history_cell/tests.rs` | Tests for marker emission, Raw/Rich behavior, Markdown non-trust |
+| `codex-rs/tui/src/history_cell/tests.rs` | Проверки выдачи маркеров, поведения `Raw`/`Rich`, запрета доверия к Markdown и сохранения `HyperlinkLine` рядом с маркером изображения |
 | `codex-rs/tui/src/terminal_hyperlinks.rs` | `HyperlinkLine` хранит видимый `Line` и метаданные терминальных ссылок отдельно, чтобы байты OSC 8 не влияли на геометрию |
 
 ### TUI event and callers
@@ -66,6 +66,7 @@ Fallback остается рядом:
 | `codex-rs/tui/src/app/resize_reflow_tests.rs` | Проверки upstream-контрактов ограничения строк, уведомления о пагинации и initial replay для типизированных display items |
 | `codex-rs/tui/src/insert_history.rs` | `HistoryInsertItem::Line(HyperlinkLine)`, `HistoryInsertItem::Image`, подсчёт строк, граница записи в терминал |
 | `codex-rs/tui/src/tui.rs` | `insert_history_items_with_wrap_policy` boundary |
+| `codex-rs/tui/src/tui/history_tail.rs` | Перед заменой видимого хвоста из строк сбрасывает ожидающие `HistoryInsertItem` через общий путь вставки |
 | `codex-rs/tui/src/custom_terminal.rs` | Kitty history image tracking and cleanup |
 
 ### Terminal image protocol
@@ -93,29 +94,31 @@ Fallback остается рядом:
 
 ## Итоговый контракт
 
-### Rendering contract
+### Контракт отображения
 
 1. `HistoryCell::display_items_for_mode(width, HistoryRenderMode::Rich)` может
    возвращать `HistoryCellDisplayItem::LocalImage { path, preview_size }`.
-2. Bitmap marker всегда идёт рядом с текстовой fallback line.
-3. `HistoryRenderMode::Raw` остается line-only.
+2. Маркер bitmap-изображения всегда идёт рядом с резервной текстовой строкой.
+3. `HistoryRenderMode::Raw` возвращает только строки.
 4. Произвольный Markdown/plain text не должен создавать `LocalImage`.
-5. Raw terminal image payload не хранится в ratatui `Line`.
-6. Terminal payload создаётся только в `App::prepare_history_insert_items`.
-7. If terminal protocol unsupported или asset preparation fails, marker
-   пропускается best-effort, fallback остается.
-8. После миграции upstream на `HyperlinkLine` обычные строки терминальной
-   истории должны сохранять путь `HistoryCellDisplayItem::Line(HyperlinkLine)`
-   -> `HistoryInsertItem::Line(HyperlinkLine)`.
+5. Необработанные данные терминального изображения не хранятся в ratatui
+   `Line`.
+6. Данные терминального изображения создаются только в
+   `App::prepare_history_insert_items`.
+7. Если терминальный протокол не поддерживается или подготовка ресурса
+   завершается ошибкой, маркер пропускается, а резервная строка остаётся.
+8. Обычные строки терминальной истории должны сохранять путь
+   `HistoryCellDisplayItem::Line(HyperlinkLine)` ->
+   `HistoryInsertItem::Line(HyperlinkLine)`.
 9. Не возвращать пути scrollback и reflow к старому `Line<'static>` как к
    основному типу строк. `HistoryCellDisplayItem::line()` допустим только для
    потребителей обычных видимых строк и намеренно отбрасывает метаданные
    ссылок.
-10. Уведомление upstream о неполной или пагинированной истории терминала
-    добавляется как `HistoryCellDisplayItem::Line`; оно не должно понижать
-    соседние маркеры изображений до `HyperlinkLine` или обычного текста.
+10. Уведомление о неполной или пагинированной истории терминала добавляется как
+    `HistoryCellDisplayItem::Line`; оно не должно понижать соседние маркеры
+    изображений до `HyperlinkLine` или обычного текста.
 
-### Source contract
+### Контракт источника
 
 1. Пользовательские local attachments входят через `UserHistoryCell.local_image_paths`.
 2. Assistant/tool-generated images входят только через trusted structured path:

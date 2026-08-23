@@ -41,6 +41,28 @@ fn inject_permission_profile_env_removes_stale_value_without_active_profile() {
     assert_eq!(env.get(CODEX_PERMISSION_PROFILE_ENV_VAR), None);
 }
 
+#[test]
+fn inject_apply_patch_env_follows_preserve_line_endings_feature() {
+    let mut env = HashMap::from([(
+        CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR.to_ascii_lowercase(),
+        "stale".to_string(),
+    )]);
+    let mut features = Features::with_defaults();
+
+    inject_apply_patch_env(&mut env, &features);
+    assert_eq!(env, HashMap::new());
+
+    features.enable(Feature::ApplyPatchPreserveLineEndings);
+    inject_apply_patch_env(&mut env, &features);
+    assert_eq!(
+        env,
+        HashMap::from([(
+            CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR.to_string(),
+            "1".to_string(),
+        )])
+    );
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn inject_permission_profile_env_replaces_differently_cased_windows_key() {
@@ -74,7 +96,7 @@ fn test_core_inherit_defaults_keep_sensitive_vars() {
 
     let policy = ShellEnvironmentPolicy::default(); // inherit All, default excludes ignored
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -101,7 +123,7 @@ fn test_core_inherit_with_default_excludes_enabled() {
         ..Default::default()
     };
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -124,7 +146,7 @@ fn test_include_only() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -145,7 +167,7 @@ fn test_set_overrides() {
     policy.r#set.insert("NEW_VAR".to_string(), "42".to_string());
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -161,7 +183,7 @@ fn populate_env_inserts_thread_id() {
     let vars = make_vars(&[("PATH", "/usr/bin")]);
     let policy = ShellEnvironmentPolicy::default();
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
 
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -211,9 +233,7 @@ fn populate_env_inserts_runtime_identity_after_policy_filters() {
 fn populate_env_omits_thread_id_when_missing() {
     let vars = make_vars(&[("PATH", "/usr/bin")]);
     let policy = ShellEnvironmentPolicy::default();
-    let result = populate_env(
-        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
-    );
+    let result = populate_env(vars, &policy, /*thread_id*/ None);
 
     let expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
@@ -233,12 +253,7 @@ fn test_inherit_all() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(
-        vars.clone(),
-        &policy,
-        Some(thread_id),
-        /*agent_name*/ None,
-    );
+    let result = populate_env(vars.clone(), &policy, Some(thread_id));
     let mut expected: HashMap<String, String> = vars.into_iter().collect();
     expected.insert(CODEX_THREAD_ID_ENV_VAR.to_string(), thread_id.to_string());
     assert_eq!(result, expected);
@@ -255,7 +270,7 @@ fn test_inherit_all_with_default_excludes() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
     let mut expected: HashMap<String, String> = hashmap! {
         "PATH".to_string() => "/usr/bin".to_string(),
     };
@@ -280,7 +295,7 @@ fn test_core_inherit_respects_case_insensitive_names_on_windows() {
     };
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
     let mut expected: HashMap<String, String> = hashmap! {
         "Path".to_string() => "C:\\Windows\\System32".to_string(),
         "PathExt".to_string() => ".COM;.EXE;.BAT;.CMD".to_string(),
@@ -302,9 +317,7 @@ fn create_env_inserts_pathext_on_windows_when_missing() {
         ..Default::default()
     };
 
-    let result = create_env_from_vars(
-        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
-    );
+    let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
 
     let expected: HashMap<String, String> = hashmap! {
         "PATHEXT".to_string() => ".COM;.EXE;.BAT;.CMD".to_string(),
@@ -323,9 +336,7 @@ fn create_env_preserves_existing_pathext_case_insensitively_on_windows() {
         ..Default::default()
     };
 
-    let result = create_env_from_vars(
-        vars, &policy, /*thread_id*/ None, /*agent_name*/ None,
-    );
+    let result = create_env_from_vars(vars, &policy, /*thread_id*/ None);
 
     let pathext_vars = result
         .iter()
@@ -350,7 +361,7 @@ fn test_inherit_none() {
         .insert("ONLY_VAR".to_string(), "yes".to_string());
 
     let thread_id = ThreadId::new();
-    let result = populate_env(vars, &policy, Some(thread_id), /*agent_name*/ None);
+    let result = populate_env(vars, &policy, Some(thread_id));
     let mut expected: HashMap<String, String> = hashmap! {
         "ONLY_VAR".to_string() => "yes".to_string(),
     };

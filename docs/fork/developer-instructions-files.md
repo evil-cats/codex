@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-08-14
+updated: 2026-08-22
 ---
 
 # Developer instructions files
@@ -145,7 +145,19 @@ foo = "xyzzy"
 let file_developer_instructions = if developer_instructions.is_none() {
     let mut sections = Vec::new();
     for path in &cfg.developer_instructions_files {
-        let contents = fs.read_file_text(path, /*sandbox*/ None).await?;
+        let path_uri = PathUri::from_abs_path(path);
+        let contents = fs
+            .read_file_text(&path_uri, ReadFileOptions::default(), /*sandbox*/ None)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "failed to read developer instructions file {}: {e}",
+                        path.display()
+                    ),
+                )
+            })?;
         let contents = contents.trim();
         if contents.is_empty() {
             startup_warnings.push(format!(

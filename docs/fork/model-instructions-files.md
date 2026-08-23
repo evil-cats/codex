@@ -2,7 +2,7 @@
 id: fork-model-instructions-files
 status: active
 created: 2026-07-24
-updated: 2026-08-14
+updated: 2026-08-23
 ---
 
 # Model instructions files
@@ -50,7 +50,6 @@ wire contract с одним developer item.
 | `codex-rs/core/src/config/config_tests.rs` | Покрывает parsing, порядок, ошибки и precedence |
 | `codex-rs/core/src/config/config_loader_tests.rs` | Покрывает config layers и CLI config override |
 | `codex-rs/core/tests/suite/client.rs` | Проверяет исходящее поле Responses API `instructions` |
-| `codex-rs/core/src/session/config_lock.rs` | Исключает файловый startup-only override из thread config lock |
 | `codex-rs/core/config.schema.json` | Описывает новый config key в сгенерированной schema |
 
 ## Итоговый контракт
@@ -192,6 +191,14 @@ Effective base instructions выбираются в следующем поря�
 Runtime override сохраняет наивысший приоритет. Эта карточка не меняет общий
 контракт `ConfigOverrides` и не меняет источник встроенных инструкций модели.
 
+### Граница runtime-конфигурации
+
+Исходные пути `model_instructions_files` используются только при загрузке
+`Config`; дальнейший runtime получает уже собранное значение
+`base_instructions`. Механизм снимка или фиксации эффективной конфигурации
+потока должен сохранять итоговые `base_instructions`, а не исходные пути
+файлов.
+
 ## Архитектурное решение
 
 ### Выбранный вариант
@@ -223,9 +230,8 @@ Runtime override сохраняет наивысший приоритет. Эт�
 7. trim'ить и проверять каждый файл, сохраняя порядок;
 8. соединить секции через `\n\n` до вычисления effective
    `base_instructions`;
-9. исключить startup-only список из thread config lock рядом с одиночным ключом;
-10. обновить config schema через skill-owned generator;
-11. восстановить unit, loader и сквозное Responses API покрытие.
+9. обновить config schema через skill-owned generator;
+10. восстановить unit, loader и сквозное Responses API покрытие.
 
 ## Проверки
 

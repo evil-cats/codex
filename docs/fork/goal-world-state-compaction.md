@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -55,13 +55,14 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/ext/extension-api/src/contributors.rs` | Даёт extension способ распознать собственный model-context fragment при замене истории |
 | `codex-rs/ext/extension-api/src/capabilities/events.rs` | Даёт extension host-owned канал уведомления об очищенной goal |
 | `codex-rs/core/src/compact.rs` | Не переносит extension context в local summary как пользовательское сообщение |
+| `codex-rs/core/src/compact_tests.rs` | Проверяет отбор реальных user messages с сохранением metadata без extension prompt state |
 | `codex-rs/core/src/compact_remote.rs` | Удаляет extension context из remote replacement перед актуальным initial context |
-| `codex-rs/core/src/compact_remote_v2.rs` | Использует общий replacement processor для remote V2 compaction |
+| `codex-rs/core/src/compact_remote_v2.rs` | Удаляет группы extension-owned source items из Remote V2 history перед новым initial context |
 | `codex-rs/core/src/compact_remote_history.rs` | Сохраняет source item вместе с attached notice при фильтрации remote replacement |
 | `codex-rs/core/src/compact_token_budget.rs` | Устанавливает свежий WorldState как новое окно без summary request |
 | `codex-rs/core/src/context/world_state/mod.rs` | Разделяет сохраняемые и одноразовые WorldState fragments |
 | `codex-rs/core/src/context_manager/history.rs` | Продвигает snapshot, не записывая одноразовый fragment в history |
-| `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет разделение snapshot, history и одноразовой доставки на уровне context manager |
+| `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет baseline deduplication и сверку snapshot с retained history |
 | `codex-rs/core/src/prompt_debug.rs` | Показывает одноразовый fragment в том же prompt, который получает sampling |
 | `codex-rs/core/src/session/mod.rs` | Возвращает одноразовые WorldState items вызывающему sampling path |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Не восстанавливает extension prompt state как user message в legacy replacement path |
@@ -168,6 +169,9 @@ step.
 - local mid-turn compaction получает точный active-goal fragment через
   `build_compaction_initial_context`;
 - remote compaction получает тот же fragment через общий initial-context path;
+- Remote V2 сохраняет retained history с metadata, но перед установкой удаляет
+  группу extension-owned source item вместе с attached notice и затем добавляет
+  только свежий full `WorldState`;
 - `TokenBudget` reset получает fragment через `start_new_context_window`;
 - если goal создана или изменена в model step, который сам вызвал compaction,
   следующий step заново строит `WorldState` перед sampling и добавляет свежий
@@ -254,14 +258,16 @@ status transition.
 
 Active-goal diff хранится как contextual user message, чтобы оставаться частью
 инкрементальной model history до следующей замены окна. Без явного
-extension-owned matcher local compaction принимал такой standalone fragment за
-реальную пользовательскую реплику и переносил его в replacement history даже
-после terminal transition.
+extension-owned matcher local и remote compaction принимали такой standalone
+fragment за реальную пользовательскую реплику и переносили его в replacement
+history даже после terminal transition.
 
-`ContextContributor::matches_model_context_fragment` оставляет владение
-markers внутри extension. Local, remote и legacy rollout-reconstruction paths
-используют общий признак только для отделения prompt state от conversation data,
-после чего добавляют актуальный `WorldState` обычным initial-context path.
+`ContextContributor::matches_model_context_fragment` оставляет владение markers
+внутри extension. Local, Remote V1 и legacy rollout-reconstruction применяют
+признак при сборке replacement user messages. Remote V2 отдельно владеет
+retained history с metadata, поэтому применяет тот же признак к группе source
+item до добавления актуального `WorldState` обычным initial-context path;
+attached notice не отделяется от удалённого source item.
 
 ## Порядок повторения при переносе
 
@@ -271,7 +277,8 @@ markers внутри extension. Local, remote и legacy rollout-reconstruction p
    `WorldState` через общий initial-context path.
 3. Если remote history группирует source item с attached notices, фильтровать
    extension context на source group до `flat_map`, сохраняя notices только у
-   оставшихся source items.
+   оставшихся source items. Для Remote V2 повторять фильтрацию после его
+   собственного retained-history builder и до вставки нового initial context.
 4. Добавить стабильную секцию active goal рядом с runtime goal extension, а не
    в общий `codex-core`.
 5. Сохранить role `user`, XML escaping и ограничение размера objective.
@@ -294,6 +301,10 @@ markers внутри extension. Local, remote и legacy rollout-reconstruction p
 {
   "schema": "fork-tests.v1",
   "tests": [
+    {
+      "purpose": "local compaction исключает extension prompt state без потери metadata реальных user messages",
+      "argv": ["just", "test", "-p", "codex-core", "collect_annotated_user_messages_excluding_preserves_retained_metadata"]
+    },
     {
       "purpose": "goal lifecycle, persistence и world-state contributor extension",
       "argv": ["just", "test", "-p", "codex-goal-extension"]

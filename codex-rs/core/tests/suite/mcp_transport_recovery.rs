@@ -8,12 +8,13 @@ use std::time::UNIX_EPOCH;
 use codex_config::types::McpServerAuth;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
+use codex_core::TurnInputRequest;
 use codex_core::config::Config;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::user_input::UserInput;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
@@ -76,26 +77,21 @@ fn insert_mcp_server(
         .expect("test mcp servers should accept any configuration");
 }
 
-fn read_only_user_turn(fixture: &TestCodex, text: impl Into<String>) -> Op {
+fn read_only_user_turn(fixture: &TestCodex, text: impl Into<String>) -> TurnInputRequest {
     let cwd = fixture.config.cwd.clone();
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::read_only(), cwd.as_path());
-    Op::UserInput {
-        items: vec![UserInput::Text {
-            text: text.into(),
-            text_elements: Vec::new(),
-        }],
-        final_output_json_schema: None,
-        responsesapi_client_metadata: None,
-        additional_context: Default::default(),
-        thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
-            approval_policy: Some(AskForApproval::Never),
-            sandbox_policy: Some(sandbox_policy),
-            permission_profile,
-            collaboration_mode: None,
-            ..Default::default()
-        },
-    }
+    TurnInputRequest::user_input(vec![UserInput::Text {
+        text: text.into(),
+        text_elements: Vec::new(),
+    }])
+    .with_thread_settings(ThreadSettingsOverrides {
+        approval_policy: Some(AskForApproval::Never),
+        sandbox_policy: Some(sandbox_policy),
+        permission_profile,
+        collaboration_mode: None,
+        ..Default::default()
+    })
 }
 
 fn unique_state_file(label: &str) -> String {
@@ -156,7 +152,7 @@ async fn call_recovery_probe(
 
     fixture
         .codex
-        .submit(read_only_user_turn(fixture, prompt))
+        .start_or_steer_turn(read_only_user_turn(fixture, prompt))
         .await?;
 
     let end_event = wait_for_event(&fixture.codex, |event| {

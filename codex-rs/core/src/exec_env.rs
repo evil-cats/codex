@@ -1,3 +1,7 @@
+pub use codex_apply_patch::CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR;
+use codex_features::Feature;
+use codex_features::Features;
+use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 #[cfg(test)]
 use codex_protocol::config_types::EnvironmentVariablePattern;
@@ -10,12 +14,14 @@ use std::path::Path;
 pub use codex_protocol::shell_environment::CODEX_AGENT_ENV_VAR;
 pub use codex_protocol::shell_environment::CODEX_CALL_ID_ENV_VAR;
 pub use codex_protocol::shell_environment::CODEX_ROLLOUT_ENV_VAR;
+pub use codex_protocol::shell_environment::CODEX_SESSION_ID_ENV_VAR;
 pub use codex_protocol::shell_environment::CODEX_THREAD_ID_ENV_VAR;
 
 /// Informational name of the active permission profile. Child processes can
 /// overwrite this value, so it must not be treated as proof of enforcement.
 pub const CODEX_PERMISSION_PROFILE_ENV_VAR: &str = "CODEX_PERMISSION_PROFILE";
 
+/// Значения runtime-идентичности, добавляемые после применения shell policy.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RuntimeEnv<'a> {
     pub thread_id: Option<ThreadId>,
@@ -32,24 +38,22 @@ pub struct RuntimeEnv<'a> {
 /// The derivation follows the algorithm documented in the struct-level comment
 /// for [`ShellEnvironmentPolicy`].
 ///
-/// Runtime identity variables such as `CODEX_THREAD_ID`, `CODEX_AGENT`,
-/// `CODEX_CALL_ID`, and `CODEX_ROLLOUT` are injected when their values are
-/// provided, even when `include_only` is set.
+/// `CODEX_THREAD_ID` добавляется при наличии thread id даже с `include_only`.
 pub fn create_env(
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<ThreadId>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String> {
     create_env_with_runtime(
         policy,
         RuntimeEnv {
             thread_id,
-            agent_name,
             ..Default::default()
         },
     )
 }
 
+/// Строит окружение и после policy-фильтров добавляет переданные значения
+/// runtime-идентичности.
 pub fn create_env_with_runtime(
     policy: &ShellEnvironmentPolicy,
     runtime: RuntimeEnv<'_>,
@@ -64,6 +68,11 @@ pub fn create_env_with_runtime(
             rollout_path: runtime.rollout_path,
         },
     )
+}
+
+/// Exposes the shared root-session identity to model-reachable shell commands.
+pub(crate) fn inject_session_id_env(env: &mut HashMap<String, String>, session_id: SessionId) {
+    env.insert(CODEX_SESSION_ID_ENV_VAR.to_string(), session_id.to_string());
 }
 
 /// Injects the selected named permission profile into a shell tool's environment.
@@ -87,18 +96,33 @@ pub(crate) fn inject_permission_profile_env(
     }
 }
 
+/// Carries the configured apply-patch line-ending rollout state into child
+/// processes.
+///
+/// Apply this after inherited or client-provided environment overrides so the
+/// active feature configuration remains authoritative. The in-process
+/// apply-patch path reads the feature directly.
+pub fn inject_apply_patch_env(env: &mut HashMap<String, String>, features: &Features) {
+    env.retain(|key, _| !key.eq_ignore_ascii_case(CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR));
+    if features.enabled(Feature::ApplyPatchPreserveLineEndings) {
+        env.insert(
+            CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS_ENV_VAR.to_string(),
+            "1".to_string(),
+        );
+    }
+}
+
 #[cfg(all(test, target_os = "windows"))]
 fn create_env_from_vars<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<ThreadId>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let thread_id = thread_id.map(|thread_id| thread_id.to_string());
-    shell_environment::create_env_from_vars(vars, policy, thread_id.as_deref(), agent_name)
+    shell_environment::create_env_from_vars(vars, policy, thread_id.as_deref())
 }
 
 #[cfg(test)]
@@ -106,13 +130,12 @@ fn populate_env<I>(
     vars: I,
     policy: &ShellEnvironmentPolicy,
     thread_id: Option<ThreadId>,
-    agent_name: Option<&str>,
 ) -> HashMap<String, String>
 where
     I: IntoIterator<Item = (String, String)>,
 {
     let thread_id = thread_id.map(|thread_id| thread_id.to_string());
-    shell_environment::populate_env(vars, policy, thread_id.as_deref(), agent_name)
+    shell_environment::populate_env(vars, policy, thread_id.as_deref())
 }
 
 #[cfg(test)]

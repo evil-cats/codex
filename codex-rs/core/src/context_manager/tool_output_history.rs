@@ -17,13 +17,15 @@ impl ToolOutputHistoryPolicy {
     /// повторное усечение нарушило бы его `complete=yes`. Поиск по history, а не
     /// отдельный cache, сохраняет одинаковый результат после replay, rollback и
     /// замены history при compaction.
-    pub(super) fn for_item(item: &ResponseItem, history: &[ResponseItem]) -> Self {
+    pub(super) fn for_item<'a>(
+        item: &ResponseItem,
+        history: impl DoubleEndedIterator<Item = &'a ResponseItem>,
+    ) -> Self {
         let ResponseItem::FunctionCallOutput { call_id, .. } = item else {
             return Self::ModelDefault;
         };
 
         history
-            .iter()
             .rev()
             .find_map(|history_item| match history_item {
                 ResponseItem::FunctionCall {

@@ -2,7 +2,7 @@
 id: fork-exec-command-stdin
 status: active
 created: 2026-08-06
-updated: 2026-08-13
+updated: 2026-08-23
 ---
 
 # Начальный `stdin` для `exec_command`
@@ -91,8 +91,8 @@ echo "hello" | wc -c
 | `codex-rs/windows-sandbox-rs/src/unified_exec/tests.rs` | Актуализирует тестовые литералы `ProcessDriver` и проверяет сохранение обычного протокола stdin/EOF для `runner` |
 | `docs/fork/exec-command-stdin.md` | Документ-владелец для переноса, проверки и отката доработки |
 
-Новое поле `ExecParams.initial_stdin` также потребовало совместимых
-значений `None` в существующих литералах Rust:
+Литералы `ExecParams`, которые не передают начальный ввод, должны явно задавать
+`initial_stdin: None`:
 
 - `codex-rs/cli/tests/exec_server.rs`;
 - `codex-rs/exec-server/src/client.rs`;
@@ -104,17 +104,19 @@ echo "hello" | wc -c
 - `codex-rs/exec-server/tests/relay.rs`;
 - `codex-rs/rmcp-client/src/stdio_server_launcher.rs`.
 
-Расширение `ProcessDriver.initial_stdin_tx` также потребовало явных `None` в
-существующих тестовых литералах `ProcessDriver`:
+В `codex-rs/exec-server/tests/relay.rs` локальная переменная `exec_params`
+должна содержать `initial_stdin: None` до вызова `client.exec(exec_params)`.
+
+Тестовые литералы `ProcessDriver` без канала подтверждения начального ввода
+должны явно задавать `initial_stdin_tx: None`:
 
 - `codex-rs/core/src/unified_exec/async_watcher_tests.rs`;
 - `codex-rs/exec-server/src/local_process.rs`;
 - `codex-rs/utils/pty/src/tests.rs`;
 - `codex-rs/windows-sandbox-rs/src/unified_exec/tests.rs`.
 
-В upstream `0.147.0` удалённый запуск получил отдельную диспетчеризацию для
-обратных вызовов сетевой политики. Поддерживающая цепочка, которую нужно
-проверять вместе с владельцами карточки:
+Удалённый запуск использует отдельную диспетчеризацию для обратных вызовов
+сетевой политики. Вместе с владельцами карточки нужно проверять всю цепочку:
 
 - `codex-rs/exec-server/src/process.rs` — оба метода `ExecBackend::start` и
   `ExecBackend::start_with_network_policy_decider` принимают один и тот же
@@ -124,8 +126,8 @@ echo "hello" | wc -c
 - `codex-rs/exec-server/src/client.rs` — отправляет полученный `ExecParams` в
   `exec` RPC и отдельно регистрирует контроллер сетевой политики;
 - `codex-rs/utils/pty/src/process.rs` — при построении `ProcessHandle` сохраняет
-  одновременно подтверждаемый `initial_stdin_tx` и upstream-признак Windows
-  `tty`, определяющий семантику прерывания.
+  одновременно подтверждаемый `initial_stdin_tx` и признак Windows `tty`,
+  определяющий семантику прерывания.
 
 Карта сверена с фактическими изменениями реализации. При переносе на новую
 версию upstream её нужно сверять заново, если транспорт процесса или литералы

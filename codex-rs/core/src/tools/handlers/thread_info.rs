@@ -14,6 +14,7 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
+use codex_thread_store::PersistContext;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::StoredThread;
 use codex_thread_store::ThreadStore;
@@ -138,7 +139,7 @@ async fn stored_thread_info(
 
 async fn current_rollout_path(session: &Session) -> Result<Option<PathBuf>, FunctionCallError> {
     session
-        .try_ensure_rollout_materialized()
+        .try_ensure_rollout_materialized(PersistContext::Standard)
         .await
         .map_err(rollout_materialize_error)?;
     session

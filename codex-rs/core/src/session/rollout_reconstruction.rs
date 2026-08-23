@@ -7,14 +7,15 @@
 use super::*;
 use crate::context::world_state::WorldStateSnapshot;
 use crate::context_manager::is_user_turn_boundary;
+use codex_history::ResponseItemEnvelope;
 use codex_protocol::protocol::SessionContextWindow;
 use uuid::Uuid;
 
-// Return value of `Session::reconstruct_history_from_rollout`, bundling the rebuilt history with
-// the resume/fork hydration metadata derived from the same replay.
+/// Результат `Session::reconstruct_history_from_rollout` с восстановленной
+/// history и resume/fork metadata, полученными из одного replay.
 #[derive(Debug)]
 pub(super) struct RolloutReconstruction {
-    pub(super) history: Vec<ResponseItem>,
+    pub(super) history: Vec<ResponseItemEnvelope>,
     pub(super) replacement_history_call_ids: HashSet<String>,
     pub(super) previous_turn_settings: Option<PreviousTurnSettings>,
     pub(super) reference_context_item: Option<TurnContextItem>,
@@ -56,7 +57,7 @@ struct ActiveReplaySegment<'a> {
     previous_turn_settings: Option<PreviousTurnSettings>,
     reference_context_item: TurnReferenceContextItem,
     world_state_replay: Vec<&'a RolloutItem>,
-    base_replacement_history: Option<&'a [ResponseItem]>,
+    base_replacement_history: Option<&'a [ResponseItemEnvelope]>,
     window: Option<ReconstructedWindow>,
 }
 
@@ -67,7 +68,7 @@ fn turn_ids_are_compatible(active_turn_id: Option<&str>, item_turn_id: Option<&s
 
 fn finalize_active_segment<'a>(
     active_segment: ActiveReplaySegment<'a>,
-    base_replacement_history: &mut Option<&'a [ResponseItem]>,
+    base_replacement_history: &mut Option<&'a [ResponseItemEnvelope]>,
     previous_turn_settings: &mut Option<PreviousTurnSettings>,
     reference_context_item: &mut TurnReferenceContextItem,
     world_state_replay: &mut Vec<&'a RolloutItem>,
@@ -117,6 +118,10 @@ fn finalize_active_segment<'a>(
 }
 
 impl Session {
+    /// Восстанавливает history, оконные IDs и resume metadata из rollout без его изменения.
+    ///
+    /// `replacement_history_call_ids` отдельно отмечает вызовы из последней
+    /// compaction, чтобы `read_file` не считал их свежим coverage нового окна.
     pub(super) async fn reconstruct_history_from_rollout(
         &self,
         turn_context: &TurnContext,
@@ -143,7 +148,7 @@ impl Session {
                 _ => None,
             })
         };
-        let mut base_replacement_history: Option<&[ResponseItem]> = None;
+        let mut base_replacement_history: Option<&[ResponseItemEnvelope]> = None;
         let mut previous_turn_settings = None;
         let mut reference_context_item = TurnReferenceContextItem::NeverSet;
         let mut world_state_replay = Vec::new();
@@ -278,7 +283,8 @@ impl Session {
                 RolloutItem::ResponseItem(response_item) => {
                     let active_segment =
                         active_segment.get_or_insert_with(ActiveReplaySegment::default);
-                    active_segment.counts_as_user_turn |= is_user_turn_boundary(response_item);
+                    active_segment.counts_as_user_turn |=
+                        is_user_turn_boundary(&response_item.item);
                 }
                 RolloutItem::InterAgentCommunication(_) => {
                     let active_segment =
@@ -287,6 +293,7 @@ impl Session {
                 }
                 RolloutItem::EventMsg(_)
                 | RolloutItem::SessionMeta(_)
+                | RolloutItem::SecurityRiskScore(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. } => {}
             }
 
@@ -324,7 +331,7 @@ impl Session {
         let replacement_history_call_ids = base_replacement_history
             .iter()
             .flat_map(|history| history.iter())
-            .filter_map(|item| match item {
+            .filter_map(|envelope| match &envelope.item {
                 ResponseItem::FunctionCall { call_id, .. } => Some(call_id.clone()),
                 _ => None,
             })
@@ -332,7 +339,7 @@ impl Session {
         let mut history = ContextManager::new();
         let mut saw_legacy_compaction_without_replacement_history = false;
         if let Some(base_replacement_history) = base_replacement_history {
-            history.replace(base_replacement_history.to_vec());
+            history.replace_annotated(base_replacement_history.to_vec());
         }
         // Materialize exact history semantics from the replay-derived suffix. The eventual lazy
         // design should keep this same replay shape, but drive it from a resumable reverse source
@@ -340,8 +347,8 @@ impl Session {
         for item in rollout_suffix {
             match item {
                 RolloutItem::ResponseItem(response_item) => {
-                    history.record_items(
-                        std::iter::once(response_item),
+                    history.record_annotated_items(
+                        std::slice::from_ref(response_item),
                         turn_context.model_info.truncation_policy.into(),
                     );
                 }
@@ -357,7 +364,7 @@ impl Session {
                     if let Some(replacement_history) = &compacted.replacement_history {
                         // This should actually never happen, because the reverse loop above (to build rollout_suffix)
                         // should stop before any compaction that has Some replacement_history
-                        history.replace(replacement_history.clone());
+                        history.replace_annotated(replacement_history.clone());
                     } else {
                         saw_legacy_compaction_without_replacement_history = true;
                         // Legacy rollouts without `replacement_history` should rebuild the
@@ -368,16 +375,16 @@ impl Session {
                         // prompt shape.
                         // TODO(ccunningham): if we drop support for None replacement_history compaction items,
                         // we can get rid of this second loop entirely and just build `history` directly in the first loop.
-                        let user_messages =
-                            compact::collect_user_messages_excluding(history.raw_items(), |item| {
-                                self.is_extension_model_context_message(item)
-                            });
+                        let user_messages = compact::collect_annotated_user_messages_excluding(
+                            history.annotated_items(),
+                            |item| self.is_extension_model_context_message(item),
+                        );
                         let rebuilt = compact::build_compacted_history(
                             Vec::new(),
                             &user_messages,
                             &compacted.message,
                         );
-                        history.replace(rebuilt);
+                        history.replace_annotated(rebuilt);
                     }
                 }
                 RolloutItem::EventMsg(EventMsg::ThreadRolledBack(rollback)) => {
@@ -386,6 +393,7 @@ impl Session {
                 RolloutItem::EventMsg(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::WorldState(_)
+                | RolloutItem::SecurityRiskScore(_)
                 | RolloutItem::SessionMeta(_) => {}
             }
         }
@@ -410,29 +418,21 @@ impl Session {
             match item {
                 RolloutItem::Compacted(_) => world_state_baseline = None,
                 RolloutItem::WorldState(world_state) if world_state.full => {
-                    world_state_baseline = match serde_json::from_value(world_state.state.clone()) {
-                        Ok(snapshot) => Some(snapshot),
-                        Err(err) => {
-                            tracing::warn!(%err, "failed to restore world-state snapshot");
-                            None
-                        }
-                    };
+                    world_state_baseline = Some(WorldStateSnapshot::from(&world_state.state));
                 }
                 RolloutItem::WorldState(world_state) => {
                     let Some(baseline) = world_state_baseline.as_mut() else {
                         tracing::warn!("ignored world-state patch without a full snapshot");
                         continue;
                     };
-                    if let Err(err) = baseline.apply_merge_patch(&world_state.state) {
-                        tracing::warn!(%err, "failed to apply world-state patch");
-                        world_state_baseline = None;
-                    }
+                    baseline.apply_merge_patch(&world_state.state);
                 }
                 RolloutItem::SessionMeta(_)
                 | RolloutItem::ResponseItem(_)
                 | RolloutItem::InterAgentCommunication(_)
                 | RolloutItem::InterAgentCommunicationMetadata { .. }
                 | RolloutItem::TurnContext(_)
+                | RolloutItem::SecurityRiskScore(_)
                 | RolloutItem::EventMsg(_) => {
                     unreachable!("only world-state replay items are collected")
                 }
@@ -446,7 +446,7 @@ impl Session {
             id: None,
         });
         RolloutReconstruction {
-            history: history.into_raw_items(),
+            history: history.into_annotated_items(),
             replacement_history_call_ids,
             previous_turn_settings,
             reference_context_item,
