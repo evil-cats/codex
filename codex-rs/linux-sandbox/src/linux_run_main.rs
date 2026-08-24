@@ -20,6 +20,8 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
+mod namespace_reaper;
+
 use crate::bwrap::BwrapNetworkMode;
 use crate::bwrap::BwrapOptions;
 use crate::bwrap::create_bwrap_command_args;
@@ -152,11 +154,14 @@ pub struct LandlockCommand {
 /// Entry point for the Linux sandbox helper.
 ///
 /// The sequence is:
-/// 1. When needed, wrap the command with bubblewrap to construct the
+/// 1. Resume the compact namespace reaper after its internal self-exec.
+/// 2. When needed, wrap the command with bubblewrap to construct the
 ///    filesystem view.
-/// 2. Apply in-process restrictions (no_new_privs + seccomp).
-/// 3. `execvp` into the final command.
+/// 3. Apply in-process restrictions (no_new_privs + seccomp).
+/// 4. `execvp` directly or supervise the final command from the compact reaper.
 pub fn run_main() -> ! {
+    namespace_reaper::resume_if_requested();
+
     let LandlockCommand {
         sandbox_policy_cwd,
         command_cwd,
@@ -192,6 +197,8 @@ pub fn run_main() -> ! {
     // Inner stage: apply seccomp/no_new_privs after bubblewrap has already
     // established the filesystem view.
     if apply_seccomp_then_exec {
+        let reaper_executable = namespace_reaper::ReaperExecutable::capture();
+
         if let Err(err) = crate::fd_mount::verify_fd_mounts(&verify_fd_mounts) {
             panic!("failed to verify descriptor-backed bubblewrap mount: {err}");
         }
@@ -238,40 +245,7 @@ pub fn run_main() -> ! {
         ) {
             panic!("error applying Linux sandbox restrictions: {e:?}");
         }
-
-        let signal_mask = ForwardedSignalMask::block();
-        let command_pid = unsafe { libc::fork() };
-        if command_pid < 0 {
-            let err = std::io::Error::last_os_error();
-            panic!("failed to fork sandboxed command: {err}");
-        }
-
-        if command_pid == 0 {
-            reset_forwarded_signal_handlers_to_default();
-            signal_mask.restore();
-            exec_or_panic(command);
-        }
-
-        let signal_forwarders = install_bwrap_signal_forwarders(command_pid);
-        signal_mask.restore();
-        loop {
-            let mut status = 0;
-            let reaped_pid = unsafe { libc::waitpid(-1, &mut status, 0) };
-            if reaped_pid == command_pid {
-                let exit_signal_mask = ForwardedSignalMask::block();
-                signal_forwarders.restore();
-                exit_signal_mask.restore();
-                exit_with_wait_status(status);
-            }
-            if reaped_pid >= 0 {
-                continue;
-            }
-
-            let err = std::io::Error::last_os_error();
-            if err.raw_os_error() != Some(libc::EINTR) {
-                panic!("failed to reap sandboxed child: {err}");
-            }
-        }
+        namespace_reaper::run_command(command, reaper_executable);
     }
 
     if file_system_sandbox_policy.has_full_disk_write_access() && !allow_network_for_proxy {

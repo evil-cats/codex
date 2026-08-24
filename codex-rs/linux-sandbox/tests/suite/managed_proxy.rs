@@ -255,6 +255,93 @@ async fn assert_seccomp_filtered_namespace_reaper(
     );
 }
 
+// Проверяет steady-state контракт списка процессов: PID 1 хранит только
+// компактный режим reaper и PID основной команды.
+#[tokio::test]
+async fn namespace_reaper_uses_compact_argv() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bubblewrap is unavailable");
+        return;
+    }
+
+    let mut env = create_env_from_core_vars();
+    strip_proxy_env(&mut env);
+
+    let output = run_linux_sandbox_direct(
+        &[
+            "bash",
+            "-c",
+            "if [ \"$(readlink /proc/1/ns/pid 2>/dev/null)\" != \"$(readlink /proc/self/ns/pid 2>/dev/null)\" ]; then printf 'namespace proc unavailable\\n'; exit 0; fi; printf '%s\\n' \"$$\"; cat /proc/1/cmdline",
+        ],
+        &PermissionProfile::read_only(),
+        /*allow_network_for_proxy*/ false,
+        env,
+        NETWORK_TIMEOUT_MS,
+    )
+    .await;
+
+    assert_eq!(
+        output.status.success(),
+        true,
+        "sandboxed command should inspect namespace init; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if output.stdout == b"namespace proc unavailable\n" {
+        eprintln!("skipping namespace argv check: a namespaced proc mount is unavailable");
+        return;
+    }
+
+    let mut output_parts = output.stdout.splitn(2, |byte| *byte == b'\n');
+    let command_pid = output_parts
+        .next()
+        .expect("command output should contain its namespace pid");
+    let reaper_cmdline = output_parts
+        .next()
+        .expect("command output should contain the namespace reaper cmdline");
+    let reaper_argv = reaper_cmdline
+        .split(|byte| *byte == 0)
+        .filter(|argument| !argument.is_empty())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        reaper_argv,
+        vec![
+            b"codex-linux-sandbox".as_slice(),
+            b"--codex-internal-namespace-reaper".as_slice(),
+            command_pid,
+        ]
+    );
+}
+
+// Проверяет, что дополнительный self-exec PID 1 не меняет status основной
+// команды, возвращаемый внешнему процессу.
+#[tokio::test]
+async fn namespace_reaper_preserves_command_exit_status() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bubblewrap is unavailable");
+        return;
+    }
+
+    let mut env = create_env_from_core_vars();
+    strip_proxy_env(&mut env);
+
+    let output = run_linux_sandbox_direct(
+        &["bash", "-c", "exit 37"],
+        &PermissionProfile::read_only(),
+        /*allow_network_for_proxy*/ false,
+        env,
+        NETWORK_TIMEOUT_MS,
+    )
+    .await;
+
+    assert_eq!(
+        output.status.code(),
+        Some(37),
+        "namespace reaper should preserve command exit status; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[tokio::test]
 async fn namespace_reaper_collects_orphaned_descendants() {
     if should_skip_bwrap_tests().await {
