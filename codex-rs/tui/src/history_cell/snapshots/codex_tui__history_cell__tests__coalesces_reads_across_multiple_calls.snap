@@ -4,3 +4,6 @@ assertion_line: 2072
 expression: rendered
 ---
 • Ran 3 commands · ctrl + t to view transcript
+  ├ echo
+  ├ echo
+  └ echo

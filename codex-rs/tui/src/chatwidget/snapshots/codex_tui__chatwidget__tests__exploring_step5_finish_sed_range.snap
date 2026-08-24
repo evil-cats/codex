@@ -4,3 +4,6 @@ assertion_line: 1442
 expression: active_blob(&chat)
 ---
 • Ran 3 commands · ctrl + t to view transcript
+  ├ ls -la
+  ├ cat foo.txt
+  └ sed -n 100,200p foo.txt

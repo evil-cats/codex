@@ -1,3 +1,5 @@
+//! Рендерит команды, их компактные группы, вывод и полный transcript ячеек `ExecCell`.
+
 use std::time::Instant;
 
 use super::model::CommandOutput;
@@ -259,6 +261,7 @@ impl HistoryCell for ExecCell {
 }
 
 impl ExecCell {
+    /// Рендерит успешный префикс группы как заголовок и список команд без их вывода.
     fn compact_group_display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let completed_commands = self
             .calls
@@ -288,6 +291,20 @@ impl ExecCell {
                 " · ".dim(),
                 TRANSCRIPT_HINT.dim(),
             ]));
+        }
+        for (index, call) in self.calls[..completed_commands].iter().enumerate() {
+            let is_last = index + 1 == completed_commands;
+            let (initial_prefix, continuation_prefix) = if is_last {
+                ("  └ ", PrefixedBlock::new("    ", "    "))
+            } else {
+                ("  ├ ", PrefixedBlock::new("  │ ", "  │ "))
+            };
+            lines.extend(Self::command_text_display_lines(
+                width,
+                call,
+                Line::from(Span::from(initial_prefix).dim()),
+                continuation_prefix,
+            ));
         }
         for call in &self.calls[completed_commands..] {
             lines.extend(self.command_call_display_lines(width, call));
@@ -419,6 +436,65 @@ impl ExecCell {
         self.command_call_display_lines(width, call)
     }
 
+    /// Формирует только отображаемый текст команды и ограниченные строки продолжения.
+    ///
+    /// `first_line` задаёт уже оформленный префикс первой строки, а
+    /// `continuation_prefix` сохраняет визуальную принадлежность перенесённых строк.
+    /// Вывод процесса намеренно остаётся за пределами этой функции.
+    fn command_text_display_lines(
+        width: u16,
+        call: &ExecCall,
+        mut first_line: Line<'static>,
+        continuation_prefix: PrefixedBlock,
+    ) -> Vec<Line<'static>> {
+        let cmd_display = if call.is_unified_exec_interaction() {
+            format_unified_exec_interaction(&call.command, call.interaction_input.as_deref())
+        } else {
+            strip_bash_lc_and_escape(&call.command)
+        };
+        let highlighted_lines = highlight_bash_to_lines(&cmd_display);
+
+        let continuation_opts = RtOptions::new(continuation_prefix.wrap_width(width))
+            .word_splitter(WordSplitter::NoHyphenation);
+        let mut continuation_lines: Vec<Line<'static>> = Vec::new();
+
+        if let Some((first, rest)) = highlighted_lines.split_first() {
+            let available_first_width = (width as usize).saturating_sub(first_line.width()).max(1);
+            let first_opts =
+                RtOptions::new(available_first_width).word_splitter(WordSplitter::NoHyphenation);
+
+            let mut first_wrapped: Vec<Line<'static>> = Vec::new();
+            push_owned_lines(&adaptive_wrap_line(first, first_opts), &mut first_wrapped);
+            let mut first_wrapped_iter = first_wrapped.into_iter();
+            if let Some(first_segment) = first_wrapped_iter.next() {
+                first_line.extend(first_segment);
+            }
+            continuation_lines.extend(first_wrapped_iter);
+
+            for line in rest {
+                push_owned_lines(
+                    &adaptive_wrap_line(line, continuation_opts.clone()),
+                    &mut continuation_lines,
+                );
+            }
+        }
+
+        let mut lines = vec![first_line];
+        let continuation_lines = Self::limit_lines_from_start(
+            &continuation_lines,
+            EXEC_DISPLAY_LAYOUT.command_continuation_max_lines,
+        );
+        if !continuation_lines.is_empty() {
+            lines.extend(prefix_lines(
+                continuation_lines,
+                Span::from(continuation_prefix.initial_prefix).dim(),
+                Span::from(continuation_prefix.subsequent_prefix).dim(),
+            ));
+        }
+        lines
+    }
+
+    /// Рендерит отдельный вызов команды вместе с его состоянием и доступным выводом.
     fn command_call_display_lines(&self, width: u16, call: &ExecCall) -> Vec<Line<'static>> {
         let layout = EXEC_DISPLAY_LAYOUT;
         let success = call
@@ -440,60 +516,13 @@ impl ExecCell {
             "Ran"
         };
 
-        let mut header_line = if is_interaction {
+        let header_line = if is_interaction {
             Line::from(vec![bullet.clone(), " ".into()])
         } else {
             Line::from(vec![bullet.clone(), " ".into(), title.bold(), " ".into()])
         };
-        let header_prefix_width = header_line.width();
-
-        let cmd_display = if call.is_unified_exec_interaction() {
-            format_unified_exec_interaction(&call.command, call.interaction_input.as_deref())
-        } else {
-            strip_bash_lc_and_escape(&call.command)
-        };
-        let highlighted_lines = highlight_bash_to_lines(&cmd_display);
-
-        let continuation_wrap_width = layout.command_continuation.wrap_width(width);
-        let continuation_opts =
-            RtOptions::new(continuation_wrap_width).word_splitter(WordSplitter::NoHyphenation);
-
-        let mut continuation_lines: Vec<Line<'static>> = Vec::new();
-
-        if let Some((first, rest)) = highlighted_lines.split_first() {
-            let available_first_width = (width as usize).saturating_sub(header_prefix_width).max(1);
-            let first_opts =
-                RtOptions::new(available_first_width).word_splitter(WordSplitter::NoHyphenation);
-
-            let mut first_wrapped: Vec<Line<'static>> = Vec::new();
-            push_owned_lines(&adaptive_wrap_line(first, first_opts), &mut first_wrapped);
-            let mut first_wrapped_iter = first_wrapped.into_iter();
-            if let Some(first_segment) = first_wrapped_iter.next() {
-                header_line.extend(first_segment);
-            }
-            continuation_lines.extend(first_wrapped_iter);
-
-            for line in rest {
-                push_owned_lines(
-                    &adaptive_wrap_line(line, continuation_opts.clone()),
-                    &mut continuation_lines,
-                );
-            }
-        }
-
-        let mut lines: Vec<Line<'static>> = vec![header_line];
-
-        let continuation_lines = Self::limit_lines_from_start(
-            &continuation_lines,
-            layout.command_continuation_max_lines,
-        );
-        if !continuation_lines.is_empty() {
-            lines.extend(prefix_lines(
-                continuation_lines,
-                Span::from(layout.command_continuation.initial_prefix).dim(),
-                Span::from(layout.command_continuation.subsequent_prefix).dim(),
-            ));
-        }
+        let mut lines =
+            Self::command_text_display_lines(width, call, header_line, layout.command_continuation);
 
         if let Some(output) = call.output.as_ref() {
             let line_limit = if call.is_user_shell_command() {
@@ -525,9 +554,8 @@ impl ExecCell {
                     ));
                 }
             } else {
-                // Wrap first so that truncation is applied to on-screen lines
-                // rather than logical lines. This ensures that a small number
-                // of very long lines cannot flood the viewport.
+                // Сначала переносим вывод, чтобы ограничение считало строки экрана,
+                // а несколько очень длинных логических строк не заполняли окно.
                 let mut wrapped_output: Vec<Line<'static>> = Vec::new();
                 let output_wrap_width = layout.output_block.wrap_width(width);
                 let output_opts =

@@ -1,4 +1,8 @@
+//! Проверяет сериализацию и представление результатов встроенных инструментов для модели.
+
 use super::*;
+use crate::unified_exec::output_spill::ExecCommandOutputSpill;
+use crate::unified_exec::output_spill::ExecCommandOutputSpillResult;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::SearchToolCallParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -469,6 +473,7 @@ fn exec_command_tool_output_formats_truncated_response() {
     }
 }
 
+/// Сохранённый вывод отображается как метаданные строк, путь и последовательный префикс.
 #[test]
 fn exec_command_tool_output_formats_spilled_response() {
     let payload = ToolPayload::Function {
@@ -485,7 +490,7 @@ fn exec_command_tool_output_formats_spilled_response() {
         event_call_id: "call-42".to_string(),
         chunk_id: "abc123".to_string(),
         wall_time: std::time::Duration::from_millis(1250),
-        raw_output: b"token one token two token three token four token five".to_vec(),
+        raw_output: b"alpha\nbeta\ngamma\n".to_vec(),
         truncation_policy: TruncationPolicy::Tokens(10_000),
         max_output_tokens: None,
         process_id: None,
@@ -494,8 +499,10 @@ fn exec_command_tool_output_formats_spilled_response() {
         output_omitted_bytes: None,
         hook_command: None,
         output_spill: Some(ExecCommandOutputSpill {
-            inline_limit_tokens: 4,
-            result: ExecCommandOutputSpillResult::Saved { path: spill_path },
+            inline_limit_tokens: 3,
+            result: ExecCommandOutputSpillResult::Saved {
+                path: spill_path.clone(),
+            },
         }),
     }
     .to_response_item("call-42", &payload);
@@ -508,24 +515,19 @@ fn exec_command_tool_output_formats_spilled_response() {
                 .body
                 .to_text()
                 .expect("exec output should serialize as text");
-            assert_regex_match(
-                r#"(?sx)
-                    ^Chunk\ ID:\ abc123
-                    \nWall\ time:\ \d+\.\d{4}\ seconds
-                    \nProcess\ exited\ with\ code\ 0
-                    \nOriginal\ token\ count:\ 10
-                    \nOutput\ exceeded\ inline\ limit\ of\ 4\ tokens\.
-                    \nOutput\ saved\ to:\ .*exec_outputs.*thread.*call-chunk\.log
-                    \nOutput\ excerpt:
-                    \n.*tokens\ truncated.*
-                    $"#,
-                &text,
+            assert_eq!(
+                text,
+                format!(
+                    "Chunk ID: abc123\nWall time: 1.2500 seconds\nProcess exited with code 0\nOriginal token count: 10\nLines: total=3 returned=1-2 remaining=1 complete=no\nFull output: {}\nOutput excerpt:\n\nalpha\nbeta\n",
+                    spill_path.display()
+                )
             );
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
     }
 }
 
+/// Ошибка записи сохраняет метаданные строк и префикс, не меняя успешность вызова.
 #[test]
 fn exec_command_tool_output_formats_spill_save_failure() {
     let payload = ToolPayload::Function {
@@ -535,7 +537,7 @@ fn exec_command_tool_output_formats_spill_save_failure() {
         event_call_id: "call-42".to_string(),
         chunk_id: "abc123".to_string(),
         wall_time: std::time::Duration::from_millis(1250),
-        raw_output: b"token one token two token three token four token five".to_vec(),
+        raw_output: b"alpha\nbeta\ngamma\n".to_vec(),
         truncation_policy: TruncationPolicy::Tokens(10_000),
         max_output_tokens: None,
         process_id: None,
@@ -544,7 +546,7 @@ fn exec_command_tool_output_formats_spill_save_failure() {
         output_omitted_bytes: None,
         hook_command: None,
         output_spill: Some(ExecCommandOutputSpill {
-            inline_limit_tokens: 4,
+            inline_limit_tokens: 3,
             result: ExecCommandOutputSpillResult::SaveFailed {
                 error: "permission denied".to_string(),
             },
@@ -559,10 +561,10 @@ fn exec_command_tool_output_formats_spill_save_failure() {
                 .body
                 .to_text()
                 .expect("exec output should serialize as text");
-            assert!(text.contains("Output exceeded inline limit of 4 tokens."));
-            assert!(text.contains("Failed to save output: permission denied"));
-            assert!(text.contains("Output excerpt:\n"));
-            assert!(text.contains("tokens truncated"));
+            assert_eq!(
+                text,
+                "Chunk ID: abc123\nWall time: 1.2500 seconds\nProcess exited with code 0\nOriginal token count: 10\nLines: total=3 returned=1-2 remaining=1 complete=no\nFailed to save output: permission denied\nOutput excerpt:\n\nalpha\nbeta\n"
+            );
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
     }

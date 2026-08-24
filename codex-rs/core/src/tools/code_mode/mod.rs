@@ -1,6 +1,9 @@
+//! Оркестрирует сессию Code Mode, вложенные инструменты и итоговый ответ для модели.
+
 mod delegate;
 mod execute_handler;
 pub(crate) mod execute_spec;
+mod output_spill;
 mod response_adapter;
 mod telemetry;
 mod wait_handler;
@@ -48,6 +51,9 @@ use codex_utils_output_truncation::truncate_function_output_items_with_policy;
 use delegate::CodeModeDispatchBroker;
 use delegate::CodeModeDispatchWorker;
 pub(crate) use execute_handler::CodeModeExecuteHandler;
+use output_spill::RuntimeOutputDelivery;
+use output_spill::RuntimeOutputIdentity;
+use output_spill::maybe_spill_runtime_output;
 use response_adapter::into_function_call_output_content_items;
 pub(crate) use wait_handler::CodeModeWaitHandler;
 
@@ -230,50 +236,62 @@ impl CodeModeService {
     }
 }
 
+/// Преобразует ответ host-процесса в один внешний результат и применяет spill до усечения.
 pub(super) async fn handle_runtime_response(
     exec: &ExecContext,
+    call_id: &str,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
     started_at: std::time::Instant,
 ) -> Result<FunctionToolOutput, String> {
     let script_status = format_script_status(&response);
-
-    match response {
-        RuntimeResponse::Yielded { content_items, .. } => {
-            let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
-        }
-        RuntimeResponse::Terminated { content_items, .. } => {
-            let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(content_items, Some(true)))
-        }
+    let cell_id = match &response {
+        RuntimeResponse::Yielded { cell_id, .. }
+        | RuntimeResponse::Terminated { cell_id, .. }
+        | RuntimeResponse::Result { cell_id, .. } => cell_id.to_string(),
+    };
+    let (content_items, error_text, success) = match response {
+        RuntimeResponse::Yielded { content_items, .. }
+        | RuntimeResponse::Terminated { content_items, .. } => (content_items, None, true),
         RuntimeResponse::Result {
             content_items,
             error_text,
             ..
         } => {
-            let mut content_items = into_function_call_output_content_items(content_items);
-            sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
             let success = error_text.is_none();
-            if let Some(error_text) = error_text {
-                content_items.push(FunctionCallOutputContentItem::InputText {
-                    text: format!("Script error:\n{error_text}"),
-                });
-            }
-            content_items = truncate_code_mode_result(content_items, max_output_tokens);
-            prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
-            Ok(FunctionToolOutput::from_content(
-                content_items,
-                Some(success),
-            ))
+            (content_items, error_text, success)
         }
+    };
+
+    let mut content_items = into_function_call_output_content_items(content_items);
+    sanitize_runtime_image_detail(exec.turn.as_ref(), &mut content_items);
+    if let Some(error_text) = error_text {
+        content_items.push(FunctionCallOutputContentItem::InputText {
+            text: format!("Script error:\n{error_text}"),
+        });
     }
+    let delivery = maybe_spill_runtime_output(
+        exec,
+        content_items,
+        RuntimeOutputIdentity {
+            call_id,
+            cell_id: &cell_id,
+        },
+        max_output_tokens,
+    )
+    .await;
+    content_items = match delivery {
+        RuntimeOutputDelivery::Inline(items) => truncate_code_mode_result(items, max_output_tokens),
+        RuntimeOutputDelivery::Spilled {
+            items,
+            excerpt_token_count,
+        } => truncate_spilled_code_mode_result(items, max_output_tokens, excerpt_token_count),
+    };
+    prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
+    Ok(FunctionToolOutput::from_content(
+        content_items,
+        Some(success),
+    ))
 }
 
 fn sanitize_runtime_image_detail(turn: &TurnContext, items: &mut [FunctionCallOutputContentItem]) {
@@ -322,6 +340,42 @@ fn truncate_code_mode_result(
     }
 
     truncate_function_output_items_with_policy(&items, policy, estimate_audio_token_count)
+}
+
+/// Сохраняет spill-метаданные целиком и расходует внешний лимит только на фрагмент и аудио.
+fn truncate_spilled_code_mode_result(
+    items: Vec<FunctionCallOutputContentItem>,
+    max_output_tokens: Option<usize>,
+    excerpt_token_count: usize,
+) -> Vec<FunctionCallOutputContentItem> {
+    let mut remaining_budget =
+        resolve_max_tokens(max_output_tokens).saturating_sub(excerpt_token_count);
+    let mut omitted_audio_items = 0;
+    let mut output = Vec::with_capacity(items.len());
+
+    for item in items {
+        match item {
+            FunctionCallOutputContentItem::InputText { .. }
+            | FunctionCallOutputContentItem::InputImage { .. }
+            | FunctionCallOutputContentItem::EncryptedContent { .. } => output.push(item),
+            FunctionCallOutputContentItem::InputAudio { audio_url } => {
+                let token_cost = estimate_audio_token_count(&audio_url);
+                if token_cost <= remaining_budget {
+                    output.push(FunctionCallOutputContentItem::InputAudio { audio_url });
+                    remaining_budget = remaining_budget.saturating_sub(token_cost);
+                } else {
+                    omitted_audio_items += 1;
+                }
+            }
+        }
+    }
+
+    if omitted_audio_items > 0 {
+        output.push(FunctionCallOutputContentItem::InputText {
+            text: format!("[omitted {omitted_audio_items} audio items ...]"),
+        });
+    }
+    output
 }
 
 async fn call_nested_tool(
@@ -423,6 +477,7 @@ fn build_freeform_tool_payload(
 mod tests {
     use super::build_nested_tool_payload;
     use super::truncate_code_mode_result;
+    use super::truncate_spilled_code_mode_result;
     use crate::tools::context::ToolPayload;
     use codex_code_mode::CodeModeToolKind;
     use codex_protocol::models::FunctionCallOutputContentItem;
@@ -493,6 +548,30 @@ mod tests {
             vec![FunctionCallOutputContentItem::InputText {
                 text: "[omitted 1 audio items ...]".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn spilled_output_preserves_metadata_and_omits_over_budget_audio() {
+        let spill = FunctionCallOutputContentItem::InputText {
+            text: "Lines: total=2 returned=1-1 remaining=1 complete=no".to_string(),
+        };
+        let audio = FunctionCallOutputContentItem::InputAudio {
+            audio_url: format!("data:audio/wav;base64,{}", "A".repeat(100)),
+        };
+
+        assert_eq!(
+            truncate_spilled_code_mode_result(
+                vec![spill.clone(), audio],
+                Some(5),
+                /*excerpt_token_count*/ 5,
+            ),
+            vec![
+                spill,
+                FunctionCallOutputContentItem::InputText {
+                    text: "[omitted 1 audio items ...]".to_string(),
+                },
+            ]
         );
     }
 }

@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-23
+updated: 2026-08-24
 ---
 
 # Утилитарный core tool `read_file`
@@ -61,6 +61,7 @@ Owner-файлы реализации:
 | Файл | Ответственность |
 | --- | --- |
 | `codex-rs/core/src/tools/handlers/read_file.rs` | Runtime: direct-only model exposure, path, sandbox/read permissions, строки, диапазоны, content token budget, line-number rendering и ошибки |
+| `codex-rs/core/src/tools/line_utils.rs` | Общий разбор строк с сохранением завершающего `\n`; обеспечивает одинаковую семантику строк для `read_file` и exec spill |
 | `codex-rs/core/src/tools/handlers/read_file_spec.rs` | Spec Responses API tool: имя `read_file`, аргументы, model-visible description и текстовый output contract с согласованным header |
 | `codex-rs/core/src/tools/handlers/read_file_tests.rs` | Unit tests runtime-контракта: диапазоны, right-tail line trimming, long line, пустой файл и `line_numbers=false` |
 | `codex-rs/core/src/tools/handlers/read_file_spec_tests.rs` | Tests spec-контракта: имя tool, default `line_numbers`, отсутствие argument для token limit и описание поведения `complete=no` |
@@ -450,6 +451,11 @@ host-side подтверждение доступности точного те�
 структурированный line-based результат. Header и номера строк сознательно
 считаются допустимым overhead этого результата.
 
+Разбиение исходного текста на строки выполняет общий
+`tools::line_utils::split_lines_preserving_endings()`. Оно сохраняет завершающий
+`\n` каждой строки и тем самым обеспечивает одинаковую семантику строк в
+`read_file` и exec spill без изменения формата ответа `read_file`.
+
 ## Порядок повторения при переносе
 
 Для нового upstream checkout:
@@ -462,7 +468,9 @@ host-side подтверждение доступности точного те�
 3. Добавить config-only content limit
    `[tools.read_file].content_max_tokens` с default `10_000` approximate tokens.
 4. Реализовать подсчет `total_lines` до нормализации диапазона и усечения.
-5. Реализовать line-based right-tail trimming без частичных строк.
+5. Реализовать line-based right-tail trimming без частичных строк через общий
+   `tools::line_utils::split_lines_preserving_endings()`; тот же helper должен
+   использовать exec spill.
 6. Реализовать blocker для первой строки, превышающей content limit, как
    `ReadFile` output с `returned=empty`, `complete=no` и `Error: ...`.
 7. Добавить model-visible description, который направляет агента использовать

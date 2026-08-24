@@ -1,3 +1,5 @@
+//! Ошибки жизненного цикла unified exec и границы передачи его результата.
+
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_utils_path_uri::PathUri;
 use std::num::NonZeroUsize;
@@ -26,6 +28,23 @@ pub(crate) enum UnifiedExecError {
         output: ExecToolCallOutput,
         original_token_count: Option<usize>,
         output_omitted_bytes: Option<NonZeroUsize>,
+    },
+    #[error(
+        "exec_command output exceeds the Code Mode result limit of {limit_tokens} tokens (process exited with code {exit_code}; original token count: {original_token_count}); narrow the command output"
+    )]
+    CodeModeOutputLimitExceeded {
+        limit_tokens: usize,
+        original_token_count: usize,
+        exit_code: i32,
+    },
+    #[error(
+        "exec_command output is incomplete because the capture buffer omitted {omitted_bytes} bytes (Code Mode result limit: {limit_tokens} tokens, process exited with code {exit_code}; original token count: {original_token_count}); narrow the command output"
+    )]
+    CodeModeOutputCaptureIncomplete {
+        limit_tokens: usize,
+        original_token_count: usize,
+        omitted_bytes: usize,
+        exit_code: i32,
     },
     #[error("{path} is not valid on {}", std::env::consts::OS)]
     ForeignPath { path: PathUri },

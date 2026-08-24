@@ -1,3 +1,5 @@
+//! Выполняет внешний Code Mode `exec` и передаёт результат в общий путь ответа.
+
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -30,6 +32,7 @@ impl CodeModeExecuteHandler {
         }
     }
 
+    /// Запускает JavaScript-ячейку и сохраняет идентификатор внешнего вызова до ответа модели.
     async fn execute(
         &self,
         session: std::sync::Arc<crate::session::session::Session>,
@@ -130,9 +133,15 @@ impl CodeModeExecuteHandler {
                 });
         }
         exec.session.services.elicitations.wait_until_clear().await;
-        handle_runtime_response(&exec, response, args.max_output_tokens, started_at)
-            .await
-            .map_err(FunctionCallError::RespondToModel)
+        handle_runtime_response(
+            &exec,
+            &call_id,
+            response,
+            args.max_output_tokens,
+            started_at,
+        )
+        .await
+        .map_err(FunctionCallError::RespondToModel)
     }
 }
 

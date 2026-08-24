@@ -1,10 +1,15 @@
+//! Проверяет выбор spill, точность файла и последовательный построчный фрагмент.
+
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use pretty_assertions::assert_eq;
 
+use super::ExecCommandOutputSpill;
+use super::ExecCommandOutputSpillResult;
+use super::RenderedOutputSpill;
 use super::effective_inline_output_max_tokens;
 use super::maybe_spill_exec_command_output;
-use crate::tools::context::ExecCommandOutputSpillResult;
+use super::render_output_spill;
 
 #[test]
 fn effective_limit_uses_config_request_and_turn_policy() {
@@ -106,5 +111,68 @@ async fn save_failure_returns_bounded_error_metadata() {
     assert!(
         error.chars().count() <= 243,
         "error should be bounded: {error}"
+    );
+}
+
+/// Spill возвращает максимальный префикс из целых строк без суффикса или маркера.
+#[test]
+fn output_spill_excerpt_returns_complete_prefix_lines() {
+    let path = AbsolutePathBuf::from_absolute_path(std::env::temp_dir().join("output.log"))
+        .expect("temp path should be absolute");
+    let spill = ExecCommandOutputSpill {
+        inline_limit_tokens: 3,
+        result: ExecCommandOutputSpillResult::Saved { path: path.clone() },
+    };
+
+    assert_eq!(
+        render_output_spill(b"alpha\nbeta\ngamma\nomega", &spill),
+        RenderedOutputSpill {
+            body: format!(
+                "Lines: total=4 returned=1-2 remaining=2 complete=no\nFull output: {}\nOutput excerpt:\n\nalpha\nbeta\n",
+                path.display()
+            ),
+            excerpt_token_count: 3,
+        }
+    );
+}
+
+/// Если первая строка не помещается, тело фрагмента отсутствует, а метаданные остаются полными.
+#[test]
+fn output_spill_excerpt_reports_oversized_first_line() {
+    let path = AbsolutePathBuf::from_absolute_path(std::env::temp_dir().join("output.log"))
+        .expect("temp path should be absolute");
+    let spill = ExecCommandOutputSpill {
+        inline_limit_tokens: 2,
+        result: ExecCommandOutputSpillResult::Saved { path: path.clone() },
+    };
+
+    assert_eq!(
+        render_output_spill(b"abcdefghij\nsecond\n", &spill),
+        RenderedOutputSpill {
+            body: format!(
+                "Lines: total=2 returned=none remaining=2 complete=no\nFull output: {}\nError: first line exceeds excerpt token limit",
+                path.display()
+            ),
+            excerpt_token_count: 0,
+        }
+    );
+}
+
+/// Ошибка записи внешнего файла Code Mode сохраняет тот же префикс и видимую причину.
+#[test]
+fn code_mode_outer_spill_save_failure_returns_line_prefix() {
+    let spill = ExecCommandOutputSpill {
+        inline_limit_tokens: 3,
+        result: ExecCommandOutputSpillResult::SaveFailed {
+            error: "permission denied".to_string(),
+        },
+    };
+
+    assert_eq!(
+        render_output_spill(b"alpha\nbeta\ngamma\n", &spill),
+        RenderedOutputSpill {
+            body: "Lines: total=3 returned=1-2 remaining=1 complete=no\nFailed to save output: permission denied\nOutput excerpt:\n\nalpha\nbeta\n".to_string(),
+            excerpt_token_count: 3,
+        }
     );
 }

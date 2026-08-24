@@ -1,8 +1,11 @@
+//! Проверяет жизненный цикл `exec`-вызовов и их представление в истории `ChatWidget`.
+
 use super::*;
 use pretty_assertions::assert_eq;
 
+// Проверяет, что полный transcript сохраняет команды, вывод и результаты компактной группы.
 #[tokio::test]
-async fn compact_command_activity_groups_successes_and_preserves_full_transcript() {
+async fn compact_command_activity_preserves_full_transcript() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
@@ -11,30 +14,36 @@ async fn compact_command_activity_groups_successes_and_preserves_full_transcript
 
     let second = begin_exec(&mut chat, "call-second", "printf second");
     insta::assert_snapshot!(active_blob(&chat), @r"• Ran 1 command · ctrl + t to view transcript
+  └ printf first
 • Running printf second
 ");
     end_exec(&mut chat, second, "second\n", "", /*exit_code*/ 0);
 
     assert!(drain_insert_history(&mut rx).is_empty());
     insta::assert_snapshot!(active_blob(&chat), @r"• Ran 2 commands · ctrl + t to view transcript
+  ├ printf first
+  └ printf second
 ");
 
     let transcript = chat
         .active_cell_transcript_lines(/*width*/ 80)
         .expect("active transcript");
     let transcript = lines_to_single_string(&transcript);
-    assert!(transcript.contains("$ printf first\nfirst\n"));
-    assert!(transcript.contains("$ printf second\nsecond\n"));
+    assert_eq!(
+        transcript,
+        "$ printf first\nfirst\n✓ • 5ms\n\n$ printf second\nsecond\n✓ • 5ms\n"
+    );
 
     chat.on_agent_message_delta("Finished\n".to_string());
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 2);
     assert_eq!(
         lines_to_single_string(&cells[0]),
-        "• Ran 2 commands · ctrl + t to view transcript\n"
+        "• Ran 2 commands · ctrl + t to view transcript\n  ├ printf first\n  └ printf second\n"
     );
 }
 
+// Проверяет тот же контракт компактного списка для вызовов запуска `unified exec`.
 #[tokio::test]
 async fn compact_command_activity_groups_unified_exec_startup_commands() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -71,6 +80,88 @@ async fn compact_command_activity_groups_unified_exec_startup_commands() {
 
     assert!(drain_insert_history(&mut rx).is_empty());
     insta::assert_snapshot!(active_blob(&chat), @r"• Ran 2 commands · ctrl + t to view transcript
+  ├ printf first
+  └ printf second
+");
+}
+
+// Проверяет перенос длинной команды, ветви группы и явный маркер пропущенных строк.
+#[tokio::test]
+async fn compact_command_activity_wraps_listed_commands() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let long = begin_exec(
+        &mut chat,
+        "call-long",
+        "printf one two three four five six seven eight nine ten eleven twelve",
+    );
+    end_exec(
+        &mut chat,
+        long,
+        "hidden long output\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    let short = begin_exec(&mut chat, "call-short", "true");
+    end_exec(
+        &mut chat,
+        short,
+        "hidden short output\n",
+        "",
+        /*exit_code*/ 0,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    let lines = chat
+        .transcript
+        .active_cell
+        .as_ref()
+        .expect("active compact command group")
+        .display_lines(/*width*/ 28);
+    insta::assert_snapshot!(lines_to_single_string(&lines), @r"• Ran 2 commands · ctrl + t to view transcript
+  ├ printf one two three
+  │ four five six seven
+  │ eight nine ten eleven
+  │ … +1 lines
+  └ true
+");
+}
+
+// Проверяет, что активный и затем ошибочный хвост остаётся видимым после успешного префикса.
+#[tokio::test]
+async fn compact_command_activity_preserves_non_success_calls() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let successful = begin_exec(&mut chat, "call-success", "printf success");
+    end_exec(
+        &mut chat,
+        successful,
+        "hidden success output\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    let failed = begin_exec(&mut chat, "call-failed", "printf failure");
+
+    insta::assert_snapshot!(active_blob(&chat), @r"• Ran 1 command · ctrl + t to view transcript
+  └ printf success
+• Running printf failure
+");
+
+    end_exec(
+        &mut chat,
+        failed,
+        "",
+        "failure output\n",
+        /*exit_code*/ 7,
+    );
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    insta::assert_snapshot!(lines_to_single_string(&cells[0]), @r"• Ran 1 command · ctrl + t to view transcript
+  └ printf success
+• Ran printf failure
+  └ failure output
 ");
 }
 
@@ -169,6 +260,7 @@ async fn compact_command_activity_preserves_overlapping_reads_after_success() {
     assert!(active_blob(&chat).contains("Ran 3 commands"));
 }
 
+// Проверяет, что неуспешный вызов и пользовательские команды не поглощаются успешным префиксом.
 #[tokio::test]
 async fn compact_command_activity_keeps_failures_and_manual_shell_commands_visible() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -192,6 +284,7 @@ async fn compact_command_activity_keeps_failures_and_manual_shell_commands_visib
     assert_eq!(cells.len(), 1);
     let failed_history = lines_to_single_string(&cells[0]);
     insta::assert_snapshot!(failed_history, @r"• Ran 1 command · ctrl + t to view transcript
+  └ printf first
 • Ran printf broken
   └ broken
 ");
@@ -271,6 +364,7 @@ async fn compact_command_activity_keeps_overlapping_commands_active_after_failur
     assert!(history.contains("Ran cat bar.txt"));
 }
 
+// Проверяет одинаковое восстановление списка успешных команд и отдельное отображение отказов.
 #[tokio::test]
 async fn compact_command_activity_groups_replayed_successes_without_hiding_declines() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -340,7 +434,7 @@ async fn compact_command_activity_groups_replayed_successes_without_hiding_decli
     assert_eq!(cells.len(), 3);
     assert_eq!(
         lines_to_single_string(&cells[0].display_lines(/*width*/ 80)),
-        "• Ran 2 commands · ctrl + t to view transcript\n"
+        "• Ran 2 commands · ctrl + t to view transcript\n  ├ printf first\n  └ printf second\n"
     );
     let transcript = lines_to_single_string(&cells[0].transcript_lines(/*width*/ 80));
     insta::assert_snapshot!(transcript, @r"$ printf first
@@ -361,6 +455,7 @@ second
     );
 }
 
+// Проверяет, что ограничение размера группы сохраняется при явном списке команд.
 #[tokio::test]
 async fn compact_command_activity_bounds_completed_groups_without_flushing_active_calls() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -373,10 +468,10 @@ async fn compact_command_activity_bounds_completed_groups_without_flushing_activ
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1);
-    assert_eq!(
-        lines_to_single_string(&cells[0]),
-        "• Ran 32 commands · ctrl + t to view transcript\n"
-    );
+    let mut expected = "• Ran 32 commands · ctrl + t to view transcript\n".to_string();
+    expected.push_str(&"  ├ printf bounded\n".repeat(31));
+    expected.push_str("  └ printf bounded\n");
+    assert_eq!(lines_to_single_string(&cells[0]), expected);
     assert!(chat.transcript.active_cell.is_none());
 
     let commands = (0..33)
@@ -859,6 +954,7 @@ async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell(
     );
 }
 
+// Проверяет, что orphan completion присоединяется к совместимому успешному префиксу.
 #[tokio::test]
 async fn exec_end_without_begin_groups_completed_agent_and_unified_commands() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -874,6 +970,8 @@ async fn exec_end_without_begin_groups_completed_agent_and_unified_commands() {
 
     assert!(drain_insert_history(&mut rx).is_empty());
     insta::assert_snapshot!(active_blob(&chat), @r"• Ran 2 commands · ctrl + t to view transcript
+  ├ ls -la
+  └ echo after
 ");
 }
 
@@ -1404,23 +1502,24 @@ async fn image_generation_call_adds_history_cell() {
     );
 }
 
+// Проверяет список последовательных успешных команд без переноса их вывода в обычную историю.
 #[tokio::test]
-async fn exec_history_extends_previous_when_consecutive() {
+async fn compact_command_activity_lists_successes_without_output() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    // 1) Start "ls -la" (List)
+    // Сначала команда списка начинает группу.
     let begin_ls = begin_exec(&mut chat, "call-ls", "ls -la");
     assert_chatwidget_snapshot!("exploring_step1_start_ls", active_blob(&chat));
 
-    // 2) Finish "ls -la"
+    // После завершения первая команда ещё отображается обычной одиночной строкой.
     end_exec(&mut chat, begin_ls, "", "", /*exit_code*/ 0);
     assert_chatwidget_snapshot!("exploring_step2_finish_ls", active_blob(&chat));
 
-    // 3) Start "cat foo.txt" (Read)
+    // Следующее чтение временно возвращает активное представление группы.
     let begin_cat_foo = begin_exec(&mut chat, "call-cat-foo", "cat foo.txt");
     assert_chatwidget_snapshot!("exploring_step3_start_cat_foo", active_blob(&chat));
 
-    // 4) Complete "cat foo.txt"
+    // Завершённые вызовы должны перейти в компактный список без вывода.
     end_exec(
         &mut chat,
         begin_cat_foo,
@@ -1430,7 +1529,7 @@ async fn exec_history_extends_previous_when_consecutive() {
     );
     assert_chatwidget_snapshot!("exploring_step4_finish_cat_foo", active_blob(&chat));
 
-    // 5) Start & complete "sed -n 100,200p foo.txt" (treated as Read of foo.txt)
+    // Последующие чтения расширяют тот же список в исходном порядке.
     let begin_sed_range = begin_exec(&mut chat, "call-sed-range", "sed -n 100,200p foo.txt");
     end_exec(
         &mut chat,
@@ -1441,7 +1540,6 @@ async fn exec_history_extends_previous_when_consecutive() {
     );
     assert_chatwidget_snapshot!("exploring_step5_finish_sed_range", active_blob(&chat));
 
-    // 6) Start & complete "cat bar.txt"
     let begin_cat_bar = begin_exec(&mut chat, "call-cat-bar", "cat bar.txt");
     end_exec(
         &mut chat,

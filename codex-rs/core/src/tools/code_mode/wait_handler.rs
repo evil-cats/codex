@@ -1,3 +1,5 @@
+//! Продолжает или завершает ячейку Code Mode и использует общий путь ответа модели.
+
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
@@ -60,6 +62,8 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
 }
 
 impl CodeModeWaitHandler {
+    /// Ждёт очередной ответ ячейки и привязывает возможный spill к текущему
+    /// `call_id` вызова `wait`.
     async fn handle_call(
         &self,
         invocation: ToolInvocation,
@@ -149,10 +153,16 @@ impl CodeModeWaitHandler {
                     }
                 }
                 exec.session.services.elicitations.wait_until_clear().await;
-                handle_runtime_response(&exec, wait_response.into(), args.max_tokens, started_at)
-                    .await
-                    .map_err(FunctionCallError::RespondToModel)
-                    .map(boxed_tool_output)
+                handle_runtime_response(
+                    &exec,
+                    &call_id,
+                    wait_response.into(),
+                    args.max_tokens,
+                    started_at,
+                )
+                .await
+                .map_err(FunctionCallError::RespondToModel)
+                .map(boxed_tool_output)
             }
             _ => Err(FunctionCallError::RespondToModel(format!(
                 "{WAIT_TOOL_NAME} expects JSON arguments"

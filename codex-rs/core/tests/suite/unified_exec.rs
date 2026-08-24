@@ -1,3 +1,5 @@
+//! Сквозные тесты unified exec: жизненный цикл процесса, sandbox и ответ модели.
+
 use codex_core::EnvironmentConfig;
 use codex_core::TurnInputRequest;
 use core_test_support::test_codex::local_selections;
@@ -77,12 +79,20 @@ struct ParsedUnifiedExecOutput {
     process_id: Option<String>,
     exit_code: Option<i32>,
     original_token_count: Option<usize>,
-    output_inline_limit: Option<usize>,
+    output_lines: Option<ParsedSpillLines>,
     output_saved_to: Option<String>,
     output_save_error: Option<String>,
     output: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedSpillLines {
+    total: usize,
+    returned: Option<(usize, usize)>,
+    remaining: usize,
+}
+
+/// Разбирает служебную оболочку и spill-сообщение ответа unified exec.
 fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
     static OUTPUT_REGEX: OnceLock<Regex> = OnceLock::new();
     let regex = OUTPUT_REGEX.get_or_init(|| {
@@ -140,7 +150,7 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
 
     let body = captures.name("body").expect("body group present").as_str();
     let ParsedUnifiedExecOutputBody {
-        output_inline_limit,
+        output_lines,
         output_saved_to,
         output_save_error,
         output,
@@ -152,7 +162,7 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
         process_id,
         exit_code,
         original_token_count,
-        output_inline_limit,
+        output_lines,
         output_saved_to,
         output_save_error,
         output,
@@ -160,38 +170,35 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
 }
 
 struct ParsedUnifiedExecOutputBody {
-    output_inline_limit: Option<usize>,
+    output_lines: Option<ParsedSpillLines>,
     output_saved_to: Option<String>,
     output_save_error: Option<String>,
     output: String,
 }
 
+/// Различает исходный `Output:` и spill-формат с построчным диапазоном.
 fn parse_unified_exec_output_body(body: &str) -> Result<ParsedUnifiedExecOutputBody> {
     if let Some(output) = body.strip_prefix("Output:\n") {
         return Ok(ParsedUnifiedExecOutputBody {
-            output_inline_limit: None,
+            output_lines: None,
             output_saved_to: None,
             output_save_error: None,
             output: output.to_string(),
         });
     }
 
-    let Some(rest) = body.strip_prefix("Output exceeded inline limit of ") else {
+    let Some(rest) = body.strip_prefix("Lines: ") else {
         anyhow::bail!("missing Output section in unified exec output body {body:?}");
     };
-    let (limit, rest) = rest
-        .split_once(" tokens.\n")
-        .ok_or_else(|| anyhow::anyhow!("missing spill inline limit terminator"))?;
-    let output_inline_limit = Some(
-        limit
-            .parse::<usize>()
-            .context("failed to parse spill inline limit")?,
-    );
+    let (line_metadata, rest) = rest
+        .split_once('\n')
+        .ok_or_else(|| anyhow::anyhow!("missing spill line metadata terminator"))?;
+    let output_lines = Some(parse_spill_lines(line_metadata)?);
     let (storage_line, rest) = rest
         .split_once('\n')
         .ok_or_else(|| anyhow::anyhow!("missing spill storage line"))?;
     let output_saved_to = storage_line
-        .strip_prefix("Output saved to: ")
+        .strip_prefix("Full output: ")
         .map(str::to_string);
     let output_save_error = storage_line
         .strip_prefix("Failed to save output: ")
@@ -199,16 +206,70 @@ fn parse_unified_exec_output_body(body: &str) -> Result<ParsedUnifiedExecOutputB
     if output_saved_to.is_none() && output_save_error.is_none() {
         anyhow::bail!("unexpected spill storage line {storage_line:?}");
     }
-    let output = rest
-        .strip_prefix("Output excerpt:\n")
-        .ok_or_else(|| anyhow::anyhow!("missing Output excerpt section"))?
-        .to_string();
+    let output = if output_lines
+        .as_ref()
+        .is_some_and(|lines| lines.returned.is_some())
+    {
+        rest.strip_prefix("Output excerpt:\n\n")
+            .ok_or_else(|| anyhow::anyhow!("missing Output excerpt section"))?
+            .to_string()
+    } else {
+        if rest != "Error: first line exceeds excerpt token limit" {
+            anyhow::bail!("unexpected oversized-first-line body {rest:?}");
+        }
+        String::new()
+    };
 
     Ok(ParsedUnifiedExecOutputBody {
-        output_inline_limit,
+        output_lines,
         output_saved_to,
         output_save_error,
         output,
+    })
+}
+
+/// Разбирает `total`, `returned`, `remaining` и обязательный `complete=no`.
+fn parse_spill_lines(metadata: &str) -> Result<ParsedSpillLines> {
+    let fields = metadata.split_whitespace().collect::<Vec<_>>();
+    let [total, returned, remaining, complete] = fields.as_slice() else {
+        anyhow::bail!("unexpected spill line metadata {metadata:?}");
+    };
+    if *complete != "complete=no" {
+        anyhow::bail!("spill output must be incomplete, got {complete:?}");
+    }
+
+    let total = total
+        .strip_prefix("total=")
+        .ok_or_else(|| anyhow::anyhow!("missing spill total"))?
+        .parse::<usize>()
+        .context("failed to parse spill total")?;
+    let returned = match returned
+        .strip_prefix("returned=")
+        .ok_or_else(|| anyhow::anyhow!("missing spill returned range"))?
+    {
+        "none" => None,
+        range => {
+            let (start, end) = range
+                .split_once('-')
+                .ok_or_else(|| anyhow::anyhow!("invalid spill returned range {range:?}"))?;
+            Some((
+                start
+                    .parse::<usize>()
+                    .context("failed to parse range start")?,
+                end.parse::<usize>().context("failed to parse range end")?,
+            ))
+        }
+    };
+    let remaining = remaining
+        .strip_prefix("remaining=")
+        .ok_or_else(|| anyhow::anyhow!("missing spill remaining count"))?
+        .parse::<usize>()
+        .context("failed to parse spill remaining count")?;
+
+    Ok(ParsedSpillLines {
+        total,
+        returned,
+        remaining,
     })
 }
 
@@ -3217,12 +3278,12 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
 
     let first_output = outputs.get(first_call_id).expect("missing timeout output");
     assert!(first_output.process_id.is_some());
-    assert_eq!(first_output.output_inline_limit, None);
+    assert_eq!(first_output.output_lines, None);
     assert_eq!(first_output.output_saved_to, None);
     assert!(first_output.output.is_empty());
 
     let poll_output = outputs.get(second_call_id).expect("missing poll output");
-    assert_eq!(poll_output.output_inline_limit, None);
+    assert_eq!(poll_output.output_lines, None);
     assert_eq!(poll_output.output_saved_to, None);
     let output_text = poll_output.output.as_str();
     assert!(
@@ -3233,6 +3294,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     Ok(())
 }
 
+/// Большой вывод терминала сохраняется целиком, а модель получает только префикс строк.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 // Skipped on arm because the ctor logic to handle arg0 doesn't work on ARM
 #[cfg(not(target_arch = "arm"))]
@@ -3347,7 +3409,7 @@ async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
     let server = start_mock_server().await;
 
     let mut builder = test_codex().with_config(|config| {
-        config.exec_inline_output_max_tokens = 6;
+        config.exec_inline_output_max_tokens = 3;
         config
             .features
             .enable(Feature::UnifiedExec)
@@ -3356,9 +3418,9 @@ async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
     let test = builder.build_with_auto_env(&server).await?;
 
     let call_id = "uexec-spill-large-output";
-    let expected_output = "alpha beta gamma delta epsilon zeta eta theta iota kappa\n";
+    let expected_output = "alpha\nbeta\ngamma\n";
     let args = serde_json::json!({
-        "cmd": "printf 'alpha beta gamma delta epsilon zeta eta theta iota kappa\\n'",
+        "cmd": "printf 'alpha\\nbeta\\ngamma\\n'",
         "yield_time_ms": 3_000,
     });
 
@@ -3390,7 +3452,14 @@ async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
     let outputs = collect_tool_outputs(&bodies)?;
     let output = outputs.get(call_id).expect("missing spill output");
 
-    assert_eq!(output.output_inline_limit, Some(6));
+    assert_eq!(
+        output.output_lines,
+        Some(ParsedSpillLines {
+            total: 3,
+            returned: Some((1, 2)),
+            remaining: 1,
+        })
+    );
     assert_eq!(output.output_save_error, None);
     let saved_to = output.output_saved_to.as_ref().expect("missing spill path");
     assert!(
@@ -3401,11 +3470,7 @@ async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
         saved_to.contains(call_id),
         "spill path should include sanitized call id: {saved_to}"
     );
-    assert!(
-        output.output.contains("tokens truncated"),
-        "expected excerpt truncation marker: {:?}",
-        output.output
-    );
+    assert_eq!(output.output, "alpha\nbeta\n");
     assert_eq!(
         std::fs::read_to_string(std::path::Path::new(saved_to))?,
         expected_output
@@ -3615,7 +3680,7 @@ async fn unified_exec_enforces_glob_deny_read_policy() -> Result<()> {
     let outputs = collect_tool_outputs(&bodies)?;
     let output = outputs.get(call_id).expect("missing output");
 
-    assert_eq!(output.output_inline_limit, None);
+    assert_eq!(output.output_lines, None);
     assert_eq!(output.output_saved_to, None);
     assert_eq!(output.output_save_error, None);
     assert!(

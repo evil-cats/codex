@@ -1,3 +1,5 @@
+//! Управляет запуском, наблюдением и завершением unified exec процессов.
+
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -42,6 +44,7 @@ use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
+use crate::unified_exec::ExecCommandOutputRecipient;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::MAX_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::MAX_YIELD_TIME_MS;
@@ -66,6 +69,7 @@ use crate::unified_exec::output_spill::maybe_spill_exec_command_output;
 use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::SpawnLifecycleHandle;
 use crate::unified_exec::process::UnifiedExecProcess;
+use crate::unified_exec::resolve_max_tokens;
 use crate::unified_exec::take_plugin_metrics_sidecar;
 use codex_core_plugins::PLUGIN_METRICS_OUTPUT_ENV_VAR;
 use codex_core_plugins::PluginCommandAttribution;
@@ -102,6 +106,31 @@ const NETWORK_ACCESS_DENIED_MESSAGE: &str =
     "Network access was denied by the Codex sandbox network proxy.";
 const LATE_NETWORK_DENIAL_GRACE_PERIOD: Duration = Duration::from_millis(100);
 const INTERRUPT: &str = "\u{3}";
+
+/// Запрещает JavaScript продолжать вычисление по неполному выводу команды.
+fn validate_code_mode_nested_output(
+    original_token_count: usize,
+    output_omitted_bytes: Option<NonZeroUsize>,
+    limit_tokens: usize,
+    exit_code: i32,
+) -> Result<(), UnifiedExecError> {
+    if let Some(omitted_bytes) = output_omitted_bytes {
+        return Err(UnifiedExecError::CodeModeOutputCaptureIncomplete {
+            limit_tokens,
+            original_token_count,
+            omitted_bytes: omitted_bytes.get(),
+            exit_code,
+        });
+    }
+    if original_token_count > limit_tokens {
+        return Err(UnifiedExecError::CodeModeOutputLimitExceeded {
+            limit_tokens,
+            original_token_count,
+            exit_code,
+        });
+    }
+    Ok(())
+}
 
 /// Test-only override for deterministic unified exec process IDs.
 ///
@@ -464,6 +493,7 @@ impl UnifiedExecProcessManager {
         }
     }
 
+    /// Запускает команду, собирает ограниченный вывод и применяет политику первого получателя.
     pub(crate) async fn exec_command(
         &self,
         request: ExecCommandRequest,
@@ -732,34 +762,47 @@ impl UnifiedExecProcessManager {
             (None, exit_code)
         };
 
-        let output_spill = if response_process_id.is_none() && exit_code.is_some() {
-            let inline_limit = effective_inline_output_max_tokens(
-                context
-                    .step_context
-                    .turn
-                    .config
-                    .exec_inline_output_max_tokens,
-                request.max_output_tokens,
-                context
-                    .step_context
-                    .turn
-                    .model_info
-                    .truncation_policy
-                    .into(),
-            );
-            let thread_id = context.session.thread_id().to_string();
-            maybe_spill_exec_command_output(
-                &context.step_context.turn.config.codex_home,
-                &thread_id,
-                &context.call_id,
-                &chunk_id,
-                &collected,
-                original_token_count,
-                inline_limit,
-            )
-            .await
-        } else {
-            None
+        let output_spill = match (
+            response_process_id.is_none() && exit_code.is_some(),
+            request.output_recipient,
+        ) {
+            (false, _) => None,
+            (true, ExecCommandOutputRecipient::ModelVisible) => {
+                let inline_limit = effective_inline_output_max_tokens(
+                    context
+                        .step_context
+                        .turn
+                        .config
+                        .exec_inline_output_max_tokens,
+                    request.max_output_tokens,
+                    context
+                        .step_context
+                        .turn
+                        .model_info
+                        .truncation_policy
+                        .into(),
+                );
+                let thread_id = context.session.thread_id().to_string();
+                maybe_spill_exec_command_output(
+                    &context.step_context.turn.config.codex_home,
+                    &thread_id,
+                    &context.call_id,
+                    &chunk_id,
+                    &collected,
+                    original_token_count,
+                    inline_limit,
+                )
+                .await
+            }
+            (true, ExecCommandOutputRecipient::CodeModeNested) => {
+                validate_code_mode_nested_output(
+                    original_token_count,
+                    output_omitted_bytes,
+                    resolve_max_tokens(request.max_output_tokens),
+                    exit_code.unwrap_or(-1),
+                )?;
+                None
+            }
         };
         let response = ExecCommandToolOutput {
             event_call_id: context.call_id.clone(),

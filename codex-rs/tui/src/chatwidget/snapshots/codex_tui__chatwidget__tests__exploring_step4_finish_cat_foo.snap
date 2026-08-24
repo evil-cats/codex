@@ -4,3 +4,5 @@ assertion_line: 1431
 expression: active_blob(&chat)
 ---
 • Ran 2 commands · ctrl + t to view transcript
+  ├ ls -la
+  └ cat foo.txt

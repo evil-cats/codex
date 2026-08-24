@@ -1,4 +1,5 @@
-//! Обрабатывает unified `exec_command`: связывает разрешения, перехват `apply_patch` и жизненный цикл процесса.
+//! Обрабатывает unified `exec_command`: связывает разрешения, перехват `apply_patch`,
+//! жизненный цикл процесса и политику результата для модели либо Code Mode.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -6,6 +7,7 @@ use std::sync::Arc;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::tools::context::ExecCommandToolOutput;
+use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::context::boxed_tool_output;
@@ -25,6 +27,7 @@ use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
+use crate::unified_exec::ExecCommandOutputRecipient;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
@@ -117,6 +120,7 @@ impl ExecCommandHandler {
             step_context,
             tracker,
             call_id,
+            source,
             payload,
             ..
         } = invocation;
@@ -128,6 +132,12 @@ impl ExecCommandHandler {
                     "exec_command handler received unsupported payload".to_string(),
                 ));
             }
+        };
+        let output_recipient = match source {
+            ToolCallSource::Direct | ToolCallSource::DirectPlaintextMessage => {
+                ExecCommandOutputRecipient::ModelVisible
+            }
+            ToolCallSource::CodeMode { .. } => ExecCommandOutputRecipient::CodeModeNested,
         };
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
@@ -365,6 +375,7 @@ impl ExecCommandHandler {
                     process_id,
                     yield_time_ms,
                     max_output_tokens,
+                    output_recipient,
                     cwd,
                     sandbox_cwd: native_environment_cwd,
                     turn_environment: turn_environment.clone(),
@@ -411,6 +422,10 @@ impl ExecCommandHandler {
                     output_spill: None,
                 }))
             }
+            Err(
+                err @ (UnifiedExecError::CodeModeOutputLimitExceeded { .. }
+                | UnifiedExecError::CodeModeOutputCaptureIncomplete { .. }),
+            ) => Err(FunctionCallError::RespondToModel(err.to_string())),
             Err(err) => Err(FunctionCallError::RespondToModel(format!(
                 "exec_command failed for `{command_for_display}`: {err:?}"
             ))),

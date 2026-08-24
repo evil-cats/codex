@@ -1,11 +1,12 @@
 //! Обработчик встроенного tool `read_file`.
 //!
-//! Он выбирает environment текущего шага, разрешает переданный `path` через
-//! `PathUri` выбранного environment и читает обычный текстовый UTF-8 файл через
-//! его filesystem с действующими sandbox-ограничениями. Формирование диапазона,
-//! metadata полноты и усечение по целым строкам остаются локальным контрактом
-//! этого обработчика. Перед выдачей содержимого обработчик также проверяет,
-//! сохранился ли один полностью покрывающий output в текущем context window.
+//! Он выбирает `environment` текущего шага, разрешает переданный `path` через
+//! `PathUri` выбранного окружения и читает обычный текстовый UTF-8 файл через его
+//! файловую систему с действующими sandbox-ограничениями. Формирование диапазона,
+//! метаданных полноты и усечение по целым строкам остаются контрактом этого
+//! обработчика, а окончания строк сохраняет общая утилита инструментов. Перед
+//! выдачей содержимого обработчик также проверяет, остался ли один полностью
+//! покрывающий результат в текущем окне контекста.
 
 #[path = "read_file_context.rs"]
 mod read_file_context;
@@ -22,6 +23,7 @@ use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::read_file_spec::READ_FILE_TOOL_NAME;
 use crate::tools::handlers::read_file_spec::create_read_file_tool;
 use crate::tools::handlers::resolve_tool_environment;
+use crate::tools::line_utils::split_lines_preserving_endings;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
 use codex_exec_server::GetMetadataOptions;
@@ -395,25 +397,6 @@ fn render_lines_content(lines: &[&str], range: LineRange, line_numbers: bool) ->
         output.push_str(&format!("{} | {}", line_number, lines[line_number - 1]));
     }
     output
-}
-
-fn split_lines_preserving_endings(content: &str) -> Vec<&str> {
-    if content.is_empty() {
-        return Vec::new();
-    }
-
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (idx, ch) in content.char_indices() {
-        if ch == '\n' {
-            lines.push(&content[start..idx + ch.len_utf8()]);
-            start = idx + ch.len_utf8();
-        }
-    }
-    if start < content.len() {
-        lines.push(&content[start..]);
-    }
-    lines
 }
 
 fn raw_lines_content(lines: &[&str], start: usize, end: usize) -> String {

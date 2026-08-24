@@ -442,6 +442,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         process_id: 123,
         yield_time_ms: 1000,
         max_output_tokens: None,
+        output_recipient: crate::unified_exec::ExecCommandOutputRecipient::ModelVisible,
         #[allow(deprecated)]
         cwd: turn.cwd.clone().into(),
         #[allow(deprecated)]

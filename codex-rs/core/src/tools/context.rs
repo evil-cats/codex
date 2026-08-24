@@ -1,3 +1,5 @@
+//! Определяет входы, результаты и представления встроенных tool-вызовов для модели.
+
 use crate::context_manager::truncate_function_output_payload;
 use crate::original_image_detail::sanitize_original_image_detail;
 use crate::session::session::Session;
@@ -8,6 +10,8 @@ use crate::tools::TELEMETRY_PREVIEW_MAX_LINES;
 use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::format_output_omission_marker;
+use crate::unified_exec::output_spill::ExecCommandOutputSpill;
+use crate::unified_exec::output_spill::render_output_spill;
 use crate::unified_exec::resolve_max_tokens;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -17,7 +21,6 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_tools::LoadableToolSpec;
 use codex_tools::ToolName;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::formatted_truncate_text;
@@ -329,18 +332,6 @@ pub struct ExecCommandToolOutput {
     pub output_spill: Option<ExecCommandOutputSpill>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecCommandOutputSpill {
-    pub inline_limit_tokens: usize,
-    pub result: ExecCommandOutputSpillResult,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecCommandOutputSpillResult {
-    Saved { path: AbsolutePathBuf },
-    SaveFailed { error: String },
-}
-
 impl ToolOutput for ExecCommandToolOutput {
     fn log_preview(&self) -> String {
         telemetry_preview(&self.response_text())
@@ -453,6 +444,7 @@ impl ExecCommandToolOutput {
         )
     }
 
+    /// Строит ответ для модели; запись spill-файла выполняется раньше владельцем политики.
     fn response_text(&self) -> String {
         let mut sections = Vec::new();
 
@@ -476,20 +468,7 @@ impl ExecCommandToolOutput {
         }
 
         if let Some(spill) = &self.output_spill {
-            sections.push(format!(
-                "Output exceeded inline limit of {} tokens.",
-                spill.inline_limit_tokens
-            ));
-            match &spill.result {
-                ExecCommandOutputSpillResult::Saved { path } => {
-                    sections.push(format!("Output saved to: {}", path.display()));
-                }
-                ExecCommandOutputSpillResult::SaveFailed { error } => {
-                    sections.push(format!("Failed to save output: {error}"));
-                }
-            }
-            sections.push("Output excerpt:".to_string());
-            sections.push(self.truncated_output(spill.inline_limit_tokens));
+            sections.push(render_output_spill(&self.raw_output, spill).body);
         } else {
             sections.push("Output:".to_string());
             sections.push(self.truncated_output(self.model_output_max_tokens()));

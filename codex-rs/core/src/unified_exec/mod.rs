@@ -21,6 +21,7 @@
 //! - `process.rs`: PTY process lifecycle + output buffering.
 //! - `process_state.rs`: shared exit/failure state for local and remote processes.
 //! - `process_manager.rs`: orchestration (approvals, sandboxing, reuse) and request handling.
+//! - `output_spill.rs`: сохранение полного вывода и последовательный фрагмент для модели.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -100,6 +101,7 @@ pub(crate) struct ExecCommandRequest {
     pub process_id: i32,
     pub yield_time_ms: u64,
     pub max_output_tokens: Option<usize>,
+    pub output_recipient: ExecCommandOutputRecipient,
     pub cwd: PathUri,
     pub sandbox_cwd: PathUri,
     pub turn_environment: TurnEnvironment,
@@ -111,6 +113,16 @@ pub(crate) struct ExecCommandRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
+}
+
+/// Определяет первого потребителя результата завершённого `exec_command`.
+///
+/// Для модели допустим spill с построчным фрагментом, а JavaScript внутри Code Mode
+/// должен получить полный результат в заданном лимите либо явную ошибку.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExecCommandOutputRecipient {
+    ModelVisible,
+    CodeModeNested,
 }
 
 #[derive(Debug)]
