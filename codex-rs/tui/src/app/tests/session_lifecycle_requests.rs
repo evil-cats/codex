@@ -23,6 +23,7 @@ use codex_protocol::items::EnteredReviewModeItem;
 use codex_protocol::items::ExitedReviewModeItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::user_input::UserInput as CoreUserInput;
@@ -30,6 +31,7 @@ use codex_state::SqliteConfig;
 use futures::SinkExt;
 use futures::StreamExt;
 use pretty_assertions::assert_eq;
+use std::cell::Cell;
 use std::sync::Mutex;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -325,6 +327,146 @@ async fn make_history_test_app() -> Result<(App, tempfile::TempDir)> {
     app.config.codex_home = codex_home.path().to_path_buf().abs();
     app.config.sqlite = SqliteConfig::new_for_testing(codex_home.path().abs());
     Ok((app, codex_home))
+}
+
+#[derive(Clone, Copy)]
+enum ExpectedInlineVisualizationContext {
+    Available,
+    Unavailable,
+}
+
+async fn assert_initial_history_context_built_once(
+    permission_profile: PermissionProfile,
+    expected_context: ExpectedInlineVisualizationContext,
+) -> Result<()> {
+    let (mut app, codex_home) = make_history_test_app().await?;
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(10_000);
+    app.config
+        .permissions
+        .set_permission_profile(permission_profile)?;
+    let generated_thread_id = create_fake_paginated_rollout(
+        codex_home.path(),
+        "2026-01-02T00-00-00",
+        "2026-01-02T00:00:00Z",
+        "multi-page visualization context",
+        Some(app.config.model_provider_id.as_str()),
+        /*git_info*/ None,
+    )
+    .map_err(|error| color_eyre::eyre::eyre!("failed to create paginated rollout: {error}"))?;
+    let generated_path = rollout_path(
+        codex_home.path(),
+        "2026-01-02T00-00-00",
+        &generated_thread_id,
+    );
+    let thread_id = ThreadId::new();
+    let path = rollout_path(
+        codex_home.path(),
+        "2026-01-02T00-00-00",
+        &thread_id.to_string(),
+    );
+    std::fs::rename(generated_path, &path)?;
+    let mut records = std::fs::read_to_string(&path)?
+        .lines()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    records[0]["payload"]["id"] = serde_json::to_value(thread_id)?;
+    records[0]["payload"]["session_id"] = serde_json::to_value(thread_id)?;
+    let turn_id = "multi-page-visualization-context-turn";
+    let events = std::iter::once(EventMsg::TurnStarted(TurnStartedEvent {
+        turn_id: turn_id.to_string(),
+        trace_id: None,
+        started_at: None,
+        model_context_window: None,
+        collaboration_mode_kind: Default::default(),
+    }))
+    .chain(
+        (0..crate::app_server_session::HISTORY_ITEM_PAGE_LIMIT as usize + 5).map(|index| {
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id,
+                turn_id: turn_id.to_string(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: format!("visualization-context-item-{index}"),
+                    content: vec![AgentMessageContent::Text {
+                        text: format!("visualization context output {index}"),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                    delivery: None,
+                }),
+                started_at_ms: None,
+                completed_at_ms: 0,
+            })
+        }),
+    );
+    for event in events {
+        records.push(serde_json::json!({
+            "timestamp": "2026-01-02T00:00:00Z",
+            "ordinal": records.len(),
+            "type": "event_msg",
+            "payload": serde_json::to_value(event)?,
+        }));
+    }
+    let records = records
+        .into_iter()
+        .map(|record| record.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path, format!("{records}\n"))?;
+
+    let context_is_available =
+        crate::inline_visualization::InlineVisualizationContext::from_config(
+            &app.config,
+            thread_id,
+        )
+        .is_some();
+    assert_eq!(
+        context_is_available,
+        matches!(
+            expected_context,
+            ExpectedInlineVisualizationContext::Available
+        )
+    );
+    crate::inline_visualization::FROM_CONFIG_CALL_COUNT.with(Cell::take);
+    let (mut app_server, requests, proxy) = start_recording_app_server(
+        &app.config,
+        /*blocked_thread_list*/ None,
+        /*failed_thread_name*/ None,
+    )
+    .await?;
+
+    app_server
+        .resume_thread(
+            app.config.clone(),
+            thread_id,
+            crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+        )
+        .await?;
+
+    let context_call_count = crate::inline_visualization::FROM_CONFIG_CALL_COUNT.with(Cell::take);
+    let item_page_request_count = recorded_params(&requests, "thread/items/list").len();
+    assert_eq!((context_call_count, item_page_request_count > 1), (1, true));
+    app_server.shutdown().await?;
+    proxy.await??;
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn initial_history_hydration_builds_visualization_context_once_across_pages() -> Result<()> {
+    assert_initial_history_context_built_once(
+        PermissionProfile::read_only(),
+        ExpectedInlineVisualizationContext::Available,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn initial_history_hydration_caches_missing_visualization_context_across_pages() -> Result<()>
+{
+    assert_initial_history_context_built_once(
+        PermissionProfile::Disabled,
+        ExpectedInlineVisualizationContext::Unavailable,
+    )
+    .await
 }
 
 #[tokio::test]

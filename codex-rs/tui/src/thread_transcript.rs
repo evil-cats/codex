@@ -91,6 +91,20 @@ pub(crate) fn thread_items_to_transcript_cells(
     let inline_visualization_context = config.and_then(|config| {
         thread_id.and_then(|thread_id| InlineVisualizationContext::from_config(config, thread_id))
     });
+    thread_items_to_transcript_cells_with_context(
+        cwd,
+        items,
+        raw_reasoning_visibility,
+        inline_visualization_context.as_ref(),
+    )
+}
+
+pub(crate) fn thread_items_to_transcript_cells_with_context(
+    cwd: &AbsolutePathBuf,
+    items: impl IntoIterator<Item = ThreadItem>,
+    raw_reasoning_visibility: RawReasoningVisibility,
+    inline_visualization_context: Option<&InlineVisualizationContext>,
+) -> TranscriptCells {
     let mut cells: TranscriptCells = Vec::new();
     for item in items {
         match item {
@@ -131,7 +145,7 @@ pub(crate) fn thread_items_to_transcript_cells(
                     cells.push(Arc::new(AgentMarkdownCell::new_with_inline_visualizations(
                         parsed.visible_markdown,
                         cwd.as_path(),
-                        inline_visualization_context.clone(),
+                        inline_visualization_context.cloned(),
                     )));
                 }
             }

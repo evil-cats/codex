@@ -13,6 +13,8 @@ use pulldown_cmark::Tag;
 use pulldown_cmark::TagEnd;
 use rand::RngCore as _;
 use std::borrow::Cow;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs;
 use std::ops::Range;
@@ -30,6 +32,11 @@ const DIRECTIVE_PREFIX: &str = "::codex-inline-vis{";
 const CONTENT_REFERENCE_PREFIX: &str = "\u{e200}visualize\u{e202}";
 const CONTENT_REFERENCE_SUFFIX: char = '\u{e201}';
 const MAX_FRAGMENT_BYTES: u64 = 2 * 1024 * 1024;
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static FROM_CONFIG_CALL_COUNT: Cell<usize> = const { Cell::new(/*value*/ 0) };
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct InlineVisualizationContext {
@@ -49,6 +56,8 @@ impl InlineVisualizationContext {
         config: &crate::legacy_core::config::Config,
         thread_id: ThreadId,
     ) -> Option<Self> {
+        #[cfg(test)]
+        FROM_CONFIG_CALL_COUNT.with(|count| count.set(count.get() + 1));
         let file_system_policy = config.permissions.file_system_sandbox_policy();
         if file_system_policy.has_full_disk_write_access() {
             return None;
@@ -63,17 +72,21 @@ impl InlineVisualizationContext {
             config.codex_home.as_path().join("visualization-viewers"),
             context.viewer_dir.parent()?.parent()?.to_path_buf(),
         ];
-        for viewer_cache in viewer_caches {
-            if file_system_policy.can_write_path_with_cwd(&viewer_cache, config.cwd.as_path())
-                || file_system_policy
-                    .can_write_path_with_cwd(viewer_cache.parent()?, config.cwd.as_path())
-                || writable_roots.iter().any(|root| {
-                    root.is_path_writable(&viewer_cache)
-                        || root.root.as_path().starts_with(&viewer_cache)
+        let viewer_cache_paths = [
+            viewer_caches[0].as_path(),
+            viewer_caches[0].parent()?,
+            viewer_caches[1].as_path(),
+            viewer_caches[1].parent()?,
+        ];
+        if file_system_policy.can_write_any_path_with_cwd(viewer_cache_paths, config.cwd.as_path())
+            || viewer_caches.iter().any(|viewer_cache| {
+                writable_roots.iter().any(|root| {
+                    root.is_path_writable(viewer_cache)
+                        || root.root.as_path().starts_with(viewer_cache)
                 })
-            {
-                return None;
-            }
+            })
+        {
+            return None;
         }
         Some(context)
     }

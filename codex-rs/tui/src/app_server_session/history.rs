@@ -4,10 +4,11 @@ use std::collections::HashSet;
 
 use super::AppServerSession;
 use crate::history_cell::HistoryRenderMode;
+use crate::inline_visualization::InlineVisualizationContext;
 use crate::legacy_core::config::Config;
 use crate::resize_reflow_cap::resize_reflow_max_rows;
 use crate::thread_transcript::RawReasoningVisibility;
-use crate::thread_transcript::thread_items_to_transcript_cells;
+use crate::thread_transcript::thread_items_to_transcript_cells_with_context;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::Thread;
@@ -238,6 +239,10 @@ impl AppServerSession {
         };
         let mut scanned_items = 0;
         let mut rendered_rows = 0;
+        // Rendering runs once per item page. Resolve permission-dependent visualization roots once
+        // for this hydration instead of rebuilding the same context on every page.
+        let inline_visualization_context =
+            config.and_then(|config| InlineVisualizationContext::from_config(config, thread_id));
         loop {
             let remaining_rows = row_budget.map(|budget| budget.saturating_sub(rendered_rows));
             let remaining_items = item_budget.map(|budget| budget.saturating_sub(scanned_items));
@@ -269,8 +274,14 @@ impl AppServerSession {
                 .merge_thread_item_page(thread_id, page, &mut state, &mut thread.turns)
                 .await?;
             if let Some(config) = config {
-                rendered_rows =
-                    rendered_history_rows(thread_id, thread, items, config, width, rendered_rows);
+                rendered_rows = rendered_history_rows(
+                    thread,
+                    items,
+                    config,
+                    inline_visualization_context.as_ref(),
+                    width,
+                    rendered_rows,
+                );
             } else {
                 rendered_rows = rendered_rows.saturating_add(items.len());
             }
@@ -286,10 +297,10 @@ impl AppServerSession {
 }
 
 fn rendered_history_rows(
-    thread_id: ThreadId,
     thread: &Thread,
     items: Vec<ThreadItem>,
     config: &Config,
+    inline_visualization_context: Option<&InlineVisualizationContext>,
     width: u16,
     rendered_rows: usize,
 ) -> usize {
@@ -303,12 +314,11 @@ fn rendered_history_rows(
     } else {
         HistoryRenderMode::Rich
     };
-    thread_items_to_transcript_cells(
-        Some(thread_id),
+    thread_items_to_transcript_cells_with_context(
         &thread.cwd,
         items,
         visibility,
-        Some(config),
+        inline_visualization_context,
     )
     .into_iter()
     .fold(rendered_rows, |rows, cell| {
