@@ -15,6 +15,7 @@ use crate::rmcp_client::ManagedClient;
 use crate::rmcp_client::ManagedClientFuture;
 use crate::rmcp_client::StartupOutcomeError;
 use crate::rmcp_client::list_tools_for_client_uncached;
+use crate::runtime::McpRuntime;
 use crate::runtime::McpRuntimeContext;
 use crate::server::EffectiveMcpServer;
 use crate::server::McpServerMetadata;
@@ -146,6 +147,19 @@ impl McpConnectionSet {
 
     fn test_client(&self, name: &str) -> &AsyncManagedClient {
         &self.servers[name].connection.client
+    }
+
+    /// Заменяет тестовый клиент, сохраняя идентичность и остальные свойства соединения.
+    fn replace_test_client(&mut self, name: &str, client: AsyncManagedClient) {
+        let connection = Arc::get_mut(
+            &mut self
+                .servers
+                .get_mut(name)
+                .expect("test server should exist")
+                .connection,
+        )
+        .expect("test server should have one connection owner");
+        connection.client = client;
     }
 
     fn set_test_server_metadata(&mut self, name: &str, metadata: McpServerMetadata) {
@@ -448,8 +462,20 @@ async fn create_ready_async_managed_client(tools: Vec<ToolInfo>) -> AsyncManaged
     }
 }
 
+/// Удерживает успешный startup тестового клиента до явного разрешения продолжить.
 fn create_gated_async_managed_client(
     client: ManagedClient,
+) -> (
+    AsyncManagedClient,
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    create_gated_async_managed_client_with_outcome(Ok(client))
+}
+
+/// Удерживает startup до явного разрешения продолжить и завершает заданным исходом.
+fn create_gated_async_managed_client_with_outcome(
+    outcome: Result<ManagedClient, StartupOutcomeError>,
 ) -> (
     AsyncManagedClient,
     tokio::sync::oneshot::Receiver<()>,
@@ -463,7 +489,7 @@ fn create_gated_async_managed_client(
         started_tx.send(()).expect("signal client startup");
         release_rx.await.expect("release client startup");
         startup_complete_for_client.store(true, std::sync::atomic::Ordering::Release);
-        Ok(client)
+        outcome
     }
     .boxed()
     .shared();
@@ -4131,6 +4157,49 @@ async fn reconcile_reusable_server(
     .await
 }
 
+/// Реальный pending startup, переиспользованный новым snapshot согласования.
+struct ReusedPendingStartupFixture {
+    config: McpServerConfig,
+    runtime_context: McpRuntimeContext,
+    previous: McpConnectionSet,
+    reconciled: McpConnectionSet,
+    startup: tokio::task::JoinHandle<Result<ManagedClient, StartupOutcomeError>>,
+    release_startup: tokio::sync::oneshot::Sender<()>,
+}
+
+/// Создаёт общее pending-соединение и дожидается, пока новый snapshot начнёт его ждать.
+async fn build_reused_pending_startup_fixture(
+    outcome: Result<ManagedClient, StartupOutcomeError>,
+) -> anyhow::Result<ReusedPendingStartupFixture> {
+    let runtime_context = reusable_server_runtime_context();
+    let mut config = reusable_server_config("http://127.0.0.1:1");
+    // Pending-клиент создаётся вручную, а его будущая замена детерминированно
+    // завершается `Failed` из-за отсутствующего окружения до сетевого запроса.
+    config.environment_id = "missing-reused-pending-test-environment".to_string();
+    let mut previous =
+        manager_with_reusable_ready_server(&config, &runtime_context, Vec::new()).await;
+    let (pending_client, startup_started, release_startup) =
+        create_gated_async_managed_client_with_outcome(outcome);
+    let startup = tokio::spawn({
+        let pending_client = pending_client.clone();
+        async move { pending_client.client().await }
+    });
+    startup_started.await?;
+    previous.replace_test_client("docs", pending_client);
+
+    let reconciled =
+        reconcile_reusable_server(&previous, config.clone(), runtime_context.clone()).await;
+
+    Ok(ReusedPendingStartupFixture {
+        config,
+        runtime_context,
+        previous,
+        reconciled,
+        startup,
+        release_startup,
+    })
+}
+
 #[tokio::test]
 async fn reconciliation_reuses_connection_without_relisting_regular_tools() -> anyhow::Result<()> {
     let tools = Arc::new(tokio::sync::RwLock::new(vec![Tool::new(
@@ -4298,15 +4367,7 @@ async fn reconciliation_reuses_an_unchanged_pending_server_without_waiting() -> 
         async move { pending_client.client().await }
     });
     startup_started.await?;
-    let connection = Arc::get_mut(
-        &mut previous
-            .servers
-            .get_mut("docs")
-            .expect("test server should exist")
-            .connection,
-    )
-    .expect("test server should have one connection owner");
-    connection.client = pending_client;
+    previous.replace_test_client("docs", pending_client);
     config.enabled_tools = Some(vec!["search".to_string()]);
 
     let reconciled = tokio::time::timeout(
@@ -4328,6 +4389,161 @@ async fn reconciliation_reuses_an_unchanged_pending_server_without_waiting() -> 
     Ok(())
 }
 
+/// `Ready` завершает наблюдение общего pending startup без запроса замены.
+#[tokio::test]
+async fn reused_pending_ready_does_not_request_replacement() -> anyhow::Result<()> {
+    let client = create_test_managed_client(Vec::new()).await;
+    let fixture = build_reused_pending_startup_fixture(Ok(client)).await?;
+    let reconciled = Arc::new(fixture.reconciled);
+    assert!(
+        fixture
+            .previous
+            .shares_test_connection_with(&reconciled, "docs")
+    );
+    let replacement_needed = tokio::spawn({
+        let reconciled = Arc::clone(&reconciled);
+        async move { reconciled.wait_for_reused_pending_startup_failure().await }
+    });
+    // До исхода ожидатель обязан оставаться pending, а не читать исходный `SettledWithoutFailure`.
+    tokio::task::yield_now().await;
+    assert!(!replacement_needed.is_finished());
+
+    fixture
+        .release_startup
+        .send(())
+        .map_err(|()| anyhow!("reused pending startup should still be running"))?;
+    assert!(fixture.startup.await?.is_ok());
+    assert!(!replacement_needed.await?);
+    Ok(())
+}
+
+/// `Cancelled` остаётся настоящим конечным исходом, но не запрашивает замену.
+#[tokio::test]
+async fn reused_pending_cancelled_does_not_request_replacement() -> anyhow::Result<()> {
+    let fixture = build_reused_pending_startup_fixture(Err(StartupOutcomeError::Cancelled)).await?;
+    let reconciled = Arc::new(fixture.reconciled);
+    assert!(
+        fixture
+            .previous
+            .shares_test_connection_with(&reconciled, "docs")
+    );
+    let replacement_needed = tokio::spawn({
+        let reconciled = Arc::clone(&reconciled);
+        async move { reconciled.wait_for_reused_pending_startup_failure().await }
+    });
+    // До исхода ожидатель обязан оставаться pending, а не читать исходный `SettledWithoutFailure`.
+    tokio::task::yield_now().await;
+    assert!(!replacement_needed.is_finished());
+
+    fixture
+        .release_startup
+        .send(())
+        .map_err(|()| anyhow!("reused pending startup should still be running"))?;
+    assert!(matches!(
+        fixture.startup.await?,
+        Err(StartupOutcomeError::Cancelled)
+    ));
+    assert!(!replacement_needed.await?);
+    Ok(())
+}
+
+/// Обновление авторизации заменяет snapshot, и ожидающий его worker отбрасывает старый `Failed`.
+#[tokio::test]
+async fn stale_pending_failure_is_discarded_after_auth_refresh() -> anyhow::Result<()> {
+    let fixture = build_reused_pending_startup_fixture(Err(StartupOutcomeError::Failed {
+        error: "shared startup failed".to_string(),
+        is_authentication_required: false,
+    }))
+    .await?;
+    assert!(
+        fixture
+            .previous
+            .shares_test_connection_with(&fixture.reconciled, "docs")
+    );
+    let reused = Arc::new(fixture.reconciled);
+    let runtime = Arc::new(McpRuntime::empty(/*prefix_mcp_tool_names*/ true));
+    runtime.publish_connections_for_test(
+        Arc::clone(&reused),
+        Some(CodexAuth::from_api_key("stale-auth")),
+    );
+    let stale_snapshot_loaded = runtime.observe_next_reused_pending_snapshot_load_for_test();
+    let wait = tokio::spawn({
+        let runtime = Arc::clone(&runtime);
+        async move {
+            runtime
+                .wait_for_current_reused_pending_startup_failure()
+                .await
+        }
+    });
+    stale_snapshot_loaded
+        .await
+        .map_err(|_| anyhow!("worker should capture the stale snapshot"))?;
+    assert!(!wait.is_finished());
+
+    let refreshed_auth = CodexAuth::from_api_key("refreshed-auth");
+    runtime.publish_connections_for_test(
+        Arc::new(McpConnectionSet::empty(/*prefix_mcp_tool_names*/ true)),
+        Some(refreshed_auth.clone()),
+    );
+    fixture
+        .release_startup
+        .send(())
+        .map_err(|()| anyhow!("stale reused startup should still be running"))?;
+
+    assert!(matches!(
+        fixture.startup.await?,
+        Err(StartupOutcomeError::Failed { .. })
+    ));
+    assert!(reused.wait_for_reused_pending_startup_failure().await);
+    assert!(!wait.await?);
+    assert!(runtime.current_auth_matches(Some(&refreshed_auth)));
+    Ok(())
+}
+
+/// Повторно упавшая замена не выдаёт сигнал для ещё одного повтора.
+#[tokio::test]
+async fn failed_replacement_does_not_request_another_retry() -> anyhow::Result<()> {
+    let fixture = build_reused_pending_startup_fixture(Err(StartupOutcomeError::Failed {
+        error: "shared startup failed".to_string(),
+        is_authentication_required: false,
+    }))
+    .await?;
+    assert!(
+        fixture
+            .previous
+            .shares_test_connection_with(&fixture.reconciled, "docs")
+    );
+    fixture
+        .release_startup
+        .send(())
+        .map_err(|()| anyhow!("reused pending startup should still be running"))?;
+    assert!(matches!(
+        fixture.startup.await?,
+        Err(StartupOutcomeError::Failed { .. })
+    ));
+    assert!(
+        fixture
+            .reconciled
+            .wait_for_reused_pending_startup_failure()
+            .await
+    );
+
+    let replacement =
+        reconcile_reusable_server(&fixture.reconciled, fixture.config, fixture.runtime_context)
+            .await;
+    assert!(
+        !fixture
+            .reconciled
+            .shares_test_connection_with(&replacement, "docs")
+    );
+    assert!(matches!(
+        replacement.test_client("docs").client().await,
+        Err(StartupOutcomeError::Failed { .. })
+    ));
+    assert!(!replacement.wait_for_reused_pending_startup_failure().await);
+    Ok(())
+}
+
 #[tokio::test]
 async fn reconciliation_cancels_a_reused_pending_server_when_disabled() -> anyhow::Result<()> {
     let runtime_context = reusable_server_runtime_context();
@@ -4344,15 +4560,7 @@ async fn reconciliation_cancels_a_reused_pending_server_when_disabled() -> anyho
         async move { pending_client.client().await }
     });
     startup_started.await?;
-    let connection = Arc::get_mut(
-        &mut previous
-            .servers
-            .get_mut("docs")
-            .expect("test server should exist")
-            .connection,
-    )
-    .expect("test server should have one connection owner");
-    connection.client = pending_client;
+    previous.replace_test_client("docs", pending_client);
 
     let reused =
         reconcile_reusable_server(&previous, config.clone(), runtime_context.clone()).await;

@@ -1,3 +1,8 @@
+//! Модульные тесты строгого разбора аргументов и формирования ответа `get_system_time`.
+//!
+//! Проверки фиксируют видимые модели ошибки, допустимые смещения и форму метаданных,
+//! не привязываясь к конкретному текущему времени хоста.
+
 use super::*;
 use chrono::TimeZone;
 use pretty_assertions::assert_eq;
@@ -81,17 +86,70 @@ fn utc_offset_is_case_insensitive() {
     );
 }
 
+/// Проверяет, что пробельная строка после `trim()` выбирает локальное время.
+#[test]
+fn whitespace_offset_selects_local_time() {
+    let offset = parse_requested_offset(Some(" \n\t ")).expect("пробельная строка означает local");
+
+    assert_eq!(offset, RequestedOffset::Local);
+}
+
+/// Проверяет обе разрешённые границы фиксированного смещения без чтения текущего времени.
 #[test]
 fn parses_fixed_offsets() {
-    let offset = parse_requested_offset(Some("-07:30")).expect("parse offset");
+    let max_offset_seconds = 23 * 60 * 60 + 59 * 60;
+    let offsets = [
+        parse_requested_offset(Some("+23:59")).expect("положительная граница допустима"),
+        parse_requested_offset(Some("-23:59")).expect("отрицательная граница допустима"),
+    ];
 
     assert_eq!(
-        offset,
-        RequestedOffset::Fixed {
-            label: "-07:30".to_string(),
-            offset: FixedOffset::west_opt(7 * 60 * 60 + 30 * 60).expect("valid offset")
-        }
+        offsets,
+        [
+            RequestedOffset::Fixed {
+                label: "+23:59".to_string(),
+                offset: FixedOffset::east_opt(max_offset_seconds)
+                    .expect("положительная граница chrono допустима"),
+            },
+            RequestedOffset::Fixed {
+                label: "-23:59".to_string(),
+                offset: FixedOffset::west_opt(max_offset_seconds)
+                    .expect("отрицательная граница chrono допустима"),
+            },
+        ]
     );
+}
+
+/// Проверяет все структурные классы ошибки парсера и обе числовые границы диапазона.
+#[test]
+fn rejects_malformed_incomplete_and_out_of_range_fixed_offsets() {
+    let invalid_offsets = [
+        "+1:00", "+01:0", "x01:00", "+01-00", "+0x:00", "+24:00", "+00:60",
+    ];
+
+    let actual_messages = invalid_offsets
+        .iter()
+        .copied()
+        .map(|value| {
+            let error = parse_requested_offset(Some(value))
+                .expect_err("ошибочное фиксированное смещение должно быть отклонено");
+            let FunctionCallError::RespondToModel(message) = error else {
+                panic!("ошибка для `{value}` должна быть видна модели");
+            };
+            message
+        })
+        .collect::<Vec<_>>();
+    let expected_messages = invalid_offsets
+        .iter()
+        .copied()
+        .map(|value| {
+            format!(
+                "invalid offset `{value}`; use `local`, `utc`, or a fixed offset in `+HH:MM`/`-HH:MM` form"
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual_messages, expected_messages);
 }
 
 #[test]

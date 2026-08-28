@@ -966,14 +966,18 @@ async fn assert_exec_process_initial_stdin_respects_filesystem_sandbox() -> Resu
             network_proxy: None,
         })
         .await?;
-    let (stdout, _stderr, exit_code, closed) =
+    let (stdout, stderr, exit_code, closed) =
         collect_process_output_from_events(session.process).await?;
 
     assert_eq!(
-        (stdout, exit_code, closed),
-        ("denied\n".to_string(), Some(0), true)
+        (stdout.as_str(), exit_code, closed),
+        ("denied\n", Some(0), true),
+        "sandboxed process stderr:\n{stderr}"
     );
-    assert!(!denied_file.exists());
+    assert!(
+        !denied_file.exists(),
+        "sandboxed process created denied file; stderr:\n{stderr}"
+    );
     Ok(())
 }
 

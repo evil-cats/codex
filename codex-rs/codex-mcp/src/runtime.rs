@@ -93,6 +93,8 @@ pub struct McpRuntime {
     reconnect_pending: AtomicBool,
     elicitation_router: ElicitationRequestRouter,
     resource_origins: Mutex<ResourceOrigins>,
+    #[cfg(test)]
+    reused_pending_snapshot_loaded: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 struct PublishedMcpRuntime {
@@ -177,6 +179,8 @@ impl McpRuntime {
             reconnect_pending: AtomicBool::new(false),
             elicitation_router: ElicitationRequestRouter::default(),
             resource_origins: Mutex::default(),
+            #[cfg(test)]
+            reused_pending_snapshot_loaded: Mutex::new(None),
         }
     }
 
@@ -299,6 +303,15 @@ impl McpRuntime {
     pub async fn wait_for_current_reused_pending_startup_failure(&self) -> bool {
         loop {
             let current = self.current.load_full();
+            #[cfg(test)]
+            if let Some(snapshot_loaded) = self
+                .reused_pending_snapshot_loaded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                let _ = snapshot_loaded.send(());
+            }
             let failed = current
                 .connections
                 .wait_for_reused_pending_startup_failure()
@@ -307,6 +320,44 @@ impl McpRuntime {
                 return failed;
             }
         }
+    }
+
+    /// Публикует контролируемый snapshot для проверки гонки с обновлением авторизации.
+    ///
+    /// Переданный набор сохраняет собственный жизненный цикл startup; вспомогательная
+    /// функция заменяет только указатель текущего thread и авторизацию, не создавая
+    /// дополнительные транспорты.
+    #[cfg(test)]
+    pub(crate) fn publish_connections_for_test(
+        &self,
+        connections: Arc<McpConnectionSet>,
+        auth: Option<CodexAuth>,
+    ) {
+        let auth_token = auth.as_ref().and_then(|auth| auth.get_token().ok());
+        self.current.store(Arc::new(PublishedMcpRuntime {
+            connections,
+            config: None,
+            auth,
+            auth_token,
+            plugins_available: false,
+            ready_selected_capability_roots: Vec::new(),
+            cached_binding: Mutex::new(None),
+        }));
+    }
+
+    /// Сигнализирует, когда worker в следующий раз захватит текущий snapshot.
+    #[cfg(test)]
+    pub(crate) fn observe_next_reused_pending_snapshot_load_for_test(
+        &self,
+    ) -> tokio::sync::oneshot::Receiver<()> {
+        let (snapshot_loaded, observed) = tokio::sync::oneshot::channel();
+        let previous = self
+            .reused_pending_snapshot_loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(snapshot_loaded);
+        assert!(previous.is_none(), "snapshot observer is already armed");
+        observed
     }
 
     /// Captures the latest published configuration and live client handles.

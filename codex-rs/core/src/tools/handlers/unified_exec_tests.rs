@@ -1,8 +1,13 @@
+//! Проверяет разбор unified exec, выбор shell и контракты обработчиков при передаче вывода
+//! инструмента.
+
 use super::*;
 use crate::shell::ShellType;
 use crate::shell::default_user_shell;
 use crate::shell::get_shell;
 use codex_exec_server::Environment;
+use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::UnifiedExecShellMode;
 use codex_tools::ZshForkConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -212,6 +217,125 @@ async fn exec_command_rejects_login_when_selected_environment_disallows_it() {
     assert_eq!(
         message,
         "login shell is disabled by config; omit `login` or set it to false."
+    );
+}
+
+/// Проверяет, что `DirectPlaintextMessage` через `ExecCommandHandler` сохраняет большой вывод для
+/// модели.
+#[tokio::test]
+async fn direct_plaintext_message_selects_model_visible_output_spill() {
+    let expected_tail = "alpha beta gamma delta";
+    // Синтаксис и перевод строки зависят от shell; ожидаемые байты фиксируются рядом с командой,
+    // чтобы проверка точного содержимого spill-файла оставалась переносимой.
+    let (command, expected_output) = match default_user_shell().shell_type {
+        ShellType::PowerShell => (
+            format!("[Console]::Out.Write(\"a`n{expected_tail}\")"),
+            format!("a\n{expected_tail}"),
+        ),
+        ShellType::Cmd => (
+            format!("<nul set /p \"=a\" & echo. & <nul set /p \"={expected_tail}\""),
+            format!("a\r\n{expected_tail}"),
+        ),
+        ShellType::Zsh | ShellType::Bash | ShellType::Sh => (
+            format!("printf 'a\\n{expected_tail}'"),
+            format!("a\n{expected_tail}"),
+        ),
+    };
+    let codex_home = tempfile::tempdir().expect("не удалось создать изолированный codex_home");
+    let (session, mut turn) = make_session_and_context().await;
+    let permission_profile = {
+        let config = Arc::make_mut(&mut turn.config);
+        config.codex_home = AbsolutePathBuf::from_absolute_path(codex_home.path())
+            .expect("путь к временному codex_home должен быть абсолютным");
+        config.exec_inline_output_max_tokens = 1;
+        config
+            .set_legacy_sandbox_policy(SandboxPolicy::DangerFullAccess)
+            .expect("тест должен разрешать запуск без sandbox-wrapper");
+        config.permissions.permission_profile_state().snapshot()
+    };
+    // `make_session_and_context` формирует выбранное окружение до этой настройки, поэтому
+    // синхронизируем оба представления и запускаем реальный процесс без sandbox-wrapper.
+    let TurnEnvironmentState::Ready(environment) = turn
+        .environments
+        .environments
+        .first_mut()
+        .expect("основное окружение должно существовать")
+    else {
+        panic!("основное окружение должно быть готово");
+    };
+    environment.config_mut().permission_profile = permission_profile;
+
+    let session = Arc::new(session);
+    let thread_id = session.thread_id().to_string();
+    let turn = Arc::new(turn);
+    let call_id = "direct-plaintext-output-spill";
+    let payload = ToolPayload::Function {
+        arguments: serde_json::json!({
+            "cmd": command,
+            "login": false,
+            "yield_time_ms": 5_000,
+        })
+        .to_string(),
+    };
+    let invocation = ToolInvocation {
+        session,
+        step_context: StepContext::for_test(Arc::clone(&turn)),
+        turn,
+        cancellation_token: tokio_util::sync::CancellationToken::new(),
+        tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+        call_id: call_id.to_string(),
+        tool_name: codex_tools::ToolName::plain("exec_command"),
+        source: ToolCallSource::DirectPlaintextMessage,
+        payload: payload.clone(),
+    };
+
+    let tool_output = ExecCommandHandler::default()
+        .handle(invocation)
+        .await
+        .expect("команда exec должна завершиться");
+    let response = tool_output.to_response_item(call_id, &payload);
+    let ResponseInputItem::FunctionCallOutput {
+        call_id: response_call_id,
+        output,
+    } = response
+    else {
+        panic!("ожидался FunctionCallOutput");
+    };
+    let text = output
+        .body
+        .to_text()
+        .expect("вывод exec должен сериализоваться в текст");
+
+    assert_eq!(response_call_id, call_id);
+    assert_eq!(output.success, Some(true));
+    assert!(
+        text.contains("\nLines: total=2 returned=1-1 remaining=1 complete=no\n"),
+        "ответ для модели должен содержать построчные метаданные: {text}"
+    );
+    assert!(!text.contains("\nOutput:\n"));
+    let excerpt = text
+        .split_once("Output excerpt:\n\n")
+        .map(|(_, excerpt)| excerpt)
+        .expect("ответ для модели должен содержать Output excerpt:");
+    assert_eq!(
+        excerpt,
+        expected_output
+            .split_inclusive('\n')
+            .next()
+            .expect("ожидаемый вывод должен содержать первую строку")
+    );
+
+    let spill_path = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Full output: "))
+        .map(std::path::PathBuf::from)
+        .expect("ответ для модели должен содержать путь к spill-файлу");
+    let expected_output_dir = codex_home.path().join("exec_outputs").join(thread_id);
+    assert!(spill_path.is_absolute());
+    assert_eq!(spill_path.parent(), Some(expected_output_dir.as_path()));
+    assert_eq!(
+        std::fs::read(&spill_path).expect("не удалось прочитать spill-файл"),
+        expected_output.as_bytes().to_vec()
     );
 }
 

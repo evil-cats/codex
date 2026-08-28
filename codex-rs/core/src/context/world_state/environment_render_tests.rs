@@ -1,3 +1,5 @@
+//! Регрессионные тесты видимого модели XML-контекста окружения и его изменений.
+
 use crate::shell::ShellType;
 
 use super::*;
@@ -349,6 +351,49 @@ fn turn_context_item_project_name_uses_workspace_root_name() {
         context.contains("<project_name>repo</project_name>"),
         "{context}"
     );
+}
+
+/// При восстановлении старого `TurnContextItem` без `workspace_roots` видимый модели
+/// контекст должен взять `cwd` как единый источник: его basename — для
+/// `<project_name>`, а сам путь — для единственного root в `<filesystem>`.
+#[test]
+fn turn_context_item_without_workspace_roots_uses_cwd_for_environment_context() {
+    let cwd = test_abs_path("/legacy/repo");
+    let item = TurnContextItem {
+        turn_id: None,
+        cwd: cwd.clone(),
+        workspace_roots: None,
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: None,
+        sandbox_policy: SandboxPolicy::new_read_only_policy(),
+        permission_profile: Some(PermissionProfile::Disabled),
+        active_permission_profile: None,
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        comp_hash: None,
+        personality: None,
+        collaboration_mode: None,
+        multi_agent_version: None,
+        multi_agent_mode: None,
+        realtime_active: None,
+        effort: None,
+        summary: codex_protocol::config_types::ReasoningSummary::Auto,
+    };
+
+    let context = EnvironmentsState::from_turn_context_item(&item).render();
+    let expected = format!(
+        r#"<environment_context>
+  <cwd>{cwd}</cwd>
+  <project_name>repo</project_name>
+  <filesystem><workspace_roots><root>{cwd}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+</environment_context>"#,
+        cwd = cwd.to_string_lossy(),
+    );
+
+    assert_eq!(context, expected);
 }
 
 #[test]

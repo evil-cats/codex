@@ -2,7 +2,7 @@
 id: fork-mcp-startup-refresh-serialization
 status: active
 created: 2026-08-14
-updated: 2026-08-23
+updated: 2026-08-27
 ---
 
 # Согласование MCP при незавершённом запуске
@@ -156,6 +156,36 @@ coalesced refresh и не скрывают свои настоящие `Cancelle
       ]
     },
     {
+      "purpose": "Ready и Cancelled общего pending startup не запрашивают замену",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-mcp",
+        "reused_pending_"
+      ]
+    },
+    {
+      "purpose": "auth refresh отбрасывает Failed от устаревшего snapshot",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-mcp",
+        "stale_pending_failure_is_discarded_after_auth_refresh"
+      ]
+    },
+    {
+      "purpose": "повторно упавшая замена не создаёт новый retry loop",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-mcp",
+        "failed_replacement_does_not_request_another_retry"
+      ]
+    },
+    {
       "purpose": "последующее удаление переиспользованного сервера отменяет устаревший startup",
       "argv": [
         "just",
@@ -198,6 +228,19 @@ coalesced refresh и не скрывают свои настоящие `Cancelle
   ]
 }
 ```
+
+Тесты `reused_pending_ready_does_not_request_replacement` и
+`reused_pending_cancelled_does_not_request_replacement` удерживают настоящий
+общий startup в pending-состоянии, завершают его соответствующим исходом и
+проверяют отсутствие сигнала замены.
+
+`stale_pending_failure_is_discarded_after_auth_refresh` через строго test-only
+observer дожидается захвата старого runtime snapshot до публикации новой
+авторизации. Последующий `Failed` старого startup должен быть отброшен.
+`failed_replacement_does_not_request_another_retry` наблюдает первый сигнал
+замены, новое соединение, его собственный `Failed` и отсутствие второго сигнала.
+Тесты приняты статической вычиткой; их компиляция, форматирование и запуск
+отложены до общего прохода по карточкам.
 
 ## Риски и ограничения
 

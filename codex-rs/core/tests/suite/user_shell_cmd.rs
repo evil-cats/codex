@@ -1,15 +1,21 @@
+//! Интеграционные проверки выполнения пользовательской команды `/shell`, её
+//! окружения, событий и записи результата в историю.
+
 use anyhow::Context;
 use codex_core::TurnInputRequest;
 use codex_features::Feature;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::items::CommandExecutionStatus;
+use codex_protocol::items::TurnItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::ExecCommandSource;
+use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::ExecOutputStream;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
@@ -39,6 +45,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::time::Duration;
 use tokio::time::timeout;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
@@ -103,6 +110,106 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
         stdout = stdout.replace("\r\n", "\n");
     }
     assert_eq!(stdout, contents);
+}
+
+/// Запускает реальную `/shell`-команду, которая печатает `CODEX_CALL_ID`, и
+/// сопоставляет этот UUID с `CommandExecutionItem` в `ItemStarted`/`ItemCompleted`
+/// и событиями совместимости `ExecCommandBegin`/`ExecCommandEnd`.
+/// Тест намеренно использует `builder.build(&server)`: `/shell` выполняется только
+/// в локальном окружении Codex и не маршрутизируется в удалённый exec-server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn user_shell_command_reuses_call_id_across_env_item_and_legacy_events() -> anyhow::Result<()>
+{
+    let server = start_mock_server().await;
+    let mut builder = test_codex();
+    let test = builder.build(&server).await?;
+
+    #[cfg(windows)]
+    let command = "[System.Console]::Write($env:CODEX_CALL_ID)".to_string();
+    #[cfg(not(windows))]
+    let command = "printf '%s' \"$CODEX_CALL_ID\"".to_string();
+
+    test.codex
+        .submit(Op::RunUserShellCommand { command })
+        .await?;
+
+    let item_started = wait_for_event_match(&test.codex, |event| {
+        let EventMsg::ItemStarted(event) = event else {
+            return None;
+        };
+        let TurnItem::CommandExecution(item) = &event.item else {
+            return None;
+        };
+        (item.source == ExecCommandSource::UserShell).then_some(item.clone())
+    })
+    .await;
+    let legacy_begin = wait_for_event_match(&test.codex, |event| match event {
+        EventMsg::ExecCommandBegin(event) if event.source == ExecCommandSource::UserShell => {
+            Some(event.clone())
+        }
+        _ => None,
+    })
+    .await;
+    let item_completed = wait_for_event_match(&test.codex, |event| {
+        let EventMsg::ItemCompleted(event) = event else {
+            return None;
+        };
+        let TurnItem::CommandExecution(item) = &event.item else {
+            return None;
+        };
+        (item.source == ExecCommandSource::UserShell).then_some(item.clone())
+    })
+    .await;
+    let legacy_end = wait_for_event_match(&test.codex, |event| match event {
+        EventMsg::ExecCommandEnd(event) if event.source == ExecCommandSource::UserShell => {
+            Some(event.clone())
+        }
+        _ => None,
+    })
+    .await;
+    let _ = wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let item_stdout = item_completed
+        .stdout
+        .as_deref()
+        .context("completed user shell item should contain stdout")?
+        .trim();
+    let legacy_stdout = legacy_end.stdout.trim();
+    assert_eq!(item_stdout, legacy_stdout);
+    Uuid::parse_str(item_stdout).context("CODEX_CALL_ID output should contain a UUID")?;
+
+    assert_eq!(
+        [
+            item_started.id.as_str(),
+            item_completed.id.as_str(),
+            legacy_begin.call_id.as_str(),
+            legacy_end.call_id.as_str(),
+        ],
+        [item_stdout; 4],
+    );
+    assert_eq!(
+        (
+            item_started.status,
+            item_started.exit_code,
+            item_completed.status,
+            item_completed.exit_code,
+            legacy_end.status,
+            legacy_end.exit_code,
+        ),
+        (
+            CommandExecutionStatus::InProgress,
+            None,
+            CommandExecutionStatus::Completed,
+            Some(0),
+            ExecCommandStatus::Completed,
+            0,
+        ),
+    );
+
+    Ok(())
 }
 
 #[tokio::test]

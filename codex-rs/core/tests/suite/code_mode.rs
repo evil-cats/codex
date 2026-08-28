@@ -1894,13 +1894,40 @@ const result = await tools.exec_command({
 text(result.output === "alpha beta gamma" ? "ok" : "bad");
 "#,
         |config| {
+            config.code_mode.disable_in_process_fallback = true;
             config.exec_inline_output_max_tokens = 1;
         },
     )
     .await?;
 
-    let items = custom_tool_output_items(&second_mock.single_request(), "call-1");
-    assert_eq!(text_item(&items, /*index*/ 1), "ok");
+    let request = second_mock.single_request();
+    let call_output = request.custom_tool_call_output("call-1");
+    let output = call_output
+        .get("output")
+        .and_then(Value::as_array)
+        .expect("successful Code Mode output should be serialized as content items");
+    let [status, result] = output.as_slice() else {
+        panic!("successful Code Mode output should contain status and result: {output:?}");
+    };
+    assert_eq!(status.as_object().map(serde_json::Map::len), Some(2));
+    assert_eq!(
+        status.get("type").and_then(Value::as_str),
+        Some("input_text")
+    );
+    assert_regex_match(
+        concat!(
+            r"(?s)\A",
+            r"Script completed\nWall time \d+\.\d seconds\nOutput:\n\z"
+        ),
+        status
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("Code Mode status should be input_text"),
+    );
+    assert_eq!(
+        result,
+        &serde_json::json!({ "type": "input_text", "text": "ok" })
+    );
     assert!(!test.codex_home_path().join("exec_outputs").exists());
 
     Ok(())

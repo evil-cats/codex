@@ -15,10 +15,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import migration_cli
 import migration_map as migration_map_model
@@ -28,6 +29,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
 FORK_TESTS_SCHEMA = "fork-tests.v1"
+FORK_TEST_PLATFORMS = ("linux", "macos", "windows")
 
 REQUIRED_FILES = (
     "SKILL.md",
@@ -210,6 +212,7 @@ class CardTest:
     card_id: str
     argv: tuple[str, ...]
     purpose: str
+    platforms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -240,10 +243,6 @@ class InstallArtifact:
     source: Path
     target: Path
 
-    @property
-    def temporary(self) -> Path:
-        return install_temp_path(self.target)
-
 
 RELEASE_FAST_BINARY_CONTRACTS = (
     BinaryArtifactContract(
@@ -259,8 +258,28 @@ RELEASE_FAST_BINARY_CONTRACTS = (
 )
 
 
-def card_test(card_id: str, purpose: str, *argv: str) -> CardTest:
-    return CardTest(card_id=card_id, purpose=purpose, argv=argv)
+def current_fork_test_platform() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform in ("win32", "cygwin"):
+        return "windows"
+    raise RuntimeError(f"unsupported fork test platform: {sys.platform}")
+
+
+def card_test(
+    card_id: str,
+    purpose: str,
+    *argv: str,
+    platforms: tuple[str, ...] = (),
+) -> CardTest:
+    return CardTest(
+        card_id=card_id,
+        purpose=purpose,
+        argv=argv,
+        platforms=platforms,
+    )
 
 
 def fenced_json_blocks(text: str) -> list[tuple[int, str]]:
@@ -313,7 +332,14 @@ def card_tests_from_payload(
 
         raw_purpose = entry.get("purpose")
         argv = entry.get("argv")
+        raw_platforms = entry.get("platforms")
+        platforms: tuple[str, ...] = ()
         entry_errors: list[str] = []
+        unexpected_fields = sorted(set(entry) - {"purpose", "argv", "platforms"})
+        if unexpected_fields:
+            entry_errors.append(
+                f"{entry_label}: unsupported fields: {', '.join(unexpected_fields)}"
+            )
         if not isinstance(raw_purpose, str) or not raw_purpose.strip():
             entry_errors.append(f"{entry_label}: `purpose` must be a non-empty string")
             purpose = ""
@@ -330,13 +356,37 @@ def card_tests_from_payload(
                 f"{entry_label}: `argv` entries must be non-empty strings"
             )
 
+        if raw_platforms is not None:
+            if not isinstance(raw_platforms, list) or not raw_platforms:
+                entry_errors.append(
+                    f"{entry_label}: `platforms` must be a non-empty array"
+                )
+            elif not all(isinstance(platform, str) for platform in raw_platforms):
+                entry_errors.append(
+                    f"{entry_label}: `platforms` entries must be strings"
+                )
+            else:
+                platforms = tuple(raw_platforms)
+                unknown_platforms = sorted(
+                    set(platforms) - set(FORK_TEST_PLATFORMS)
+                )
+                if unknown_platforms:
+                    entry_errors.append(
+                        f"{entry_label}: unsupported platforms: "
+                        + ", ".join(unknown_platforms)
+                    )
+                if len(set(platforms)) != len(platforms):
+                    entry_errors.append(
+                        f"{entry_label}: `platforms` entries must be unique"
+                    )
+
         if entry_errors:
             errors.extend(entry_errors)
             continue
 
         assert isinstance(argv, list)
         seen_purposes.add(purpose)
-        tests.append(card_test(card_id, purpose, *argv))
+        tests.append(card_test(card_id, purpose, *argv, platforms=platforms))
 
     return tests, errors
 
@@ -429,10 +479,6 @@ def resolve_path_arg(value: str, repo_root: Path) -> Path:
     return repo_root / expanded
 
 
-def install_temp_path(target: Path) -> Path:
-    return target.with_name(f"{target.name}.new")
-
-
 def platform_binary_name(binary_name: str, platform_name: str | None = None) -> str:
     effective_platform = os.name if platform_name is None else platform_name
     suffix = ".exe" if effective_platform == "nt" else ""
@@ -443,13 +489,34 @@ def release_fast_binary_artifacts(
     repo_root: Path, platform_name: str | None = None
 ) -> tuple[BinaryArtifact, ...]:
     binary_dir = repo_root / "codex-rs/target/release-fast"
-    return tuple(
+    return binary_artifacts_from_main(
+        binary_dir / platform_binary_name("codex", platform_name),
+        platform_name,
+    )
+
+
+def debug_code_mode_host_binary(
+    repo_root: Path, platform_name: str | None = None
+) -> Path:
+    return (
+        repo_root
+        / "codex-rs/target/debug"
+        / platform_binary_name("codex-code-mode-host", platform_name)
+    )
+
+
+def binary_artifacts_from_main(
+    main_path: Path, platform_name: str | None = None
+) -> tuple[BinaryArtifact, ...]:
+    main_contract, host_contract = RELEASE_FAST_BINARY_CONTRACTS
+    return (
+        BinaryArtifact(contract=main_contract, path=main_path),
         BinaryArtifact(
-            contract=contract,
-            path=binary_dir
-            / platform_binary_name(contract.binary_name, platform_name),
-        )
-        for contract in RELEASE_FAST_BINARY_CONTRACTS
+            contract=host_contract,
+            path=main_path.with_name(
+                platform_binary_name(host_contract.binary_name, platform_name)
+            ),
+        ),
     )
 
 
@@ -472,6 +539,23 @@ def install_binary_artifacts(
             target=main_target.with_name(host_name),
         ),
     )
+
+
+def resolve_remote_install_target(value: str | None) -> PurePosixPath:
+    raw_target = value or ".local/bin/codex-hermione"
+    if raw_target.startswith("~/"):
+        raw_target = raw_target[2:]
+    if not raw_target or any(character.isspace() for character in raw_target):
+        raise ValueError("remote install target must be a non-empty path without whitespace")
+    target = PurePosixPath(raw_target)
+    if target.name in {"", ".", ".."}:
+        raise ValueError("remote install target must name the main binary")
+    return target
+
+
+def validate_remote_install_host(host: str) -> None:
+    if not host or host.startswith("-") or any(character.isspace() for character in host):
+        raise ValueError(f"invalid SSH host: {host!r}")
 
 
 def rustc_host_target(version_output: str) -> str:
@@ -720,7 +804,7 @@ class LogSession:
 def resolve_codex_v8_cargo_env_for_host(
     session: LogSession, repo_root: Path
 ) -> tuple[int, dict[str, str]]:
-    """Разрешает Codex V8 artifacts для native Cargo target без утечки process state."""
+    """Разрешает артефакты Codex V8 для нативной цели Cargo без утечки состояния."""
     rustc = session.check_command("rustc")
     if not rustc:
         return session.fail(label="require command: rustc"), {}
@@ -1540,6 +1624,60 @@ def cmd_generators(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_build_code_mode_host(args: argparse.Namespace) -> int:
+    """Собирает отладочный Code Mode host для тестов карточек.
+
+    Команда передаёт Cargo канонические артефакты V8, проверяет ожидаемый файл
+    в `target/debug` и запускает его с `--help`. Любой отказ возвращает
+    ненулевой код и сохраняется в журнале сборки fork-skill.
+    """
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
+    session = LogSession(
+        repo_root=repo_root,
+        log_kind="build",
+        mode="build-code-mode-host",
+    )
+
+    cargo = session.check_command("cargo")
+    if not cargo:
+        return session.fail(label="require command: cargo")
+
+    result, cargo_env = resolve_codex_v8_cargo_env_for_host(session, repo_root)
+    if result != 0:
+        return result
+
+    result = session.run_step(
+        "сборка отладочного Code Mode host",
+        [
+            cargo,
+            "build",
+            "--manifest-path",
+            str(repo_root / "codex-rs/Cargo.toml"),
+            "-p",
+            "codex-code-mode-host",
+            "--bin",
+            "codex-code-mode-host",
+        ],
+        env_overrides=cargo_env,
+    )
+    if result != 0:
+        return result
+
+    binary_path = debug_code_mode_host_binary(repo_root)
+    if not binary_path.is_file() or not os.access(binary_path, os.X_OK):
+        session.write(f"не найден исполняемый файл Code Mode host: {binary_path}\n")
+        return session.fail(label="наличие исполняемого файла Code Mode host")
+
+    result = session.run_step(
+        "проверка исполняемого файла Code Mode host",
+        [str(binary_path), "--help"],
+    )
+    if result != 0:
+        return result
+
+    return session.ok([f"CODE_MODE_HOST_BINARY: {binary_path}"])
+
+
 def cmd_tests(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     version = resolved_version(args, repo_root)
@@ -1561,12 +1699,32 @@ def cmd_tests(args: argparse.Namespace) -> int:
         print(f"ERROR: {filter_error}", file=sys.stderr)
         return 2
 
+    try:
+        current_platform = (
+            current_fork_test_platform() if args.mode in ("list", "cards") else None
+        )
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     if args.mode == "list":
+        assert current_platform is not None
         for test in selected_tests:
-            print(f"{test.card_id:<36} {test.purpose:<24} {shell_quote(test.argv)}")
+            status = (
+                "skip-platform"
+                if test.platforms and current_platform not in test.platforms
+                else "run"
+            )
+            platform_note = (
+                f" platforms={','.join(test.platforms)}" if test.platforms else ""
+            )
+            print(
+                f"{test.card_id:<36} {status:<18} {test.purpose:<24} "
+                f"{shell_quote(test.argv)}{platform_note}"
+            )
         for exception in card_test_exceptions_for_filters(repo_root, card_filters):
             print(
-                f"{exception.card_id:<36} {exception.kind:<24} {exception.reason}"
+                f"{exception.card_id:<36} {exception.kind:<18} {exception.reason}"
             )
         return 0
 
@@ -1583,13 +1741,37 @@ def cmd_tests(args: argparse.Namespace) -> int:
         return result
 
     if args.mode == "cards":
+        assert current_platform is not None
+        passed = 0
+        skipped_platform = 0
         for test in selected_tests:
+            if test.platforms and current_platform not in test.platforms:
+                label = f"{test.card_id}: {test.purpose}"
+                required_platforms = ",".join(test.platforms)
+                message = (
+                    f"SKIP_PLATFORM: current={current_platform} "
+                    f"required={required_platforms}"
+                )
+                print()
+                print(f"==> {label}")
+                print(message)
+                session.write(f"\n==> {label}\n")
+                session.write(f"argv: {shell_quote(test.argv)}\n")
+                session.write(f"{message}\n")
+                skipped_platform += 1
+                continue
             result = session.run_step(
                 f"{test.card_id}: {test.purpose}", list(test.argv)
             )
             if result != 0:
                 return result
-        return session.ok()
+            passed += 1
+        return session.ok(
+            [
+                f"TESTS_PASSED: {passed}",
+                f"TESTS_SKIPPED_PLATFORM: {skipped_platform}",
+            ]
+        )
 
     just = session.check_command("just")
     if not just:
@@ -1679,137 +1861,229 @@ def cmd_install(args: argparse.Namespace) -> int:
         if args.source
         else release_fast_artifacts[0].path
     )
+    hosts = tuple(args.host)
     try:
-        target_path = (
-            resolve_path_arg(args.target, repo_root)
-            if args.target
-            else default_install_target()
-        )
+        for host in hosts:
+            validate_remote_install_host(host)
+        if len(set(hosts)) != len(hosts):
+            raise ValueError("remote install hosts must be unique")
+        remote_target = resolve_remote_install_target(args.target) if hosts else None
+        local_target = None
+        if not hosts:
+            local_target = (
+                resolve_path_arg(args.target, repo_root)
+                if args.target
+                else default_install_target()
+            )
     except ValueError as exc:
         session.write(f"{exc}\n")
         return session.fail(label="resolve install target")
 
-    artifacts = install_binary_artifacts(source_path, target_path)
-    for artifact in artifacts:
-        label = artifact.contract.label
-        session.write(f"{label} source: {artifact.source}\n")
-        session.write(f"{label} target: {artifact.target}\n")
-        session.write(f"{label} temporary: {artifact.temporary}\n")
-
+    source_artifacts = binary_artifacts_from_main(source_path)
     file_cmd = session.check_command("file")
     if not file_cmd:
         return session.fail(label="require command: file")
+    strip_cmd = session.check_command("strip")
+    if not strip_cmd:
+        return session.fail(label="require command: strip")
+    rsync_cmd = session.check_command("rsync")
+    if not rsync_cmd:
+        return session.fail(label="require command: rsync")
+    ssh_cmd = None
+    if hosts:
+        ssh_cmd = session.check_command("ssh")
+        if not ssh_cmd:
+            return session.fail(label="require command: ssh")
 
-    resolved_targets = {
-        artifact.target.resolve(strict=False) for artifact in artifacts
-    }
-    if len(resolved_targets) != len(artifacts):
-        session.write("install targets resolve to the same path\n")
-        return session.fail(label="install targets distinct")
-
-    for artifact in artifacts:
+    for artifact in source_artifacts:
         label = artifact.contract.label
-        if not artifact.source.is_file():
-            session.write(f"{label} source binary not found: {artifact.source}\n")
+        session.write(f"{label} source: {artifact.path}\n")
+        if not artifact.path.is_file():
+            session.write(f"{label} source binary not found: {artifact.path}\n")
             return session.fail(label=f"{label} source binary exists")
-        if not os.access(artifact.source, os.X_OK):
+        if not os.access(artifact.path, os.X_OK):
             session.write(
-                f"{label} source binary is not executable: {artifact.source}\n"
+                f"{label} source binary is not executable: {artifact.path}\n"
             )
             return session.fail(label=f"{label} source binary executable")
-
-        if artifact.source.resolve() == artifact.target.resolve(strict=False):
-            session.write(f"{label} source and target resolve to the same path\n")
-            return session.fail(label=f"{label} source target distinct")
-        if artifact.source.resolve() == artifact.temporary.resolve(strict=False):
-            session.write(
-                f"{label} source and temporary path resolve to the same path\n"
-            )
-            return session.fail(label=f"{label} source temporary distinct")
-
         for step_label, argv in (
-            (
-                f"{label} source binary metadata",
-                [file_cmd, str(artifact.source)],
-            ),
+            (f"{label} source binary metadata", [file_cmd, str(artifact.path)]),
             (
                 f"{label} source binary probe",
-                [str(artifact.source), *artifact.contract.probe_args],
+                [str(artifact.path), *artifact.contract.probe_args],
             ),
         ):
             result = session.run_step(step_label, argv)
             if result != 0:
                 return result
 
-    def cleanup_temporary_artifacts() -> None:
-        for artifact in artifacts:
-            try:
-                artifact.temporary.unlink(missing_ok=True)
-            except OSError as exc:
+    local_artifacts = None
+    if local_target is not None:
+        local_artifacts = install_binary_artifacts(source_path, local_target)
+        resolved_targets = {
+            artifact.target.resolve(strict=False) for artifact in local_artifacts
+        }
+        if len(resolved_targets) != len(local_artifacts):
+            session.write("install targets resolve to the same path\n")
+            return session.fail(label="install targets distinct")
+        for artifact in local_artifacts:
+            if artifact.source.resolve() == artifact.target.resolve(strict=False):
                 session.write(
-                    f"failed to remove {artifact.contract.label} temporary binary: {exc}\n"
+                    f"{artifact.contract.label} source and target resolve to the same path\n"
                 )
+                return session.fail(
+                    label=f"{artifact.contract.label} source target distinct"
+                )
+            session.write(f"{artifact.contract.label} target: {artifact.target}\n")
 
-    try:
-        for artifact in artifacts:
-            artifact.target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(artifact.source, artifact.temporary)
-            artifact.temporary.chmod(0o755)
-    except OSError as exc:
-        session.write(f"failed to stage install binaries: {exc}\n")
-        cleanup_temporary_artifacts()
-        return session.fail(label="stage install binaries")
+    main_target_name = (
+        local_target.name if local_target is not None else remote_target.name
+    )
+    with tempfile.TemporaryDirectory(prefix="fork-install-") as temp_dir:
+        staging_main = Path(temp_dir) / main_target_name
+        staging_artifacts = install_binary_artifacts(source_path, staging_main)
+        try:
+            for artifact in staging_artifacts:
+                shutil.copy2(artifact.source, artifact.target)
+                artifact.target.chmod(0o755)
+        except OSError as exc:
+            session.write(f"failed to stage install binaries: {exc}\n")
+            return session.fail(label="stage install binaries")
 
-    for artifact in artifacts:
-        label = artifact.contract.label
-        for step_label, argv in (
-            (
-                f"{label} temporary binary metadata",
-                [file_cmd, str(artifact.temporary)],
-            ),
-            (
-                f"{label} temporary binary probe",
-                [str(artifact.temporary), *artifact.contract.probe_args],
-            ),
-        ):
-            result = session.run_step(step_label, argv)
+        for artifact in staging_artifacts:
+            label = artifact.contract.label
+            for step_label, argv in (
+                (
+                    f"{label} strip staged binary",
+                    [strip_cmd, str(artifact.target)],
+                ),
+                (
+                    f"{label} staged binary metadata",
+                    [file_cmd, str(artifact.target)],
+                ),
+                (
+                    f"{label} staged binary probe",
+                    [str(artifact.target), *artifact.contract.probe_args],
+                ),
+            ):
+                result = session.run_step(step_label, argv)
+                if result != 0:
+                    return result
+
+        rsync_sources = [str(artifact.target) for artifact in staging_artifacts]
+        if local_artifacts is not None:
+            local_directory = local_artifacts[0].target.parent
+            try:
+                local_directory.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                session.write(f"failed to create install directory: {exc}\n")
+                return session.fail(label="create install directory")
+            result = session.run_step(
+                "sync local binaries",
+                [
+                    rsync_cmd,
+                    "--archive",
+                    "--delay-updates",
+                    "--chmod=F755",
+                    "--",
+                    *rsync_sources,
+                    f"{local_directory}/",
+                ],
+            )
             if result != 0:
-                cleanup_temporary_artifacts()
                 return result
+            for artifact in local_artifacts:
+                label = artifact.contract.label
+                for step_label, argv in (
+                    (
+                        f"{label} installed binary metadata",
+                        [file_cmd, str(artifact.target)],
+                    ),
+                    (
+                        f"{label} installed binary probe",
+                        [str(artifact.target), *artifact.contract.probe_args],
+                    ),
+                ):
+                    result = session.run_step(step_label, argv)
+                    if result != 0:
+                        return result
+            return session.ok(
+                [
+                    f"SOURCE: {local_artifacts[0].source}",
+                    f"TARGET: {local_artifacts[0].target}",
+                    f"CODE_MODE_HOST_SOURCE: {local_artifacts[1].source}",
+                    f"CODE_MODE_HOST_TARGET: {local_artifacts[1].target}",
+                ]
+            )
 
-    try:
-        # Install the host first and the main binary last. Both artifacts have
-        # already passed their probes, so a new Codex binary never points at an
-        # old or missing sidecar after a successful install.
-        for artifact in reversed(artifacts):
-            os.replace(artifact.temporary, artifact.target)
-    except OSError as exc:
-        session.write(f"failed to replace installed binaries: {exc}\n")
-        cleanup_temporary_artifacts()
-        return session.fail(label="replace installed binaries")
-
-    for artifact in artifacts:
-        label = artifact.contract.label
-        for step_label, argv in (
-            (
-                f"{label} installed binary metadata",
-                [file_cmd, str(artifact.target)],
-            ),
-            (
-                f"{label} installed binary probe",
-                [str(artifact.target), *artifact.contract.probe_args],
-            ),
-        ):
-            result = session.run_step(step_label, argv)
+        assert remote_target is not None
+        assert ssh_cmd is not None
+        remote_directory = str(remote_target.parent)
+        remote_targets = (
+            remote_target,
+            remote_target.with_name(RELEASE_FAST_BINARY_CONTRACTS[1].binary_name),
+        )
+        remote_probe_script = "\n".join(
+            [
+                "set -eu",
+                "command -v file >/dev/null 2>&1",
+                *(
+                    command
+                    for artifact, target in zip(
+                        staging_artifacts, remote_targets, strict=True
+                    )
+                    for command in (
+                        shlex.join(["file", str(target)]),
+                        shlex.join([str(target), *artifact.contract.probe_args]),
+                    )
+                ),
+            ]
+        )
+        for host in hosts:
+            session.write(f"remote host: {host}\n")
+            for artifact, target in zip(
+                staging_artifacts, remote_targets, strict=True
+            ):
+                session.write(f"{host} {artifact.contract.label} target: {target}\n")
+            result = session.run_step(
+                f"{host} create install directory",
+                [
+                    ssh_cmd,
+                    host,
+                    shlex.join(["mkdir", "-p", "--", remote_directory]),
+                ],
+            )
+            if result != 0:
+                return result
+            result = session.run_step(
+                f"{host} sync binaries",
+                [
+                    rsync_cmd,
+                    "--archive",
+                    "--delay-updates",
+                    "--chmod=F755",
+                    "--",
+                    *rsync_sources,
+                    f"{host}:{remote_directory}/",
+                ],
+            )
+            if result != 0:
+                return result
+            result = session.run_step(
+                f"{host} probe installed binaries",
+                [ssh_cmd, host, remote_probe_script],
+            )
             if result != 0:
                 return result
 
     return session.ok(
         [
-            f"SOURCE: {artifacts[0].source}",
-            f"TARGET: {artifacts[0].target}",
-            f"CODE_MODE_HOST_SOURCE: {artifacts[1].source}",
-            f"CODE_MODE_HOST_TARGET: {artifacts[1].target}",
+            f"SOURCE: {source_artifacts[0].path}",
+            f"CODE_MODE_HOST_SOURCE: {source_artifacts[1].path}",
+            f"REMOTE_HOSTS: {', '.join(hosts)}",
+            f"REMOTE_TARGET: {remote_target}",
+            f"REMOTE_CODE_MODE_HOST_TARGET: "
+            f"{remote_target.with_name(RELEASE_FAST_BINARY_CONTRACTS[1].binary_name)}",
         ]
     )
 
@@ -1874,6 +2148,10 @@ def build_parser() -> argparse.ArgumentParser:
     generators.add_argument("--repo-root")
     generators.set_defaults(func=cmd_generators)
 
+    build_code_mode_host = sub.add_parser("build-code-mode-host")
+    build_code_mode_host.add_argument("--repo-root")
+    build_code_mode_host.set_defaults(func=cmd_build_code_mode_host)
+
     tests = sub.add_parser("tests")
     tests.add_argument("--mode", choices=("list", "cards", "full"), required=True)
     tests.add_argument("--repo-root")
@@ -1909,7 +2187,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         help=(
             "Main install target. The Code Mode host is installed beside it. "
-            "Defaults to ${HOME}/.local/bin/codex-hermione."
+            "Local installs default to ${HOME}/.local/bin/codex-hermione; "
+            "remote installs default to .local/bin/codex-hermione relative to "
+            "the SSH login home."
+        ),
+    )
+    install.add_argument(
+        "--host",
+        action="append",
+        default=[],
+        help=(
+            "Install on this SSH host instead of locally. Repeat for multiple "
+            "hosts; authentication and host aliases come from SSH config."
         ),
     )
     install.set_defaults(func=cmd_install)

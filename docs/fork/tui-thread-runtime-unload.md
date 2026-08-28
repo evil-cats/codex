@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-08-13
+updated: 2026-08-26
 ---
 
 # Выгрузка live-runtime при переключении TUI thread
@@ -66,13 +66,14 @@ TUI переключается на другой primary thread
 | `codex-rs/app-server/src/request_processors/thread_lifecycle.rs` | Существующий `wait_for_thread_shutdown` переиспользован из `thread_processor.rs`; прямых правок не потребовалось |
 | `codex-rs/tui/src/app_server_session.rs` | Добавлена TUI-обертка для `thread/unload` |
 | `codex-rs/tui/src/app/thread_routing.rs` | Разделены helpers для event subscription cleanup и runtime unload вместо обманчивого `shutdown_current_thread` |
-| `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle |
+| `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle; строго `#[cfg(test)]` hook воспроизводит ошибку attach после создания replacement runtime |
 | `codex-rs/tui/src/app/event_dispatch.rs` | `/fork` и shutdown-first exit переведены на runtime unload там, где live-runtime больше не нужен |
 | `codex-rs/tui/src/app/safety_buffering.rs` | Safety-buffering retry сначала прикрепляет forked thread, затем выгружает прежние tracked runtimes |
 | `codex-rs/tui/src/app/side.rs` | Явный и post-switch cleanup side conversation ожидают interrupt plus runtime unload и только затем удаляют локальное UI state |
 | `codex-rs/core/src/agent/control/legacy.rs` | Не менять без новой причины; `close_agent` уже является настоящим shutdown path |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
-| `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, `/fork` и выгрузки runtime при side close |
+| `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, новой сессии, `/fork`, prompt backtrack, attach failure, shutdown-first и выгрузки runtime при side close |
+| `codex-rs/tui/src/app/tests/safety_buffering.rs` | Проверяет успешный safety-buffering retry и сохранение старого runtime с черновиком при ранней ошибке fork |
 | `docs/fork/tui-thread-runtime-unload.md` | Владеющий handoff-артефакт этой fork-доработки |
 
 Намеренно не менять в рамках этой карточки:
@@ -263,6 +264,16 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
       ]
     },
     {
+      "purpose": "tui new session выгружает предыдущий primary runtime",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "new_session_requests_unload_for_previous_conversation"
+      ]
+    },
+    {
       "purpose": "tui fork выгружает предыдущий primary runtime",
       "argv": [
         "just",
@@ -270,6 +281,66 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
         "-p",
         "codex-tui",
         "fork_current_session_unloads_previous_thread_runtime"
+      ]
+    },
+    {
+      "purpose": "tui prompt backtrack подключает replacement до выгрузки source runtime",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "prompt_backtrack_unloads_source_runtime_after_replacement_attach"
+      ]
+    },
+    {
+      "purpose": "tui сохраняет прежний runtime при ранней ошибке resume",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "failed_resume_keeps_previous_runtime_loaded_and_active"
+      ]
+    },
+    {
+      "purpose": "tui сохраняет source runtime при ошибке attach уже созданного fork runtime",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "fork_attach_failure_keeps_source_runtime_loaded_and_active"
+      ]
+    },
+    {
+      "purpose": "tui safety retry выгружает source только после attach replacement runtime",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "safety_retry_unloads_source_runtime_after_replacement_attach"
+      ]
+    },
+    {
+      "purpose": "tui safety retry сохраняет source runtime и черновик при ошибке fork",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "safety_retry_branch_failure_keeps_source_runtime_and_unsent_draft"
+      ]
+    },
+    {
+      "purpose": "tui shutdown-first выгружает current runtime без legacy Op::Shutdown",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "shutdown_first_exit_unloads_current_runtime_without_submitting_op"
       ]
     },
     {
@@ -285,6 +356,13 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
   ]
 }
 ```
+
+Новые сценарии проверяют полный список загруженных app-server threads и активное
+состояние TUI. Test-only attach hook срабатывает после создания replacement
+runtime, но до замены `ChatWidget`: при этой ошибке source runtime и прежнее
+состояние TUI сохраняются. Код этих тестов принят статической вычиткой, но пока
+не компилировался, не форматировался и не запускался; исполняемая проверка карты
+отложена до общего тестового прохода по карточкам.
 
 Дополнительно обязателен `fork generators`, поскольку доработка добавляет `thread/unload` в app-server API и generated TypeScript schema.
 
@@ -304,6 +382,10 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 - Если MCP server игнорирует terminate, нижний `RmcpClient::shutdown` и
   `StdioServerProcessHandle::terminate` должны оставаться владельцами
   platform-specific process cleanup.
+- После ошибки attach уже созданный replacement runtime сейчас остаётся loaded,
+  хотя source runtime сохраняется. Регрессионный тест явно наблюдает это состояние
+  и выгружает replacement при очистке fixture; автоматический cleanup требует
+  отдельной production-доработки.
 
 ## Открытые вопросы
 

@@ -109,12 +109,6 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HOME must be set"):
             fork_cli.default_install_target({})
 
-    def test_install_temp_path_appends_new_suffix(self) -> None:
-        self.assertEqual(
-            fork_cli.install_temp_path(Path("/home/slader/.local/bin/codex-hermione")),
-            Path("/home/slader/.local/bin/codex-hermione.new"),
-        )
-
     def test_rustc_host_target_reads_verbose_version_output(self) -> None:
         self.assertEqual(
             fork_cli.rustc_host_target(
@@ -195,6 +189,14 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         self.assertEqual(args.command, "install")
         self.assertEqual(args.source, "codex-rs/target/release-fast/codex")
         self.assertEqual(args.target, "/tmp/codex-hermione")
+        self.assertEqual(args.host, [])
+
+    def test_install_parser_accepts_repeated_remote_hosts(self) -> None:
+        args = fork_cli.build_parser().parse_args(
+            ["install", "--host", "oleg.home", "--host", "f-ms-dev"]
+        )
+
+        self.assertEqual(args.host, ["oleg.home", "f-ms-dev"])
 
     def test_release_fast_artifacts_include_main_and_code_mode_host(self) -> None:
         repo_root = Path("/repo")
@@ -236,7 +238,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             ),
         )
 
-    def test_install_stages_both_artifacts_and_replaces_main_last(self) -> None:
+    def test_install_syncs_both_artifacts_with_one_rsync_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             source_dir = repo_root / "build"
@@ -248,14 +250,6 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             main_source.chmod(0o755)
             host_source.chmod(0o755)
             main_target = repo_root / "install/codex-hermione"
-            host_target = main_target.with_name("codex-code-mode-host")
-            replacements = []
-            real_replace = os.replace
-
-            def recording_replace(source: Path, target: Path) -> None:
-                replacements.append((Path(source), Path(target)))
-                real_replace(source, target)
-
             args = fork_cli.build_parser().parse_args(
                 [
                     "install",
@@ -267,23 +261,23 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     str(main_target),
                 ]
             )
-            with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
-                unittest.mock.patch.object(
-                    fork_cli.os, "replace", side_effect=recording_replace
-                ),
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
             ):
                 result = fork_cli.cmd_install(args)
 
             self.assertEqual(result, 0)
-            self.assertEqual(main_target.read_text(encoding="utf-8"), "main")
-            self.assertEqual(host_target.read_text(encoding="utf-8"), "host")
-            self.assertEqual(
-                [target for _source, target in replacements],
-                [host_target, main_target],
-            )
+            sync_steps = [
+                argv
+                for label, argv in RecordingLogSession.instances[0].steps
+                if label == "sync local binaries"
+            ]
+            self.assertEqual(len(sync_steps), 1)
+            sync_command = sync_steps[0]
+            self.assertIn("--delay-updates", sync_command)
+            self.assertEqual(Path(sync_command[-3]).name, "codex-hermione")
+            self.assertEqual(Path(sync_command[-2]).name, "codex-code-mode-host")
+            self.assertEqual(sync_command[-1], f"{main_target.parent}/")
             self.assertIn(
                 (
                     "Code Mode host source binary probe",
@@ -292,7 +286,100 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 RecordingLogSession.instances[0].steps,
             )
 
-    def test_install_requires_host_before_replacing_main(self) -> None:
+    def test_install_strips_temporary_binaries_without_changing_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            main_source = root / "build/codex"
+            host_source = root / "build/codex-code-mode-host"
+            main_source.parent.mkdir()
+            main_source.write_text("main source", encoding="utf-8")
+            host_source.write_text("host source", encoding="utf-8")
+            main_source.chmod(0o755)
+            host_source.chmod(0o755)
+            main_target = root / "install/codex-hermione"
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(root),
+                    "--source",
+                    str(main_source),
+                    "--target",
+                    str(main_target),
+                ]
+            )
+
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ):
+                result = fork_cli.cmd_install(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(main_source.read_text(encoding="utf-8"), "main source")
+            self.assertEqual(host_source.read_text(encoding="utf-8"), "host source")
+            steps = RecordingLogSession.instances[0].steps
+            strip_targets = {
+                label: Path(argv[-1]).name
+                for label, argv in steps
+                if label.endswith("strip staged binary")
+            }
+            self.assertEqual(
+                strip_targets,
+                {
+                    "Codex strip staged binary": "codex-hermione",
+                    "Code Mode host strip staged binary": "codex-code-mode-host",
+                },
+            )
+
+    def test_remote_install_syncs_and_probes_each_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            main_source = root / "build/codex"
+            host_source = root / "build/codex-code-mode-host"
+            main_source.parent.mkdir()
+            main_source.write_text("main", encoding="utf-8")
+            host_source.write_text("host", encoding="utf-8")
+            main_source.chmod(0o755)
+            host_source.chmod(0o755)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(root),
+                    "--source",
+                    str(main_source),
+                    "--host",
+                    "oleg.home",
+                    "--host",
+                    "f-ms-dev",
+                ]
+            )
+
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ):
+                result = fork_cli.cmd_install(args)
+
+            self.assertEqual(result, 0)
+            steps = RecordingLogSession.instances[0].steps
+            labels = [label for label, _argv in steps]
+            for host in ("oleg.home", "f-ms-dev"):
+                self.assertIn(f"{host} create install directory", labels)
+                self.assertIn(f"{host} sync binaries", labels)
+                self.assertIn(f"{host} probe installed binaries", labels)
+            sync_commands = [
+                argv
+                for label, argv in steps
+                if label.endswith("sync binaries")
+            ]
+            self.assertEqual(len(sync_commands), 2)
+            for command, host in zip(
+                sync_commands, ("oleg.home", "f-ms-dev"), strict=True
+            ):
+                self.assertIn("--delay-updates", command)
+                self.assertEqual(command[-1], f"{host}:.local/bin/")
+
+    def test_install_requires_code_mode_host_before_syncing_main(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             main_source = repo_root / "codex"
@@ -391,6 +478,111 @@ class FixCommandTests(unittest.TestCase):
         session = RecordingLogSession.instances[-1]
         self.assertEqual(session.steps, [("rust lint fix", ["file", "fix"])])
         self.assertEqual(session.env_overrides, [cargo_env])
+
+
+class CodeModeHostBuildTests(unittest.TestCase):
+    def setUp(self) -> None:
+        RecordingLogSession.instances.clear()
+
+    def test_parser_accepts_code_mode_host_build(self) -> None:
+        """Регистрирует отдельную skill-owned команду узкой сборки host."""
+        args = fork_cli.build_parser().parse_args(
+            ["build-code-mode-host", "--repo-root", "/repo"]
+        )
+
+        self.assertEqual(args.command, "build-code-mode-host")
+        self.assertEqual(args.repo_root, "/repo")
+
+    def test_build_passes_v8_environment_and_probes_debug_binary(self) -> None:
+        """Передаёт V8-окружение сборке и проверяет созданный отладочный host."""
+        cargo_env = {
+            "RUSTY_V8_ARCHIVE": "/cache/v8.a",
+            "RUSTY_V8_SRC_BINDING_PATH": "/cache/src_binding.rs",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            binary_path = fork_cli.debug_code_mode_host_binary(repo_root)
+            binary_path.parent.mkdir(parents=True)
+            binary_path.write_text("host", encoding="utf-8")
+            binary_path.chmod(0o755)
+            args = fork_cli.build_parser().parse_args(
+                ["build-code-mode-host", "--repo-root", str(repo_root)]
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    RecordingLogSession,
+                    "check_command",
+                    return_value="/usr/bin/cargo",
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, cargo_env),
+                ),
+            ):
+                result = fork_cli.cmd_build_code_mode_host(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[-1]
+        self.assertEqual(
+            session.steps,
+            [
+                (
+                    "сборка отладочного Code Mode host",
+                    [
+                        "/usr/bin/cargo",
+                        "build",
+                        "--manifest-path",
+                        str(repo_root / "codex-rs/Cargo.toml"),
+                        "-p",
+                        "codex-code-mode-host",
+                        "--bin",
+                        "codex-code-mode-host",
+                    ],
+                ),
+                (
+                    "проверка исполняемого файла Code Mode host",
+                    [str(binary_path), "--help"],
+                ),
+            ],
+        )
+        self.assertEqual(session.env_overrides, [cargo_env, None])
+        self.assertEqual(
+            session.ok_extra,
+            [f"CODE_MODE_HOST_BINARY: {binary_path}"],
+        )
+
+    def test_build_fails_when_cargo_did_not_create_debug_binary(self) -> None:
+        """Не объявляет предусловие готовым без ожидаемого исполняемого файла."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            args = fork_cli.build_parser().parse_args(
+                ["build-code-mode-host", "--repo-root", str(repo_root)]
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_build_code_mode_host(args)
+
+        self.assertEqual(result, 1)
+        session = RecordingLogSession.instances[-1]
+        self.assertEqual(len(session.steps), 1)
+        self.assertIn(
+            "не найден исполняемый файл Code Mode host",
+            "".join(session.output),
+        )
 
 
 class CardTestFilterTests(unittest.TestCase):
@@ -561,6 +753,190 @@ class CardTestFilterTests(unittest.TestCase):
         self.assertIsNotNone(error)
         assert error is not None
         self.assertIn("card(s) have no fork-tests.v1 entries: fork-manual-only", error)
+
+
+class CardTestPlatformTests(unittest.TestCase):
+    def setUp(self) -> None:
+        RecordingLogSession.instances.clear()
+
+    def make_repo(self) -> Path:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+
+        repo_root = Path(temp_dir.name)
+        docs_fork = repo_root / "docs/fork"
+        docs_fork.mkdir(parents=True)
+        (docs_fork / "platform-tests.md").write_text(
+            textwrap.dedent(
+                """\
+                ---
+                id: fork-platform-tests
+                status: active
+                ---
+                # Platform tests
+
+                ## Проверки
+
+                ```json
+                {
+                  "schema": "fork-tests.v1",
+                  "tests": [
+                    {
+                      "purpose": "portable behavior",
+                      "argv": ["portable-test"]
+                    },
+                    {
+                      "purpose": "Windows behavior",
+                      "platforms": ["windows"],
+                      "argv": ["windows-test"]
+                    }
+                  ]
+                }
+                ```
+                """
+            ),
+            encoding="utf-8",
+        )
+        return repo_root
+
+    def args(self, repo_root: Path, mode: str) -> object:
+        return type(
+            "Args",
+            (),
+            {
+                "repo_root": str(repo_root),
+                "version": "0.149.0",
+                "mode": mode,
+                "card": ["fork-platform-tests"],
+                "skip_branch_check": False,
+            },
+        )()
+
+    def test_platforms_are_part_of_parsed_card_test(self) -> None:
+        tests, errors = fork_cli.card_tests_in_card(
+            self.make_repo() / "docs/fork/platform-tests.md"
+        )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            tests,
+            [
+                fork_cli.card_test(
+                    "fork-platform-tests", "portable behavior", "portable-test"
+                ),
+                fork_cli.card_test(
+                    "fork-platform-tests",
+                    "Windows behavior",
+                    "windows-test",
+                    platforms=("windows",),
+                ),
+            ],
+        )
+
+    def test_unknown_platform_is_rejected(self) -> None:
+        tests, errors = fork_cli.card_tests_from_payload(
+            Path("card.md"),
+            "fork-platform-tests",
+            1,
+            {
+                "schema": "fork-tests.v1",
+                "tests": [
+                    {
+                        "purpose": "unknown platform",
+                        "platforms": ["freebsd"],
+                        "argv": ["test"],
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(tests, [])
+        self.assertEqual(
+            errors,
+            [
+                "card.md: fork-tests.v1 block at line 1: tests[1]: "
+                "unsupported platforms: freebsd"
+            ],
+        )
+
+    def test_list_marks_non_matching_platform_as_skipped(self) -> None:
+        args = self.args(self.make_repo(), "list")
+
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout:
+            with (
+                unittest.mock.patch("sys.stdout", stdout),
+                unittest.mock.patch.object(
+                    fork_cli, "current_fork_test_platform", return_value="linux"
+                ),
+            ):
+                result = fork_cli.cmd_tests(args)
+            stdout.seek(0)
+            output = stdout.read()
+
+        self.assertEqual(result, 0)
+        normalized_lines = [" ".join(line.split()) for line in output.splitlines()]
+        self.assertIn(
+            "fork-platform-tests run portable behavior portable-test",
+            normalized_lines,
+        )
+        self.assertIn(
+            "fork-platform-tests skip-platform Windows behavior "
+            "windows-test platforms=windows",
+            normalized_lines,
+        )
+
+    def test_cards_skip_non_matching_platform_and_report_counts(self) -> None:
+        args = self.args(self.make_repo(), "cards")
+
+        with (
+            unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
+            unittest.mock.patch.object(fork_cli, "run_preconditions", return_value=0),
+            unittest.mock.patch.object(
+                fork_cli, "current_fork_test_platform", return_value="linux"
+            ),
+        ):
+            result = fork_cli.cmd_tests(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[-1]
+        self.assertEqual(
+            session.steps,
+            [("fork-platform-tests: portable behavior", ["portable-test"])],
+        )
+        self.assertEqual(
+            session.ok_extra,
+            ["TESTS_PASSED: 1", "TESTS_SKIPPED_PLATFORM: 1"],
+        )
+        self.assertIn(
+            "SKIP_PLATFORM: current=linux required=windows",
+            "".join(session.output),
+        )
+
+    def test_cards_run_matching_platform(self) -> None:
+        args = self.args(self.make_repo(), "cards")
+
+        with (
+            unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
+            unittest.mock.patch.object(fork_cli, "run_preconditions", return_value=0),
+            unittest.mock.patch.object(
+                fork_cli, "current_fork_test_platform", return_value="windows"
+            ),
+        ):
+            result = fork_cli.cmd_tests(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[-1]
+        self.assertEqual(
+            session.steps,
+            [
+                ("fork-platform-tests: portable behavior", ["portable-test"]),
+                ("fork-platform-tests: Windows behavior", ["windows-test"]),
+            ],
+        )
+        self.assertEqual(
+            session.ok_extra,
+            ["TESTS_PASSED: 2", "TESTS_SKIPPED_PLATFORM: 0"],
+        )
 
 
 class CardsListTests(unittest.TestCase):

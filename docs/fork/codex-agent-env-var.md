@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-08-22
+updated: 2026-08-27
 ---
 
 # Runtime-переменные окружения Codex
@@ -74,6 +74,7 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command`, используя `ShellEnvironmentPolicy` выбранного `TurnEnvironment`; сохраняет upstream `CODEX_SESSION_ID` и apply-patch env |
 | `codex-rs/core/src/tools/handlers/shell_tests.rs` | Проверяет expected env через `create_env_with_runtime(...)` |
 | `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task; использует `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, тот же UUID как `CommandExecutionItem.id` и сохраняет upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
+| `codex-rs/core/tests/suite/user_shell_cmd.rs` | Интеграционно доказывает один UUID `CODEX_CALL_ID` в окружении дочерней `/shell`-команды, элементах `CommandExecutionItem` и событиях `ExecCommandBegin`/`ExecCommandEnd` |
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает fork-переменные и связанные upstream runtime-переменные после обертки shell snapshot |
 | `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после snapshot |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session из `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, но не в `local_policy_env`; сохраняет upstream session/apply-patch env |
@@ -447,10 +448,23 @@ rollout не удалось получить.
         "codex-rmcp-client",
         "remote_env_policy_effectively_filters_unrequested_vars"
       ]
+    },
+    {
+      "purpose": "один CODEX_CALL_ID в окружении /shell-команды, CommandExecutionItem и событиях совместимости",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "user_shell_command_reuses_call_id_across_env_item_and_legacy_events"
+      ]
     }
   ]
 }
 ```
+
+Новый интеграционный тест принят статической вычиткой. Его компиляция,
+форматирование и запуск отложены до общего прохода по карточкам.
 
 ## Риски и ограничения
 

@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-08-23
+updated: 2026-08-27
 ---
 
 # Environment context: `project_name`
@@ -37,7 +37,7 @@ TUI уже умеет показывать `project-name` в поверхнос�
 | --- | --- |
 | `codex-rs/core/src/context/world_state/environment.rs` | Добавляет поле `project_name`, вычисление из workspace roots, рендеринг, snapshot и поведение при `diff`/replay в текущей upstream-модели `EnvironmentsState` |
 | `codex-rs/core/src/context/environment_context.rs` | Сохраняет общие helper-типы `FileSystemContext`, `NetworkContext` и XML escaping, которые использует `world_state::environment` |
-| `codex-rs/core/src/context/world_state/environment_render_tests.rs` | Проверяет XML escaping, выбор workspace root и diff при смене проекта |
+| `codex-rs/core/src/context/world_state/environment_render_tests.rs` | Проверяет XML escaping, выбор рабочего корня, восстановление старого `TurnContextItem` через резервный `cwd` и diff при смене проекта |
 | `docs/fork/environment-context-project-name.md` | Описывает fork-доработку, контракт и порядок повторения |
 
 Файлы, которые намеренно не меняются:
@@ -299,6 +299,16 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
   ]
 }
 ```
+
+Фильтр `environment_context` включает сценарий
+`turn_context_item_without_workspace_roots_uses_cwd_for_environment_context`.
+Он сравнивает полный видимый модели результат рендеринга старого
+`TurnContextItem` без `workspace_roots`: последний компонент резервного `cwd`
+становится `project_name`, а сам путь — единственным рабочим корнем файлового
+контекста.
+
+Новый тест принят статической вычиткой. Его компиляция, форматирование и запуск
+отложены до общего прохода по карточкам.
 
 Тестовые экземпляры `TurnContextItem` в
 `codex-rs/core/src/context/world_state/environment_render_tests.rs` должны явно

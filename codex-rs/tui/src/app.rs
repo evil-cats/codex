@@ -704,8 +704,13 @@ fn active_turn_interrupt_race(error: &TypedRequestError) -> Option<String> {
 }
 
 impl App {
+    /// Создаёт параметры нового `ChatWidget` для переключения текущего потока.
+    ///
+    /// Кэш отображаемого заголовка терминала перемещается из прежнего `ChatWidget` в параметры
+    /// конструктора, чтобы первое обновление нового `ChatWidget` могло сравнить либо очистить
+    /// заголовок до отправки OSC-последовательности.
     pub fn chatwidget_init_for_forked_or_resumed_thread(
-        &self,
+        &mut self,
         tui: &mut tui::Tui,
         cfg: crate::legacy_core::config::Config,
         initial_user_message: Option<crate::chatwidget::UserMessage>,
@@ -732,6 +737,7 @@ impl App {
             startup_tooltip_override: None,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),
+            inherited_terminal_title: self.chat_widget.last_terminal_title.take(),
             session_telemetry: self.session_telemetry.clone(),
         }
     }

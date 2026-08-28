@@ -1,9 +1,19 @@
+//! Управляемый MCP stdio-сервер для интеграционных тестов клиента и `codex-core`.
+//!
+//! Сервер предоставляет обычные тестовые инструменты и изолированные сценарии
+//! отказа транспорта. Состояние сценариев восстановления передаётся через
+//! временные файлы, поэтому несколько последовательных запусков одного клиента
+//! наблюдают общий счётчик, не меняя окружение тестового процесса.
+
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -53,10 +63,21 @@ const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA
 const APP_ONLY_CWD_MARKER_FILE_ENV: &str = "MCP_TEST_APP_ONLY_CWD_MARKER_FILE";
 const DYNAMIC_SERVER_METADATA_ENV: &str = "MCP_TEST_DYNAMIC_SERVER_METADATA";
 const INITIALIZE_BARRIER_FILE_ENV: &str = "MCP_TEST_INITIALIZE_BARRIER_FILE";
+const RECOVERY_BROKEN_PIPE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_BROKEN_PIPE_STATE_FILE";
+const RECOVERY_CALL_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_CALL_LOG_FILE";
+const RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV: &str =
+    "MCP_TEST_RECOVERY_CLOSE_BARRIER_PARTICIPANTS";
 const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
 const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
 const RECOVERY_EXIT_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_EXIT_STATE_FILE";
+const RECOVERY_INITIALIZE_FAIL_AT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAIL_AT";
+const RECOVERY_INITIALIZE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_STATE_FILE";
+const RECOVERY_LAUNCH_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_LAUNCH_LOG_FILE";
+const RECOVERY_REMOVE_CWD_ON_CLOSE_ENV: &str = "MCP_TEST_RECOVERY_REMOVE_CWD_ON_CLOSE";
+const RECOVERY_STDOUT_HOLDER_ROLE_ENV: &str = "MCP_TEST_RECOVERY_STDOUT_HOLDER_ROLE";
 const SERVER_INSTRUCTIONS_ENV: &str = "MCP_TEST_SERVER_INSTRUCTIONS";
+
+static RECOVERY_STATE_FILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn dynamic_server_process_label() -> Option<String> {
     std::env::var_os(DYNAMIC_SERVER_METADATA_ENV)
@@ -510,6 +531,33 @@ impl ServerHandler for TestToolServer {
         request: InitializeRequestParams,
         context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<InitializeResult, McpError> {
+        let initialize_attempt =
+            mutate_recovery_counter(RECOVERY_INITIALIZE_STATE_FILE_ENV, |observed| {
+                Some(observed + 1)
+            })?;
+        if let Ok(fail_at) = std::env::var(RECOVERY_INITIALIZE_FAIL_AT_ENV) {
+            let fail_at = fail_at.parse::<u64>().map_err(|error| {
+                McpError::internal_error(
+                    format!("invalid {RECOVERY_INITIALIZE_FAIL_AT_ENV}: {error}"),
+                    None,
+                )
+            })?;
+            let initialize_attempt = initialize_attempt.ok_or_else(|| {
+                McpError::internal_error(
+                    format!(
+                        "{RECOVERY_INITIALIZE_FAIL_AT_ENV} requires \
+                         {RECOVERY_INITIALIZE_STATE_FILE_ENV}"
+                    ),
+                    None,
+                )
+            })?;
+            if initialize_attempt == fail_at {
+                return Err(McpError::internal_error(
+                    format!("configured initialize failure at attempt {initialize_attempt}"),
+                    None,
+                ));
+            }
+        }
         if let Ok(barrier_file) = std::env::var(INITIALIZE_BARRIER_FILE_ENV) {
             while !std::path::Path::new(&barrier_file).is_file() {
                 sleep(Duration::from_millis(10)).await;
@@ -782,7 +830,7 @@ impl ServerHandler for TestToolServer {
                 let args = Self::parse_call_args::<SyncArgs>(&request, "sync_readonly")?;
                 Self::sync_result(args).await
             }
-            "recovery_probe" => Self::recovery_probe_result(),
+            "recovery_probe" => Self::recovery_probe_result().await,
             other => Err(McpError::invalid_params(
                 format!("unknown tool: {other}"),
                 None,
@@ -906,9 +954,104 @@ impl TestToolServer {
         Ok(Self::structured_result(json!({ "result": "ok" })))
     }
 
-    fn recovery_probe_result() -> Result<CallToolResult, McpError> {
+    /// Выполняет управляемый сценарий восстановления и записывает каждый вызов
+    /// инструмента.
+    ///
+    /// Закрытие транспорта можно синхронизировать барьером, а отдельный сценарий
+    /// оставляет stdout открытым после смерти сервера, чтобы следующий запрос
+    /// получил именно `BrokenPipe`, а не EOF.
+    async fn recovery_probe_result() -> Result<CallToolResult, McpError> {
+        if let Some(call_log) = std::env::var_os(RECOVERY_CALL_LOG_FILE_ENV) {
+            append_recovery_log_line(Path::new(&call_log), &std::process::id().to_string())
+                .map_err(|error| {
+                    McpError::internal_error(
+                        format!(
+                            "failed to append {RECOVERY_CALL_LOG_FILE_ENV} {}: {error}",
+                            Path::new(&call_log).display()
+                        ),
+                        None,
+                    )
+                })?;
+        }
+
         if should_close_recovery_transport()? {
+            if let Ok(participants) = std::env::var(RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV) {
+                let participants = participants.parse::<usize>().map_err(|error| {
+                    McpError::internal_error(
+                        format!("invalid {RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV}: {error}"),
+                        None,
+                    )
+                })?;
+                wait_on_sync_barrier(SyncBarrierArgs {
+                    id: "recovery-close".to_string(),
+                    participants,
+                    timeout_ms: 5_000,
+                })
+                .await?;
+            }
+
+            if std::env::var_os(RECOVERY_REMOVE_CWD_ON_CLOSE_ENV).is_some() {
+                // Сначала покидаем настроенный cwd, иначе Windows не позволит
+                // удалить каталог, и ветка ошибки запуска останется недостижимой.
+                let cwd = std::env::current_dir().map_err(|error| {
+                    McpError::internal_error(
+                        format!("failed to read recovery server cwd: {error}"),
+                        None,
+                    )
+                })?;
+                let parent = cwd.parent().ok_or_else(|| {
+                    McpError::internal_error(
+                        format!("recovery server cwd has no parent: {}", cwd.display()),
+                        None,
+                    )
+                })?;
+                std::env::set_current_dir(parent).map_err(|error| {
+                    McpError::internal_error(
+                        format!("failed to leave recovery server cwd: {error}"),
+                        None,
+                    )
+                })?;
+                std::fs::remove_dir(&cwd).map_err(|error| {
+                    McpError::internal_error(
+                        format!(
+                            "failed to remove recovery server cwd {}: {error}",
+                            cwd.display()
+                        ),
+                        None,
+                    )
+                })?;
+            }
             std::process::exit(86);
+        }
+
+        if write_state_file_once(RECOVERY_BROKEN_PIPE_STATE_FILE_ENV, "broken-pipe-scheduled")? {
+            // Потомок наследует только stdout. После выхода основного сервера
+            // чтение не получает EOF, но у stdin больше нет читателя, поэтому
+            // следующий запрос клиента завершается `BrokenPipe`.
+            std::process::Command::new(std::env::current_exe().map_err(|error| {
+                McpError::internal_error(
+                    format!("failed to resolve recovery stdout holder: {error}"),
+                    None,
+                )
+            })?)
+            .env(RECOVERY_STDOUT_HOLDER_ROLE_ENV, "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                McpError::internal_error(
+                    format!("failed to spawn recovery stdout holder: {error}"),
+                    None,
+                )
+            })?;
+            tokio::spawn(async {
+                sleep(Duration::from_millis(50)).await;
+                std::process::exit(88);
+            });
+            return Ok(Self::structured_result(
+                json!({ "result": "broken_pipe_scheduled" }),
+            ));
         }
 
         if write_state_file_once(RECOVERY_EXIT_STATE_FILE_ENV, "process-exit-scheduled")? {
@@ -933,9 +1076,9 @@ impl TestToolServer {
 
 /// Поглощает одну настроенную попытку закрытия транспорта, общую для восстановленных запусков.
 fn should_close_recovery_transport() -> Result<bool, McpError> {
-    let Some(state_file) = std::env::var_os(RECOVERY_CLOSE_STATE_FILE_ENV) else {
+    if std::env::var_os(RECOVERY_CLOSE_STATE_FILE_ENV).is_none() {
         return Ok(false);
-    };
+    }
     let close_count = std::env::var(RECOVERY_CLOSE_COUNT_ENV)
         .map_err(|error| {
             McpError::internal_error(format!("missing {RECOVERY_CLOSE_COUNT_ENV}: {error}"), None)
@@ -944,7 +1087,30 @@ fn should_close_recovery_transport() -> Result<bool, McpError> {
         .map_err(|error| {
             McpError::internal_error(format!("invalid {RECOVERY_CLOSE_COUNT_ENV}: {error}"), None)
         })?;
+    Ok(
+        mutate_recovery_counter(RECOVERY_CLOSE_STATE_FILE_ENV, |observed| {
+            (observed < close_count).then_some(observed + 1)
+        })?
+        .is_some(),
+    )
+}
+
+/// Атомарно для одного процесса обновляет общий счётчик сценария восстановления.
+///
+/// Отсутствующий файл означает нулевое значение. `update` возвращает новое
+/// значение либо `None`, если счётчик менять не нужно.
+fn mutate_recovery_counter(
+    env_var: &str,
+    update: impl FnOnce(u64) -> Option<u64>,
+) -> Result<Option<u64>, McpError> {
+    let Some(state_file) = std::env::var_os(env_var) else {
+        return Ok(None);
+    };
     let state_file = Path::new(&state_file);
+    let _guard = RECOVERY_STATE_FILE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| McpError::internal_error("recovery state lock is poisoned", None))?;
     let observed = match std::fs::read_to_string(state_file) {
         Ok(value) => value.trim().parse::<u64>().map_err(|error| {
             McpError::internal_error(
@@ -966,10 +1132,10 @@ fn should_close_recovery_transport() -> Result<bool, McpError> {
             ));
         }
     };
-    if observed >= close_count {
-        return Ok(false);
-    }
-    std::fs::write(state_file, (observed + 1).to_string()).map_err(|error| {
+    let Some(updated) = update(observed) else {
+        return Ok(None);
+    };
+    std::fs::write(state_file, updated.to_string()).map_err(|error| {
         McpError::internal_error(
             format!(
                 "failed to write recovery state file {}: {error}",
@@ -978,7 +1144,21 @@ fn should_close_recovery_transport() -> Result<bool, McpError> {
             None,
         )
     })?;
-    Ok(true)
+    Ok(Some(updated))
+}
+
+/// Добавляет одну строку в журнал событий сценария восстановления.
+///
+/// Запись выполняется одним дозаписывающим вызовом, поэтому отдельные запуски
+/// сервера не перезаписывают наблюдения друг друга.
+fn append_recovery_log_line(path: &Path, line: &str) -> std::io::Result<()> {
+    let _guard = RECOVERY_STATE_FILE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| std::io::Error::other("recovery state lock is poisoned"))?;
+    let mut log = OpenOptions::new().create(true).append(true).open(path)?;
+    let record = format!("{line}\n");
+    log.write_all(record.as_bytes())
 }
 
 /// Один раз создаёт общий для запусков маркер и сообщает, создал ли его текущий запуск.
@@ -1073,8 +1253,15 @@ fn parse_data_url(url: &str) -> Option<(String, String)> {
     Some((mime.to_string(), data.to_string()))
 }
 
+/// Запускает stdio-сервер либо вспомогательный процесс выбранного тестового сценария.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var_os(RECOVERY_STDOUT_HOLDER_ROLE_ENV).is_some() {
+        // Процесс ничего не пишет, но удерживает унаследованный stdout открытым,
+        // пока клиент не завершит старую группу процессов во время восстановления.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        return Ok(());
+    }
     #[cfg(windows)]
     if std::env::var_os("MCP_TEST_DESCENDANT_ROLE").is_some() {
         tokio::time::sleep(Duration::from_secs(30)).await;
@@ -1082,6 +1269,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!("starting rmcp test server");
+    if let Some(launch_log) = std::env::var_os(RECOVERY_LAUNCH_LOG_FILE_ENV) {
+        append_recovery_log_line(Path::new(&launch_log), &std::process::id().to_string())?;
+    }
     if let Ok(pid_file) = std::env::var("MCP_TEST_PID_FILE") {
         std::fs::write(pid_file, std::process::id().to_string())?;
     }

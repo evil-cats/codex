@@ -265,6 +265,15 @@ struct ResolvedRestrictedFileSystemPolicy<'a> {
     has_full_disk_write_access: bool,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    /// Считает полные проходы разрешения всех entries restricted policy
+    /// в текущем тестовом потоке.
+    static RESOLVED_POLICY_ENTRY_PASSES: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileSystemSemanticSignature {
     has_full_disk_read_access: bool,
@@ -1442,7 +1451,13 @@ impl FileSystemSandboxPolicy {
         })
     }
 
+    /// Разрешает все entries policy относительно `cwd` одним полным проходом.
+    /// При сборке unit tests test-only счётчик учитывает этот проход, чтобы
+    /// проверка сложности наблюдала настоящий production path.
     fn resolved_entries_with_cwd(&self, cwd: &Path) -> Vec<ResolvedFileSystemEntry> {
+        #[cfg(test)]
+        RESOLVED_POLICY_ENTRY_PASSES.with(|passes| passes.set(passes.get() + 1));
+
         let cwd_absolute = AbsolutePathBuf::from_absolute_path(cwd).ok();
         self.entries
             .iter()
@@ -2541,6 +2556,57 @@ mod tests {
             ),
             true
         );
+    }
+
+    /// Составное построение writable roots должно разрешать restricted policy
+    /// один раз независимо от числа roots, read-only carveouts и вложенных
+    /// проверок metadata.
+    #[test]
+    fn writable_roots_resolve_policy_entries_once_for_many_nested_checks() {
+        let mut resolution_passes_by_root_count = Vec::new();
+
+        for root_count in [1, 32] {
+            let cwd = TempDir::new().expect("tempdir");
+            let mut entries = Vec::with_capacity(root_count * 2);
+            let mut expected_carveouts = Vec::with_capacity(root_count);
+
+            for index in 0..root_count {
+                let root = cwd.path().join(format!("workspace-{index}"));
+                let carveout = root.join("private");
+                std::fs::create_dir_all(&carveout).expect("create policy fixture");
+                let root = AbsolutePathBuf::from_absolute_path(
+                    root.canonicalize().expect("canonicalize writable root"),
+                )
+                .expect("absolute writable root");
+                let carveout = root.join("private");
+
+                entries.extend([
+                    FileSystemSandboxEntry::new(root.into(), FileSystemAccessMode::Write),
+                    FileSystemSandboxEntry::new(
+                        carveout.clone().into(),
+                        FileSystemAccessMode::Read,
+                    ),
+                ]);
+                expected_carveouts.push(vec![carveout]);
+            }
+
+            let policy = FileSystemSandboxPolicy::restricted(entries);
+            RESOLVED_POLICY_ENTRY_PASSES.with(|passes| passes.set(0));
+
+            let writable_roots = policy.get_writable_roots_with_cwd(cwd.path());
+            let resolution_passes = RESOLVED_POLICY_ENTRY_PASSES.with(std::cell::Cell::get);
+
+            assert_eq!(
+                writable_roots
+                    .into_iter()
+                    .map(|root| root.read_only_subpaths)
+                    .collect::<Vec<_>>(),
+                expected_carveouts,
+            );
+            resolution_passes_by_root_count.push((root_count, resolution_passes));
+        }
+
+        assert_eq!(resolution_passes_by_root_count, vec![(1, 1), (32, 1)]);
     }
 
     #[test]

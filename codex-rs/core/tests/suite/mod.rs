@@ -1,4 +1,4 @@
-// Aggregates all former standalone integration tests as modules.
+// Собирает бывшие самостоятельные integration tests в единый test binary.
 use codex_apply_patch::CODEX_CORE_APPLY_PATCH_ARG1;
 #[cfg(unix)]
 use codex_exec_server::CODEX_ARG0_EXEC_HELPER_ARG1;
@@ -9,10 +9,10 @@ use codex_test_binary_support::TestBinaryDispatchMode;
 use codex_test_binary_support::configure_test_binary_dispatch;
 use ctor::ctor;
 
-// This code runs before any other tests are run.
-// It allows the test binary to behave like codex and dispatch to apply_patch and codex-linux-sandbox
-// based on the arg0.
-// NOTE: this doesn't work on ARM
+// Этот код выполняется до запуска остальных тестов.
+// Он позволяет test binary вести себя как codex и направлять вызовы в apply_patch
+// и codex-linux-sandbox по arg0.
+// Примечание: на ARM этот механизм не работает.
 #[ctor]
 pub static CODEX_ALIASES_TEMP_DIR: Option<TestBinaryDispatchGuard> = {
     configure_test_binary_dispatch("codex-core-tests", |exe_name, argv1| {
@@ -149,6 +149,8 @@ mod sqlite_state;
 mod stream_error_allows_next_turn;
 mod stream_no_completed;
 mod subagent_notifications;
+mod system_time;
+mod thread_info;
 mod token_budget;
 mod tool_harness;
 mod tool_lifecycle;

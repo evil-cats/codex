@@ -764,3 +764,7 @@ pub fn main() -> Result<()> {
 
     std::process::exit(exit_code);
 }
+
+#[cfg(test)]
+#[path = "win_tests.rs"]
+mod tests;

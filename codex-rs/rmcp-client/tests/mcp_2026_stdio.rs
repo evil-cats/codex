@@ -1,3 +1,5 @@
+//! Проверяет совместимость жизненного цикла stdio MCP 2026-07-28 и восстановление транспорта.
+
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -24,6 +26,9 @@ use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
 use rmcp::model::ProtocolVersion;
 use serde_json::json;
+
+#[path = "mcp_2026_stdio/stdio_transport_recovery.rs"]
+mod stdio_transport_recovery;
 
 async fn exercise_stdio_server(
     server_mode: &str,

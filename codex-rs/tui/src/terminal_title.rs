@@ -6,6 +6,7 @@
 //! "leave the old title alone" or "clear the title Codex last wrote".
 //! This module does not attempt to read or restore the terminal's previous
 //! title because that is not portable across terminals.
+//! В тестовой сборке task-local регистратор фиксирует логические запросы до проверки TTY.
 //!
 //! Sanitization is necessary because title content is assembled from untrusted
 //! text sources such as model output, thread names, project paths, and config.
@@ -15,7 +16,11 @@
 //!   text (the same family of issues discussed in Trojan Source writeups)
 //! - redundant whitespace that would make titles noisy or hard to scan
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::fmt;
+#[cfg(test)]
+use std::future::Future;
 use std::io;
 use std::io::IsTerminal;
 use std::io::stdout;
@@ -43,6 +48,48 @@ pub(crate) enum SetTerminalTitleResult {
     NoVisibleContent,
 }
 
+/// Низкоуровневый запрос на изменение terminal title, наблюдаемый только в тестах.
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalTitleIoRequest {
+    /// Запрос на запись нового заголовка.
+    Set(String),
+    /// Запрос на очистку управляемого заголовка.
+    Clear,
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    static TERMINAL_TITLE_IO_REQUESTS: RefCell<Vec<TerminalTitleIoRequest>>;
+}
+
+/// Записывает запрос до проверки `stdout().is_terminal()`, чтобы тесты видели
+/// ранний выход по кэшу.
+#[cfg(test)]
+fn record_terminal_title_io_request(request: TerminalTitleIoRequest) {
+    let _ = TERMINAL_TITLE_IO_REQUESTS.try_with(|requests| {
+        requests.borrow_mut().push(request);
+    });
+}
+
+/// Выполняет переданный `Future` и возвращает запросы terminal-title I/O,
+/// собранные в области task-local.
+#[cfg(test)]
+pub(crate) async fn capture_terminal_title_io_requests<F>(
+    future: F,
+) -> (F::Output, Vec<TerminalTitleIoRequest>)
+where
+    F: Future,
+{
+    TERMINAL_TITLE_IO_REQUESTS
+        .scope(RefCell::new(Vec::new()), async move {
+            let output = future.await;
+            let requests = TERMINAL_TITLE_IO_REQUESTS.with(RefCell::take);
+            (output, requests)
+        })
+        .await
+}
+
 /// Writes a sanitized OSC window-title sequence to stdout.
 ///
 /// The input is treated as untrusted display text: control characters,
@@ -54,6 +101,9 @@ pub(crate) enum SetTerminalTitleResult {
 /// to single spaces, drops disallowed codepoints, and bounds the result to
 /// [`MAX_TERMINAL_TITLE_CHARS`] visible characters before writing OSC 0.
 pub(crate) fn set_terminal_title(title: &str) -> io::Result<SetTerminalTitleResult> {
+    #[cfg(test)]
+    record_terminal_title_io_request(TerminalTitleIoRequest::Set(title.to_string()));
+
     if !stdout().is_terminal() {
         return Ok(SetTerminalTitleResult::Applied);
     }
@@ -72,6 +122,9 @@ pub(crate) fn set_terminal_title(title: &str) -> io::Result<SetTerminalTitleResu
 /// This clears the visible title; it does not restore whatever title the shell
 /// or a previous program may have set before Codex started managing the title.
 pub(crate) fn clear_terminal_title() -> io::Result<()> {
+    #[cfg(test)]
+    record_terminal_title_io_request(TerminalTitleIoRequest::Clear);
+
     if !stdout().is_terminal() {
         return Ok(());
     }

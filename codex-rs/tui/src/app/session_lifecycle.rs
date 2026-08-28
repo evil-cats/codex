@@ -22,6 +22,12 @@ pub(super) enum ThreadAttachPresentation {
     PromptEdit,
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Одноразово прерывает подключение до изменения TUI и сохраняет id replacement runtime.
+    pub(super) static FAIL_NEXT_APP_SERVER_THREAD_ATTACH: std::cell::Cell<Option<ThreadId>>;
+}
+
 /// Reports whether a loaded-thread backfill completed and which descendants already had their
 /// liveness metadata refreshed, allowing the picker to skip duplicate `thread/read` requests.
 #[derive(Default)]
@@ -432,17 +438,18 @@ impl App {
         Ok(live_attached)
     }
 
-    /// Replaces the chat widget and re-seeds the new widget's collab metadata from the navigation
-    /// cache.
+    /// Заменяет активный `ChatWidget` и восстанавливает общие метаданные.
     ///
-    /// Thread switches reconstruct the `ChatWidget`, which loses the `collab_agent_metadata` map.
-    /// This helper copies every known nickname/role from `AgentNavigationState` into the
-    /// replacement widget so that replayed collab items render agent names immediately.
+    /// При переключении потока новый `ChatWidget` теряет карту `collab_agent_metadata`.
+    /// Метод копирует известные псевдонимы и роли из `AgentNavigationState`, чтобы
+    /// восстановленные элементы совместной работы сразу показывали имена агентов. Основные пути
+    /// жизненного цикла передают кэш заголовка терминала в конструктор; поздний перенос ниже
+    /// остаётся резервным вариантом для остальных путей создания.
     pub(super) fn replace_chat_widget(&mut self, mut chat_widget: ChatWidget) {
-        // Transfer the last-written terminal title to the replacement widget
-        // so it knows what OSC title is currently displayed. Without this, the
-        // new widget would redundantly clear and rewrite the same title, causing
-        // a visible flicker in some terminals.
+        // Основные пути жизненного цикла наследуют кэш до создания `ChatWidget`, чтобы
+        // первое обновление могло сравнить или очистить уже отображаемый заголовок.
+        // Поздний перенос остаётся резервным путём для остальных мест, создающих новый
+        // `ChatWidget` без унаследованного состояния.
         let previous_terminal_title = self.chat_widget.last_terminal_title.take();
         if chat_widget.last_terminal_title.is_none() {
             chat_widget.last_terminal_title = previous_terminal_title;
@@ -800,6 +807,23 @@ impl App {
         presentation: ThreadAttachPresentation,
         initial_user_message: Option<crate::chatwidget::UserMessage>,
     ) -> Result<()> {
+        #[cfg(test)]
+        if FAIL_NEXT_APP_SERVER_THREAD_ATTACH
+            .try_with(|replacement_thread_id| {
+                if replacement_thread_id.get().is_some() {
+                    false
+                } else {
+                    replacement_thread_id.set(Some(started.session.thread_id));
+                    true
+                }
+            })
+            .unwrap_or(false)
+        {
+            return Err(color_eyre::eyre::eyre!(
+                "forced app-server thread attach failure"
+            ));
+        }
+
         // Initial messages are for freshly attached primary threads only. Thread switches and
         // resume/fork flows pass `None` so they cannot replay old history and then auto-submit a new
         // user turn by accident.

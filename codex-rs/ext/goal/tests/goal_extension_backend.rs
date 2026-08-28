@@ -1,7 +1,8 @@
 #![recursion_limit = "256"]
 #![allow(clippy::expect_used)]
 
-//! Проверяет persisted goal backend, accounting и host-owned lifecycle events.
+//! Проверяет persisted goal backend, accounting, model-visible `WorldState` и
+//! host-owned lifecycle events.
 
 use codex_utils_absolute_path::test_support::PathExt;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::ExtensionWarning;
 use codex_extension_api::FunctionCallError;
 use codex_extension_api::NoopTurnItemEmitter;
+use codex_extension_api::PreviousWorldStateSection;
 use codex_extension_api::ThreadResumeInput;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ThreadStopInput;
@@ -29,6 +31,7 @@ use codex_extension_api::ToolPayload;
 use codex_extension_api::TurnErrorInput;
 use codex_extension_api::TurnStartInput;
 use codex_extension_api::TurnStopInput;
+use codex_extension_api::WorldStateContributionInput;
 use codex_goal_extension::GoalExtensionConfig;
 use codex_goal_extension::GoalObjectiveUpdate;
 use codex_goal_extension::GoalRuntimeHandle;
@@ -97,6 +100,92 @@ async fn installed_goal_tools_create_goal_and_fill_empty_preview() -> anyhow::Re
         metadata.preview.as_deref(),
         Some("ship goal extension backend")
     );
+    Ok(())
+}
+
+/// Ошибка чтения persisted goal должна заменить прежний active context явным
+/// fragment `unavailable`, а не одноразовым clearing fragment.
+#[tokio::test]
+async fn goal_world_state_reports_unavailable_when_persisted_goal_read_fails() -> anyhow::Result<()>
+{
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    let tools = harness.tools();
+    let create_tool = tool_by_name(&tools, "create_goal");
+    create_tool
+        .handle(tool_call(
+            "create_goal",
+            "call-create-world-state-goal",
+            json!({ "objective": "preserve goal across a read failure" }),
+        ))
+        .await?;
+
+    let turn_store = ExtensionData::new("turn-world-state");
+    let contributor = &harness.registry.context_contributors()[0];
+    let active_sections = contributor
+        .contribute_world_state(WorldStateContributionInput {
+            thread_id,
+            turn_id: "turn-world-state",
+            environments: &[],
+            ready_selected_capability_roots: &[],
+            executor_capability_discovery: None,
+            extension_metrics: None,
+            session_store: &harness.session_store,
+            thread_store: &harness.thread_store,
+            turn_store: &turn_store,
+        })
+        .await;
+    assert_eq!(active_sections.len(), 1);
+    let active_section = &active_sections[0];
+    assert_eq!(active_section.id(), "active_goal");
+    assert_eq!(active_section.snapshot()["state"], json!("active"));
+    let active_snapshot = active_section.snapshot().clone();
+
+    runtime.close().await;
+
+    let unavailable_sections = contributor
+        .contribute_world_state(WorldStateContributionInput {
+            thread_id,
+            turn_id: "turn-world-state",
+            environments: &[],
+            ready_selected_capability_roots: &[],
+            executor_capability_discovery: None,
+            extension_metrics: None,
+            session_store: &harness.session_store,
+            thread_store: &harness.thread_store,
+            turn_store: &turn_store,
+        })
+        .await;
+    assert_eq!(unavailable_sections.len(), 1);
+    let unavailable_section = &unavailable_sections[0];
+    assert_eq!(unavailable_section.id(), "active_goal");
+    assert_eq!(
+        unavailable_section.snapshot(),
+        &json!({ "state": "unavailable" })
+    );
+    let fragment = unavailable_section
+        .render_diff(PreviousWorldStateSection::Known(&active_snapshot))
+        .expect("ошибка чтения goal должна создать model-visible fragment");
+    assert_eq!(
+        (
+            fragment.role(),
+            fragment.markers(),
+            fragment.body(),
+            fragment.is_for_next_sampling_only(),
+        ),
+        (
+            "user",
+            ("<thread_goal_context>", "</thread_goal_context>"),
+            concat!(
+                "The active thread goal state is temporarily unavailable. Do not treat an earlier ",
+                "goal context fragment as current or change the goal based on stale context."
+            ),
+            false,
+        )
+    );
+
     Ok(())
 }
 

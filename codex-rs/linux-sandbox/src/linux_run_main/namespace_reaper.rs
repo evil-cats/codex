@@ -170,3 +170,7 @@ fn wait_for_descendants(command_pid: libc::pid_t, signal_forwarders: ForwardedSi
         }
     }
 }
+
+#[cfg(test)]
+#[path = "namespace_reaper_tests.rs"]
+mod tests;

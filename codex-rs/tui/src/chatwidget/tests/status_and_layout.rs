@@ -489,6 +489,7 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         startup_tooltip_override: None,
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
+        inherited_terminal_title: None,
         session_telemetry,
     };
 

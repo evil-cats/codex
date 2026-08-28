@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-08-24
+updated: 2026-08-27
 ---
 
 # Spill-файлы для длинного exec output
@@ -76,6 +76,7 @@ inline cap и spill-механику, что прямой `exec_command`.
 | `codex-rs/core/src/config/mod.rs` | Провести effective config value в `Config` и выставить default `1000` |
 | `codex-rs/core/config.schema.json` | Сгенерированный schema artifact для нового key `[tools.exec].inline_output_max_tokens` |
 | `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Преобразовать `ToolCallSource` в явный тип получателя результата, передать его в process manager и оставить `SandboxDenied` вне цепочки spill |
+| `codex-rs/core/src/tools/handlers/unified_exec_tests.rs` | Проверить через настоящий `ExecCommandHandler`, что `DirectPlaintextMessage` выбирает видимый модели spill и сохраняет точные байты spill-файла |
 | `codex-rs/core/src/unified_exec/mod.rs` | Владеть типом получателя, request/result-полями и вспомогательными типами политики exec output, зависящей от источника |
 | `codex-rs/core/src/unified_exec/output_spill.rs` | Владеть spill metadata, рассчитать действующий inline-лимит, выбрать line-prefix excerpt, построить безопасный путь и записать model-visible exec artifact для прямого exec или внешнего Code Mode результата |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch выбрать spill для модели либо полный результат/ошибку Code Mode по типу получателя |
@@ -86,13 +87,15 @@ inline cap и spill-механику, что прямой `exec_command`.
 | `codex-rs/core/src/tools/handlers/read_file.rs` | Использовать общий helper и сохранить прежнюю семантику первых целых строк и line endings |
 | `codex-rs/core/src/unified_exec/*tests.rs` | Проверить immediate-finished branch, выбор политики по источнику, отсутствие spill для Code Mode/running process и запись файла для модели |
 | `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
-| `codex-rs/core/tests/suite/unified_exec.rs` | Сквозно проверить spill завершённого `exec_command` для модели и видимую модели ссылку на файл |
+| `codex-rs/core/tests/suite/unified_exec.rs` | Сквозно проверить spill завершённого `exec_command` для модели, видимую модели ссылку на файл и отсутствие spill при большом `SandboxDenied` |
 | `codex-rs/core/src/tools/code_mode/mod.rs` | В общем `handle_runtime_response()` вызвать spill до усечения и script status; после spill сохранить метаданные целиком, а внешний лимит расходовать только на line prefix и audio |
 | `codex-rs/core/src/tools/code_mode/output_spill.rs` | Построить канонический текстовый projection, сохранить его и заменить text items единым model-visible spill body, не меняя media order |
 | `codex-rs/core/src/tools/code_mode/output_spill_tests.rs` | Проверить порядок text projection и сохранение media items при замене текста |
 | `codex-rs/core/src/tools/code_mode/execute_handler.rs` | Передать identity внешнего `exec` для безопасного имени artifact |
 | `codex-rs/core/src/tools/code_mode/wait_handler.rs` | Передать identity внешнего `wait`; использовать тот же общий spill path, что initial response |
 | `codex-rs/core/tests/suite/code_mode.rs` | Сквозно проверить машинный nested-контракт и model-visible spill внешних `exec`/`wait` результатов |
+| `.codex/skills/fork/scripts/fork_cli.py` | Собрать отладочный `codex-code-mode-host` с каноническими V8-артефактами для тестов карточки |
+| `.codex/skills/fork/scripts/fork_cli_tests.py` | Проверить argv, V8-окружение и отказ при отсутствии ожидаемого host-бинарника |
 | `docs/fork/exec-command-output-spill-files.md` | Owner handoff этой fork-доработки |
 
 Намеренно не меняется в MVP:
@@ -704,11 +707,18 @@ artifact попадет уже усеченный итог ячейки. Общ�
   "schema": "fork-tests.v1",
   "tests": [
     {
+      "purpose": "предусловие Code Mode тестов: отладочный host доступен TestCodexBuilder",
+      "argv": [
+        ".codex/skills/fork/scripts/fork",
+        "build-code-mode-host"
+      ]
+    },
+    {
       "purpose": "разбор и применение лимита line-prefix excerpt для exec output",
       "argv": ["just", "test", "-p", "codex-core", "inline_output_max_tokens"]
     },
     {
-      "purpose": "сохранение большого immediate-finished output и ссылка на файл для модели",
+      "purpose": "политика output_spill: сохранение для модели, DirectPlaintextMessage и обход SandboxDenied",
       "argv": ["just", "test", "-p", "codex-core", "output_spill"]
     },
     {
@@ -854,6 +864,27 @@ artifact попадет уже усеченный итог ячейки. Общ�
   ]
 }
 ```
+
+Предусловие под управлением fork-skill собирает отладочный вариант отдельного
+`codex-code-mode-host` с каноническими артефактами V8. `TestCodexBuilder`
+разрешает этот файл через `cargo_bin`. Без него узкий Cargo-прогон `codex-core`
+откатывается к прямым инструментам и не исполняет JavaScript; такой ответ не
+является успешной проверкой Code Mode. Bazel получает тот же бинарник через
+`extra_binaries`.
+
+Фильтр `output_spill` включает два дополнительных сценария:
+
+- `direct_plaintext_message_selects_model_visible_output_spill` проводит
+  `DirectPlaintextMessage` через настоящие `ExecCommandHandler` и
+  `UnifiedExecProcessManager`, проверяет метаданные построчного префикса, путь и
+  точные байты spill-файла;
+- `sandbox_denied_large_output_bypasses_output_spill` создаёт реальный отказ
+  записи в локальном sandbox только для чтения, проверяет обычную секцию
+  `Output:` и отсутствие метаданных spill, spill-файла и каталога
+  `exec_outputs`.
+
+Новые тесты приняты статической вычиткой. Их компиляция, форматирование и запуск
+отложены до общего прохода по карточкам.
 
 Дополнительно обязателен `fork generators`, поскольку доработка добавляет
 `[tools.exec].inline_output_max_tokens` в config schema.

@@ -2,7 +2,7 @@
 id: fork-linux-sandbox-compact-reaper-argv
 status: active
 created: 2026-08-23
-updated: 2026-08-23
+updated: 2026-08-27
 ---
 
 # Компактный `argv` PID-1 reaper в Linux sandbox
@@ -36,6 +36,7 @@ Bubblewrap `--as-pid-1`. Helper применяет ограничения, со�
 | --- | --- |
 | `codex-rs/linux-sandbox/src/linux_run_main.rs` | Распознаёт внутренний режим reaper до обычного разбора CLI и передаёт ему команду после применения ограничений |
 | `codex-rs/linux-sandbox/src/linux_run_main/namespace_reaper.rs` | Выполняет `fork`, компактный self-`exec`, пересылку сигналов, сбор потомков и сохранение exit status основной команды |
+| `codex-rs/linux-sandbox/src/linux_run_main/namespace_reaper_tests.rs` | Принудительно ломает компактный self-`exec` и проверяет in-process fallback |
 | `codex-rs/linux-sandbox/tests/suite/managed_proxy.rs` | Проверяет фактический `/proc/1/cmdline`, exit status и прежний контракт namespace reaper |
 | `docs/fork/linux-sandbox-compact-reaper-argv.md` | Документ-владелец для переноса, проверки и отката доработки |
 
@@ -109,7 +110,7 @@ PID 1 вызывает тот же executable с `argv[0]`, равным
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "компактный argv, exit status и сбор потомков namespace reaper",
+      "purpose": "компактный argv, self-exec fallback, exit status и сбор потомков namespace reaper",
       "argv": ["just", "test", "-p", "codex-linux-sandbox", "namespace_reaper"]
     },
     {
@@ -125,6 +126,15 @@ PID 1 вызывает тот же executable с `argv[0]`, равным
   ]
 }
 ```
+
+Тест `compact_self_exec_failure_falls_back_without_cancelling_command` запускает
+отдельную копию тестового бинарника и передаёт настоящему `run_command` путь к
+заведомо отсутствующему исполняемому файлу reaper. Уже запущенная основная команда
+записывает маркер и завершается с кодом `37`; внешний процесс должен увидеть и
+маркер, и тот же код. Так тест наблюдает реальный переход от неудачного
+компактного `execv` к прежнему внутрипроцессному reaper. Тест принят статической
+вычиткой; его компиляция, форматирование и запуск отложены до общего прохода по
+карточкам.
 
 ## Риски и ограничения
 

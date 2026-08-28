@@ -2,7 +2,7 @@
 id: fork-exec-command-stdin
 status: active
 created: 2026-08-06
-updated: 2026-08-23
+updated: 2026-08-27
 ---
 
 # Начальный `stdin` для `exec_command`
@@ -82,10 +82,13 @@ echo "hello" | wc -c
 | `codex-rs/exec-server/src/local_process.rs` | Передаёт начальный ввод в созданный процесс и закрывает канал записи non-TTY после отправки |
 | `codex-rs/exec-server/tests/exec_process.rs` | Проверяет локальный и удалённый транспорт exec-server, EOF и соблюдение ограничений sandbox |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/backends/legacy.rs` | Подтверждает результат прямого Windows `WriteFile` и возвращает ошибку начальной записи |
+| `codex-rs/windows-sandbox-rs/src/unified_exec/backends/legacy_tests.rs` | Проверяет возврат фактической ошибки `WriteFile` из legacy backend вызывающему коду |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/backends/elevated.rs` | Подключает канал подтверждаемого начального stdin к транспорту привилегированного `runner` |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common.rs` | Объединяет обычные и подтверждаемые записи, подтверждает IPC-кадр и принимает результат `runner` |
+| `codex-rs/windows-sandbox-rs/src/unified_exec/backends/windows_common_tests.rs` | Проверяет порядок initial/streaming/EOF-кадров и возврат ошибки привилегированного `runner` |
 | `codex-rs/windows-sandbox-rs/src/elevated/ipc_framed.rs` | Добавляет `InitialStdin` и `InitialStdinResult` во внутренний протокол Windows `runner` |
 | `codex-rs/windows-sandbox-rs/src/bin/command_runner/win.rs` | Выполняет полную запись в stdin дочернего процесса и отправляет фактический результат родительскому процессу |
+| `codex-rs/windows-sandbox-rs/src/bin/command_runner/win_tests.rs` | Проверяет фактическую ошибку записи runner и её передачу через `InitialStdinResult` |
 | `codex-rs/windows-sandbox-rs/src/lib.rs` | Экспортирует `InitialStdinResultPayload` для исполняемого файла `codex-command-runner` |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs` | Открывает только для тестов доступ к объединителю каналов stdin |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/tests.rs` | Актуализирует тестовые литералы `ProcessDriver` и проверяет сохранение обычного протокола stdin/EOF для `runner` |
@@ -359,10 +362,32 @@ exec-server объявляет `true`; у старого сервера отсу
     {
       "purpose": "подтверждение начальной записи stdin в реализации PTY",
       "argv": ["just", "test", "-p", "codex-utils-pty", "initial_stdin"]
+    },
+    {
+      "purpose": "Windows legacy и elevated runner: initial stdin, EOF и фактические ошибки WriteFile",
+      "platforms": ["windows"],
+      "argv": ["just", "test", "-p", "codex-windows-sandbox", "initial_stdin"]
     }
   ]
 }
 ```
+
+Windows-набор включает четыре прямых сценария:
+
+- `initial_stdin_legacy_write_file_error_reaches_caller` возвращает вызывающему
+  коду фактический `ERROR_BROKEN_PIPE` из legacy `WriteFile`;
+- `initial_stdin_runner_merges_streaming_input_and_closes_on_eof` проверяет
+  точный порядок `InitialStdin`, последующего `Stdin` и `CloseStdin`;
+- `initial_stdin_runner_returns_reported_error` передаёт ошибку записи runner
+  через реальный framed IPC и возвращает её вызывающему коду;
+- `initial_stdin_result_preserves_runner_write_file_error` проверяет фактическую
+  ошибку runner и её сериализацию в `InitialStdinResult`.
+
+Эти модули собираются только при `target_os = "windows"`, поэтому запись карты
+ограничена платформой `windows`. На Linux и macOS `fork tests` показывает
+`skip-platform` и не считает запись ошибкой; на Windows она автоматически
+становится обязательной. Пропуск не является доказательством Windows-сценариев
+и остаётся явно видимым в результате запуска.
 
 ## Риски и ограничения
 

@@ -523,6 +523,11 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared latch so we only warn once about invalid terminal-title item IDs.
     pub(crate) terminal_title_invalid_items_warned: Arc<AtomicBool>,
+    /// Кэш заголовка терминала, унаследованный при замене `ChatWidget`.
+    ///
+    /// Конструктор устанавливает его до первого обновления поверхностей состояния, поэтому
+    /// неизменившийся заголовок не записывается повторно, а удалённый очищается сразу.
+    pub(crate) inherited_terminal_title: Option<String>,
     pub(crate) session_telemetry: SessionTelemetry,
 }
 

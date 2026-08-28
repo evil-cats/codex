@@ -334,8 +334,34 @@ rows. Cursor movement внутри одной строки недостаточ�
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "trusted ImageView path и model-visible результат view_image",
-      "argv": ["just", "test", "-p", "codex-core", "view_image"]
+      "purpose": "типизированный ImageView с path, preview_size и результатом изображения для модели",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "view_image_tool_attaches_local_image"
+      ]
+    },
+    {
+      "purpose": "видимая модели ошибка неподдерживаемого preview_size",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "handle_rejects_unsupported_preview_size"
+      ]
+    },
+    {
+      "purpose": "схема инструмента экспортирует preview_size без preview_rows",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "view_image_schema_exposes_preview_size_but_not_preview_rows"
+      ]
     },
     {
       "purpose": "rich image history, replay, reflow и terminal insertion в TUI",
@@ -372,6 +398,10 @@ rows. Cursor movement внутри одной строки недостаточ�
 ```
 
 Дополнительно обязателен `fork generators`, если перенос меняет `ImagePreviewSize`, `[tui.history_image_preview]` или app-server `previewSize`.
+
+Проверки `codex-core` используют точные имена принадлежащих карточке тестов.
+Широкий фильтр `view_image` сюда не входит: он захватывает независимые сценарии
+Code Mode и ошибочно делает host предусловием для TUI history.
 
 `manual-required`: в Kitty нужно проверить показ PNG, `view_image` в истории, сохранение preview после resize и text fallback при слишком узком окне.
 

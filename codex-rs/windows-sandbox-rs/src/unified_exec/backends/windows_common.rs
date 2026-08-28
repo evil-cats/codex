@@ -292,3 +292,7 @@ fn send_runner_error(
         let _ = stdout_tx.send(formatted);
     }
 }
+
+#[cfg(test)]
+#[path = "windows_common_tests.rs"]
+mod tests;

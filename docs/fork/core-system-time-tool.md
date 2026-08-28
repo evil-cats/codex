@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-08-13
+updated: 2026-08-27
 ---
 
 # Утилитарный core tool `get_system_time`
@@ -36,9 +36,11 @@ updated: 2026-08-13
 | `codex-rs/core/src/tools/handlers/system_time.rs` | Runtime-обработчик: разбор аргументов, выбор `local`/`utc`/fixed offset, форматирование времени, короткий и полный ответ, ошибки для модели |
 | `codex-rs/core/src/tools/handlers/system_time_spec.rs` | Описание Responses API tool: имя, описание, input schema, `oneOf` output schema для short/full форм |
 | `codex-rs/core/src/tools/handlers/system_time_tests.rs` | Unit tests для runtime-контракта: default short output, full metadata, strftime, offset parsing, IANA rejection, invalid format |
+| `codex-rs/core/tests/suite/system_time.rs` | Интеграционные тесты Responses API: успешный вызов настоящего `SystemTimeHandler` и ошибка неизвестного поля для модели |
 | `codex-rs/core/src/tools/handlers/system_time_spec_tests.rs` | Unit tests для spec-контракта: описанные defaults и short/full output schema |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `system_time` и `system_time_spec`, экспортирует `SystemTimeHandler` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `SystemTimeHandler` в `add_core_utility_tools(...)` рядом с `update_plan` |
+| `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный модуль `system_time` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `docs/fork/core-system-time-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 
@@ -316,10 +318,14 @@ Tool будет часто вызываться ради одной строки
    `"get_system_time"` в `expected_tools_names`.
 9. Добавить соседние test files с `#[path = "..._tests.rs"]`, а не inline tests:
    `system_time_tests.rs` и `system_time_spec_tests.rs`.
-10. Покрыть тестами следующие контракты:
-    default short output, `full: true`, strftime formatting, `utc`
-    case-insensitive parsing, fixed offset parsing, rejection для
-    `Europe/Moscow`, invalid strftime format, short/full output schema.
+10. Добавить `codex-rs/core/tests/suite/system_time.rs` и подключить его через
+    `mod system_time;` в `codex-rs/core/tests/suite/mod.rs`.
+11. Покрыть тестами следующие контракты: встроенный короткий ответ, `full: true`,
+    форматирование strftime, регистронезависимый разбор `utc`, пробельный
+    `offset` после `trim()`, допустимые границы и ошибочные формы fixed offset,
+    отклонение `Europe/Moscow`, неизвестные JSON-поля, ошибочный формат strftime,
+    схемы short/full и сквозной Responses API вызов настоящего
+    `SystemTimeHandler`.
 
 ## Проверки
 
@@ -330,7 +336,7 @@ Tool будет часто вызываться ради одной строки
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "format, offset, full output и ошибки get_system_time",
+      "purpose": "формат, границы offset, полный ответ, ошибки и Responses-вызов get_system_time",
       "argv": ["just", "test", "-p", "codex-core", "system_time"]
     },
     {
@@ -346,6 +352,9 @@ Tool будет часто вызываться ради одной строки
   ]
 }
 ```
+
+Новые модульные и интеграционные тесты приняты статической вычиткой. Их компиляция,
+форматирование и запуск отложены до общего прохода по карточкам.
 
 ## Риски и ограничения
 

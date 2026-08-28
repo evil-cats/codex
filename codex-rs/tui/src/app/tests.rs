@@ -567,6 +567,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         startup_tooltip_override: None,
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
+        inherited_terminal_title: None,
         session_telemetry: app.session_telemetry.clone(),
     });
 
@@ -7373,6 +7374,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         startup_tooltip_override: None,
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
+        inherited_terminal_title: None,
         session_telemetry: app.session_telemetry.clone(),
     });
     app.replace_chat_widget(replacement);
@@ -7455,6 +7457,7 @@ async fn replace_chat_widget_preserves_terminal_title_cache() {
         startup_tooltip_override: None,
         status_line_invalid_items_warned: app.status_line_invalid_items_warned.clone(),
         terminal_title_invalid_items_warned: app.terminal_title_invalid_items_warned.clone(),
+        inherited_terminal_title: None,
         session_telemetry: app.session_telemetry.clone(),
     });
 
@@ -7465,6 +7468,240 @@ async fn replace_chat_widget_preserves_terminal_title_cache() {
         app.chat_widget.last_terminal_title,
         Some("hermione".to_string())
     );
+}
+
+/// Настраивает стабильный заголовок из `app-name` и заполняет кэш текущего `ChatWidget`.
+///
+/// Запись в тестовый `config.toml` нужна потому, что код жизненного цикла заново загружает
+/// конфигурацию перед заменой сессии; `resume_cwd = "current"` исключает не относящийся к
+/// проверяемому контракту интерактивный выбор каталога.
+fn prime_static_terminal_title_cache(app: &mut App) -> Result<String> {
+    std::fs::write(
+        app.config.codex_home.join("config.toml"),
+        "[tui]\nterminal_title = [\"app-name\"]\nresume_cwd = \"current\"\n",
+    )?;
+    app.chat_widget
+        .setup_terminal_title(vec![crate::bottom_pane::TerminalTitleItem::AppName]);
+    app.chat_widget
+        .last_terminal_title
+        .clone()
+        .ok_or_else(|| color_eyre::eyre::eyre!("тестовый terminal title не попал в кэш"))
+}
+
+/// Проверяет реальный `AppEvent::NewSession`: неизменившийся управляемый заголовок переносится в
+/// новый `ChatWidget`, а код жизненного цикла и следующий `refresh_terminal_title` не запрашивают
+/// очистку или запись OSC.
+#[tokio::test]
+async fn new_session_preserves_unchanged_terminal_title_cache() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+        let terminal_title = prime_static_terminal_title_cache(&mut app)?;
+
+        let (control, lifecycle_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(app.handle_event(
+                &mut tui,
+                &mut app_server,
+                AppEvent::NewSession { name: None },
+            ))
+            .await;
+        let control = control?;
+        let ((), refresh_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(async {
+                app.chat_widget.refresh_terminal_title();
+            })
+            .await;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_ne!(app.chat_widget.thread_id(), Some(previous_thread_id));
+        assert_eq!(
+            (
+                terminal_title.as_str(),
+                app.chat_widget.last_terminal_title.as_deref(),
+                lifecycle_title_io,
+                refresh_title_io,
+            ),
+            ("codex", Some("codex"), Vec::new(), Vec::new())
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Проверяет выключение заголовка терминала при реальном `AppEvent::NewSession`: новый
+/// `ChatWidget` наследует прежний кэш до первого обновления, очищает заголовок ровно
+/// один раз и не восстанавливает устаревшее значение при замене `ChatWidget`.
+#[tokio::test]
+async fn new_session_clears_terminal_title_disabled_by_reloaded_config() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+        let terminal_title = prime_static_terminal_title_cache(&mut app)?;
+        std::fs::write(
+            app.config.codex_home.join("config.toml"),
+            "[tui]\nterminal_title = []\nresume_cwd = \"current\"\n",
+        )?;
+
+        let (control, lifecycle_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(app.handle_event(
+                &mut tui,
+                &mut app_server,
+                AppEvent::NewSession { name: None },
+            ))
+            .await;
+        let control = control?;
+        let ((), refresh_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(async {
+                app.chat_widget.refresh_terminal_title();
+            })
+            .await;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_ne!(app.chat_widget.thread_id(), Some(previous_thread_id));
+        assert_eq!(
+            (
+                terminal_title.as_str(),
+                app.chat_widget.last_terminal_title.as_deref(),
+                lifecycle_title_io,
+                refresh_title_io,
+            ),
+            (
+                "codex",
+                None,
+                vec![crate::terminal_title::TerminalTitleIoRequest::Clear],
+                Vec::new(),
+            )
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Проверяет реальный `AppEvent::ResumeSessionByIdOrName`: после подключения выбранной сессии
+/// неизменившийся управляемый заголовок остаётся в кэше без очистки или повторной OSC-записи.
+#[tokio::test]
+async fn resume_session_preserves_unchanged_terminal_title_cache() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let target_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            "target thread",
+        )?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+        let terminal_title = prime_static_terminal_title_cache(&mut app)?;
+
+        let (control, lifecycle_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(app.handle_event(
+                &mut tui,
+                &mut app_server,
+                AppEvent::ResumeSessionByIdOrName(target_thread_id.to_string()),
+            ))
+            .await;
+        let control = control?;
+        let ((), refresh_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(async {
+                app.chat_widget.refresh_terminal_title();
+            })
+            .await;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_ne!(target_thread_id, previous_thread_id);
+        assert_eq!(app.chat_widget.thread_id(), Some(target_thread_id));
+        assert_eq!(
+            (
+                terminal_title.as_str(),
+                app.chat_widget.last_terminal_title.as_deref(),
+                lifecycle_title_io,
+                refresh_title_io,
+            ),
+            ("codex", Some("codex"), Vec::new(), Vec::new())
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Проверяет реальный `AppEvent::ForkCurrentSession`: ответвление меняет текущую сессию, но
+/// сохраняет неизменившийся управляемый заголовок без очистки и повторной OSC-записи.
+#[tokio::test]
+async fn fork_session_preserves_unchanged_terminal_title_cache() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let source_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            "source thread",
+        )?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let resumed = app_server
+            .resume_thread(
+                app.config.clone(),
+                source_thread_id,
+                app.resume_model_settings(),
+            )
+            .await?;
+        let previous_thread_id = resumed.session.thread_id;
+        app.enqueue_primary_thread_session(resumed.session, resumed.turns)
+            .await?;
+        let terminal_title = prime_static_terminal_title_cache(&mut app)?;
+
+        let (control, lifecycle_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(app.handle_event(
+                &mut tui,
+                &mut app_server,
+                AppEvent::ForkCurrentSession { name: None },
+            ))
+            .await;
+        let control = control?;
+        let ((), refresh_title_io) =
+            crate::terminal_title::capture_terminal_title_io_requests(async {
+                app.chat_widget.refresh_terminal_title();
+            })
+            .await;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_ne!(app.chat_widget.thread_id(), Some(previous_thread_id));
+        assert_eq!(
+            (
+                terminal_title.as_str(),
+                app.chat_widget.last_terminal_title.as_deref(),
+                lifecycle_title_io,
+                refresh_title_io,
+            ),
+            ("codex", Some("codex"), Vec::new(), Vec::new())
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
@@ -7697,6 +7934,230 @@ async fn fork_current_session_unloads_previous_thread_runtime() -> Result<()> {
     .await
 }
 
+/// Проверяет полный переход редактирования prompt: новый runtime становится активным, а
+/// исходный runtime исчезает из списка загруженных threads только после успешного подключения.
+#[tokio::test]
+async fn prompt_backtrack_unloads_source_runtime_after_replacement_attach() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let prompt = "source prompt";
+        let source_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            prompt,
+        )?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let resumed = app_server
+            .resume_thread(
+                app.config.clone(),
+                source_thread_id,
+                app.resume_model_settings(),
+            )
+            .await?;
+        app.enqueue_primary_thread_session(resumed.session, resumed.turns)
+            .await?;
+
+        let control = Box::pin(app.handle_event(
+            &mut tui,
+            &mut app_server,
+            AppEvent::ForkSessionForPromptEdit {
+                thread_id: source_thread_id,
+                nth_user_message: 0,
+                prompt: crate::chatwidget::UserMessage::from(prompt),
+            },
+        ))
+        .await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        let replacement_thread_id = app
+            .chat_widget
+            .thread_id()
+            .expect("prompt backtrack should attach a replacement thread");
+        assert_ne!(replacement_thread_id, source_thread_id);
+        assert_eq!(
+            (
+                app.active_thread_id,
+                app.primary_thread_id,
+                app.chat_widget.thread_id(),
+            ),
+            (
+                Some(replacement_thread_id),
+                Some(replacement_thread_id),
+                Some(replacement_thread_id),
+            )
+        );
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![replacement_thread_id.to_string()]
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Проверяет ранний сбой resume: отсутствие целевого thread не должно выгружать прежний runtime
+/// или менять активный основной thread в TUI.
+#[tokio::test]
+async fn failed_resume_keeps_previous_runtime_loaded_and_active() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+
+        let control = Box::pin(app.resume_target_session(
+            &mut tui,
+            &mut app_server,
+            crate::resume_picker::SessionTarget {
+                path: None,
+                thread_id: ThreadId::new(),
+                history_mode: None,
+            },
+        ))
+        .await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_eq!(
+            (
+                app.active_thread_id,
+                app.primary_thread_id,
+                app.chat_widget.thread_id(),
+            ),
+            (
+                Some(previous_thread_id),
+                Some(previous_thread_id),
+                Some(previous_thread_id),
+            )
+        );
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![previous_thread_id.to_string()]
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
+/// Проверяет ошибку именно на фазе attach: replacement runtime уже создан, но прежний runtime и
+/// полное активное состояние TUI сохраняются, пока подключение replacement не завершилось.
+#[tokio::test]
+async fn fork_attach_failure_keeps_source_runtime_loaded_and_active() -> Result<()> {
+    Box::pin(async {
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        let source_thread_id = create_persisted_test_rollout(
+            &app,
+            "2026-07-09T00-00-00",
+            "2026-07-09T00:00:00Z",
+            "source thread",
+        )?;
+        let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
+            app.chat_widget.config_ref(),
+        ))
+        .await?;
+        let resumed = app_server
+            .resume_thread(
+                app.config.clone(),
+                source_thread_id,
+                app.resume_model_settings(),
+            )
+            .await?;
+        app.enqueue_primary_thread_session(resumed.session, resumed.turns)
+            .await?;
+        app.chat_widget.insert_str("draft that must survive");
+        let source_tui_state = (
+            app.active_thread_id,
+            app.primary_thread_id,
+            app.primary_session_configured.clone(),
+            app.thread_event_channels
+                .keys()
+                .copied()
+                .collect::<HashSet<_>>(),
+            app.active_thread_rx.is_some(),
+            app.chat_widget.thread_id(),
+            app.chat_widget.thread_name(),
+            app.chat_widget.current_model().to_string(),
+            app.chat_widget.current_reasoning_effort(),
+            app.chat_widget.rollout_path(),
+            app.chat_widget.composer_text_with_pending(),
+        );
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![source_thread_id.to_string()]
+        );
+
+        let (control, replacement_thread_id) =
+            super::session_lifecycle::FAIL_NEXT_APP_SERVER_THREAD_ATTACH
+                .scope(std::cell::Cell::new(None), async {
+                    let control = app
+                        .handle_event(
+                            &mut tui,
+                            &mut app_server,
+                            AppEvent::ForkCurrentSession { name: None },
+                        )
+                        .await;
+                    let replacement_thread_id =
+                        super::session_lifecycle::FAIL_NEXT_APP_SERVER_THREAD_ATTACH
+                            .with(std::cell::Cell::get);
+                    (control, replacement_thread_id)
+                })
+                .await;
+        let control = control?;
+        let replacement_thread_id = replacement_thread_id
+            .expect("fork must reach attach with a created replacement runtime");
+
+        assert!(matches!(control, AppRunControl::Continue));
+        assert_eq!(
+            (
+                app.active_thread_id,
+                app.primary_thread_id,
+                app.primary_session_configured.clone(),
+                app.thread_event_channels
+                    .keys()
+                    .copied()
+                    .collect::<HashSet<_>>(),
+                app.active_thread_rx.is_some(),
+                app.chat_widget.thread_id(),
+                app.chat_widget.thread_name(),
+                app.chat_widget.current_model().to_string(),
+                app.chat_widget.current_reasoning_effort(),
+                app.chat_widget.rollout_path(),
+                app.chat_widget.composer_text_with_pending(),
+            ),
+            source_tui_state
+        );
+
+        let loaded_thread_ids = app_server_loaded_thread_ids(&mut app_server).await?;
+        assert_ne!(replacement_thread_id, source_thread_id);
+        let mut expected_loaded_thread_ids = vec![
+            source_thread_id.to_string(),
+            replacement_thread_id.to_string(),
+        ];
+        expected_loaded_thread_ids.sort();
+        assert_eq!(loaded_thread_ids, expected_loaded_thread_ids);
+
+        app_server.thread_unload(replacement_thread_id).await?;
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![source_thread_id.to_string()]
+        );
+        app_server.shutdown().await?;
+        Ok(())
+    })
+    .await
+}
+
 #[tokio::test]
 async fn new_session_requests_unload_for_previous_conversation() {
     Box::pin(async {
@@ -7766,17 +8227,20 @@ async fn shutdown_first_exit_returns_immediate_exit_when_shutdown_submit_fails()
     ));
 }
 
+/// Проверяет, что shutdown-first отправляет именно `thread/unload`: текущий thread исчезает
+/// из `thread/loaded/list`, а прежний `Op::Shutdown` не поступает в TUI-канал.
 #[tokio::test]
-async fn shutdown_first_exit_uses_app_server_shutdown_without_submitting_op() {
+async fn shutdown_first_exit_unloads_current_runtime_without_submitting_op() -> Result<()> {
     let (mut app, _app_event_rx, mut op_rx) = Box::pin(make_test_app_with_channels()).await;
-    let thread_id = ThreadId::new();
-    app.active_thread_id = Some(thread_id);
-
     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
         app.chat_widget.config_ref(),
     ))
-    .await
-    .expect("embedded app server");
+    .await?;
+    let thread_id = Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
+    // Подключение session обновляет skills и оставляет setup-команду в direct
+    // TUI-канале; отделяем её от проверяемого shutdown-first перехода.
+    while op_rx.try_recv().is_ok() {}
+
     let control = Box::pin(app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
 
     assert_eq!(app.pending_shutdown_exit_thread_id, None);
@@ -7784,10 +8248,17 @@ async fn shutdown_first_exit_uses_app_server_shutdown_without_submitting_op() {
         control,
         AppRunControl::Exit(ExitReason::UserRequested)
     ));
+    assert_eq!(
+        app_server_loaded_thread_ids(&mut app_server).await?,
+        Vec::<String>::new(),
+        "shutdown-first should unload {thread_id}"
+    );
     assert!(
         op_rx.try_recv().is_err(),
         "shutdown should not submit Op::Shutdown"
     );
+    app_server.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]

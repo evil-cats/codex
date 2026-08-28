@@ -2,7 +2,7 @@
 id: fork-resume-profile-startup-latency
 status: active
 created: 2026-08-25
-updated: 2026-08-25
+updated: 2026-08-27
 ---
 
 # Ускорение `resume` с расширенной filesystem policy
@@ -36,7 +36,7 @@ entries из вложенных access checks, а постраничное во�
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/protocol/src/permissions.rs` | Владеет локальным snapshot restricted policy, batch-проверкой candidate paths и построением writable roots без повторного разрешения entries |
+| `codex-rs/protocol/src/permissions.rs` | Владеет локальным snapshot restricted policy, batch-проверкой candidate paths, построением writable roots без повторного разрешения entries и test-only счётчиком полных проходов |
 | `codex-rs/tui/src/inline_visualization.rs` | Проверяет viewer caches и их parents одним batch-запросом, сохраняя fail-closed поведение |
 | `codex-rs/tui/src/app_server_session/history.rs` | Вычисляет visualization context один раз на initial hydration до цикла item pages |
 | `codex-rs/tui/src/thread_transcript.rs` | Даёт transcript conversion готовый context и сохраняет обычный entrypoint для остальных callers |
@@ -152,7 +152,7 @@ sandbox. Он не является долгоживущим кэшем и не 
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "filesystem policy snapshot и batch write checks сохраняют precedence, symlink carveouts и protected metadata",
+      "purpose": "filesystem policy snapshot строится один раз и сохраняет precedence, symlink carveouts и protected metadata",
       "argv": ["just", "test", "-p", "codex-protocol"]
     },
     {
@@ -162,6 +162,17 @@ sandbox. Он не является долгоживущим кэшем и не 
   ]
 }
 ```
+
+Тест `writable_roots_resolve_policy_entries_once_for_many_nested_checks`
+вызывает настоящий `get_writable_roots_with_cwd` для наборов из одной и 32 пар
+`writable root + read-only carveout`. Строго test-only thread-local счётчик
+инкрементируется внутри `resolved_entries_with_cwd` и требует ровно один полный
+проход в обоих случаях. Дополнительно тест сравнивает все материализованные
+carveouts. При возврате вложенных одиночных access checks число полных проходов
+снова вырастет вместе с набором policy entries.
+
+Тест принят статической вычиткой; его компиляция, форматирование и запуск
+отложены до общего прохода по карточкам.
 
 Для performance smoke дополнительно нужен skill-owned gate `fork build-fast`,
 поскольку измерение должно использовать оптимизированный binary. Smoke

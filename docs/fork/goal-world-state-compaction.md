@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-08-23
+updated: 2026-08-27
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -306,7 +306,7 @@ attached notice не отделяется от удалённого source item.
       "argv": ["just", "test", "-p", "codex-core", "collect_annotated_user_messages_excluding_preserves_retained_metadata"]
     },
     {
-      "purpose": "goal lifecycle, persistence и world-state contributor extension",
+      "purpose": "goal lifecycle, persistence, unavailable read failure и world-state contributor extension",
       "argv": ["just", "test", "-p", "codex-goal-extension"]
     },
     {
@@ -316,6 +316,14 @@ attached notice не отделяется от удалённого source item.
   ]
 }
 ```
+
+Тест `goal_world_state_reports_unavailable_when_persisted_goal_read_fails`
+создаёт active goal через установленный tool, получает active snapshot, затем
+закрывает настоящий `StateRuntime`. Ошибка чтения persisted goal из закрытого
+pool должна дать snapshot `{"state":"unavailable"}` и сохраняемый
+model-visible fragment, а не одноразовый clearing fragment. Тест принят
+статической вычиткой; его компиляция, форматирование и запуск отложены до общего
+прохода по карточкам.
 
 ## Риски и ограничения
 

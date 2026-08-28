@@ -125,8 +125,8 @@ tests закрепляют отсутствие удалённого override-с
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "read_template_path отсутствует в config types, loading и schema",
-      "argv": ["just", "test", "-p", "codex-core", "config"]
+      "purpose": "read_template_path отсутствует в TOML и итоговом MemoriesConfig",
+      "argv": ["just", "test", "-p", "codex-core", "test_toml_parsing"]
     },
     {
       "purpose": "embedded read-path prompt, bounded summary и safe update policy",
@@ -138,6 +138,10 @@ tests закрепляют отсутствие удалённого override-с
 
 Дополнительно обязателен `fork generators`, поскольку удаление
 `read_template_path` должно синхронно отражаться в config schema.
+
+Точный фильтр `test_toml_parsing` запускает только владеющий тест TOML и
+`MemoriesConfig`, не включая посторонние тесты Code Mode по совпадению слова
+`config` в имени.
 
 ## Риски и ограничения
 

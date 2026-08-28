@@ -3479,6 +3479,117 @@ async fn exec_command_spills_large_completed_output_to_file() -> Result<()> {
     Ok(())
 }
 
+/// Проверяет, что большой сохранённый вывод при отказе sandbox обходит spill-цепочку.
+/// `builder.build(&server)` выбран намеренно: сценарий проходит через локальный sandbox хоста и
+/// проверяет отсутствие spill-файла в локальном `codex_home`; `build_with_auto_env()` мог бы
+/// выбрать удалённую среду и другую границу.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sandbox_denied_large_output_bypasses_output_spill() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(|config| {
+        config.exec_inline_output_max_tokens = 3;
+        config
+            .features
+            .enable(Feature::UnifiedExec)
+            .expect("настройки теста должны разрешать включение UnifiedExec");
+    });
+    let test = builder.build(&server).await?;
+
+    let call_id = "uexec-sandbox-denied-output-spill";
+    let target_path = test.workspace_path("forbidden-output-spill.txt");
+    // Переводы строк и `echo` работают во всех поддерживаемых shell; различается только текст
+    // системной ошибки, поэтому ниже учтены штатные формулировки отказа sandbox.
+    // Сохранённый stdout намеренно не содержит ключевых слов детектора: ветку должен выбрать
+    // реальный отказ записи, а не напечатанный до него текст.
+    let retained_line = "retained command output ".repeat(/*n*/ 8);
+    let retained_commands = format!("echo \"{retained_line}\"\n").repeat(/*n*/ 24);
+    let command = format!(
+        "{retained_commands}echo blocked write > \"{}\"",
+        target_path.display()
+    );
+    let args = json!({
+        "cmd": command,
+        "yield_time_ms": 5_000,
+    });
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "exec_command", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    let request_log = mount_sse_sequence(&server, responses).await;
+
+    submit_unified_exec_turn(
+        &test,
+        "run a command denied by the read-only sandbox",
+        PermissionProfile::read_only(),
+    )
+    .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let response_text = request_log
+        .function_call_output_text(call_id)
+        .context("в ответе отсутствует вывод exec с отказом sandbox")?;
+    assert!(response_text.contains("\nOutput:\n"));
+    for spill_marker in ["Lines:", "Full output:", "Output excerpt:"] {
+        assert!(
+            !response_text.contains(spill_marker),
+            "ответ при отказе sandbox не должен содержать {spill_marker:?}: {response_text}"
+        );
+    }
+
+    let ParsedUnifiedExecOutput {
+        exit_code,
+        original_token_count,
+        output_lines,
+        output_saved_to,
+        output_save_error,
+        output,
+        ..
+    } = parse_unified_exec_output(&response_text)?;
+    assert_eq!(
+        (output_lines, output_saved_to, output_save_error),
+        (None, None, None)
+    );
+    assert_ne!(exit_code, Some(0));
+    assert!(
+        original_token_count.is_some_and(|count| count > 3),
+        "сохранённый вывод должен превышать настроенный лимит вывода для модели"
+    );
+    assert!(output.contains("retained command output"));
+    let output_lower = output.to_lowercase();
+    assert!(
+        output_lower.contains("permission denied")
+            || output_lower.contains("operation not permitted")
+            || output_lower.contains("read-only file system")
+            || output_lower.contains("access is denied")
+            || (output_lower.contains("access to the path") && output_lower.contains("denied")),
+        "в выводе ожидались сведения об отказе sandbox: {output}"
+    );
+    assert!(!target_path.exists());
+    assert!(
+        !test
+            .config
+            .codex_home
+            .join("exec_outputs")
+            .as_path()
+            .exists(),
+        "отказ sandbox не должен создавать exec_outputs"
+    );
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unified_exec_runs_under_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));

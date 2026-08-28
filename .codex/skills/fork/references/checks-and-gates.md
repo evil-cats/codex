@@ -25,8 +25,9 @@ commands.
 .codex/skills/fork/scripts/fork tests --mode cards --version X.Y.Z
 .codex/skills/fork/scripts/fork tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z
 .codex/skills/fork/scripts/fork tests --mode full --version X.Y.Z
+.codex/skills/fork/scripts/fork build-code-mode-host
 .codex/skills/fork/scripts/fork build-fast --version X.Y.Z
-.codex/skills/fork/scripts/fork install
+.codex/skills/fork/scripts/fork install [--host HOST]...
 .codex/skills/fork/scripts/fork cards list
 .codex/skills/fork/scripts/fork cards validate
 .codex/skills/fork/scripts/fork migration init --version X.Y.Z
@@ -45,19 +46,29 @@ commands.
 решением пользователя о возобновлении миграции. Подкоманды `fork migration`
 требуют явный `--version`.
 
-`fork install` по умолчанию устанавливает пару release-fast-артефактов:
+`fork install` по умолчанию устанавливает пару release-fast-артефактов локально:
 `codex-rs/target/release-fast/codex` в
 `${HOME}/.local/bin/codex-hermione` и соседний `codex-code-mode-host` под его
-каноническим именем в тот же каталог. `--source PATH` и `--target PATH`
-переопределяют основной binary; source и target для host выводятся как соседние
-пути автоматически. Команда до первой замены проверяет оба временных артефакта,
-затем заменяет host и последним основной binary. Это остается skill-owned
-установкой, а не ручным копированием файлов.
+каноническим именем. Повторяемый `--host HOST` переключает команду на установку
+этой пары только на явно перечисленные SSH-хосты; SSH aliases, authentication и
+host keys принадлежат пользовательской SSH-конфигурации. Remote target по
+умолчанию равен `.local/bin/codex-hermione` относительно login home.
+`--source PATH` и `--target PATH` переопределяют основной binary, а соседний
+Code Mode host выводится автоматически. Source-артефакты остаются unstripped;
+команда выполняет `strip` только над staged copies и проверяет их. Затем один
+общий путь `rsync --delay-updates` доставляет пару в локальный каталог либо на
+каждый выбранный host; remote-режим после доставки запускает probes по SSH. Это
+остаётся skill-owned установкой, а не ручным копированием файлов.
 
 `fork build-fast` перед внутренней Cargo-сборкой определяет native rustc target
 и через upstream `scripts/codex_package/v8.py` получает согласованные
 `RUSTY_V8_ARCHIVE` и `RUSTY_V8_SRC_BINDING_PATH`. Fork skill не дублирует URL,
 checksums и cache policy V8 artifacts.
+
+`fork build-code-mode-host` использует тот же механизм разрешения артефактов V8,
+но собирает только отладочный `codex-code-mode-host` для тестов карточек Cargo. Команда
+проверяет `codex-rs/target/debug/codex-code-mode-host` и запускает его с
+`--help`; она не заменяет релизную сборку `fork build-fast`.
 
 `fork fix` запускает repo lint/fix recipe для всего workspace. Повторяемый
 `--package CRATE` ограничивает запуск выбранными crates и передает каждую из них
@@ -68,9 +79,12 @@ checksums и cache policy V8 artifacts.
 или `id` без префикса `fork-`. Фильтр ограничивает результат выбранными
 карточками. Режим `list` печатает строки из блоков `fork-tests.v1`, а для
 карточки с обоснованным исключением — вид `manual-required`/`not-applicable` и
-его причину. Режим `cards` запускает только `fork-tests.v1` и отклоняет
-выбранную карточку без автоматизированных тестов. `--mode full` не принимает
-`--card`, потому что полный проход не является card-level запуском.
+его причину. Для автоматизированной записи вывод содержит статус `run` либо
+`skip-platform`. Режим `cards` запускает только применимые к текущей платформе
+записи `fork-tests.v1`, сообщает количество успешных и платформенно пропущенных
+записей и отклоняет выбранную карточку без автоматизированных тестов. `--mode
+full` не принимает `--card`, потому что полный проход не является card-level
+запуском.
 
 ## Модель владения командами
 
@@ -92,8 +106,9 @@ command является workflow-командой; `just`/`cargo` argv внут
 | Артефакты config/app-server schema | `fork generators` | Обновляет schema artifacts |
 | Тесты карточки | `fork tests --mode cards --card CARD` | argv из блока `fork-tests.v1` |
 | Полный регрессионный проход | `fork tests --mode full` | Полный набор тестов и pending snapshots |
-| Быстрая release-сборка | `fork build-fast` | Собирает и проверяет оба runtime binaries |
-| Установка fork-бинарников | `fork install` | Проверяет и заменяет пару binaries |
+| Host для тестов Code Mode | `fork build-code-mode-host` | Узкая сборка с V8-окружением fork |
+| Быстрая release-сборка | `fork build-fast` | Собирает два runtime artifacts с symbols |
+| Установка runtime-пары | `fork install` | Доставляет staged binaries через `rsync` |
 
 Если `AGENTS.md` требует шаг, которого нет в этой таблице или другом
 skill-owned command, это пробел workflow. Сначала обнови skill-owned command или
@@ -118,6 +133,7 @@ Rust workflow:
 | `fork tests --mode cards` | Card-level запуск с предусловиями и логами |
 | `fork preflight` | Составной gate для skill/files/cards/JSON map/untracked/conflicts/markdown |
 | `fork render-subagent-prompt` | Генератор prompt для подагента одной карточки |
+| `fork build-code-mode-host` | Собирает host для тестов Code Mode с JavaScript |
 | `fork build-fast` | Fork build gate с проверкой основного binary и Code Mode host |
 | `fork install` | Проверяет и устанавливает runtime-пару |
 
@@ -170,8 +186,12 @@ skill-owned логах, хронология изменений — в Git, ит
 Раздел `Проверки` содержит machine-readable блок `fork-tests.v1` либо
 явное исключение `manual-required`/`not-applicable` с причиной. Поле
 `purpose` описывает проверяемое поведение, а `argv` хранит внутренний вызов,
-которым владеет `fork tests`. Не дублируй эти данные отдельной таблицей
-смыслового покрытия.
+которым владеет `fork tests`. Опциональный непустой массив `platforms`
+принимает только `linux`, `macos`, `windows`. На другой платформе запись
+получает `skip-platform`, не запускается и не влияет на успешность остальных
+применимых записей. Отсутствие поля означает применимость на всех
+поддерживаемых платформах. Не дублируй эти данные отдельной таблицей смыслового
+покрытия.
 
 Дополнительный skill-owned gate указывай только тогда, когда он действительно
 нужен конкретной доработке. Не создавай обязательные подразделы или
@@ -316,11 +336,12 @@ legacy-секциями.
 - `tests --mode cards --version X.Y.Z`;
 - `tests --mode cards --card CARD_ID_OR_PATH --version X.Y.Z`;
 - `tests --mode full --version X.Y.Z`;
+- `build-code-mode-host`;
 - `build-fast --version X.Y.Z`;
 - `install`.
 
 Heavy or mutating gates (`fix`, `generators`, `tests --mode cards`,
-`tests --mode full`, `build-fast`) запускай только когда они нужны текущему
-этапу. `fork install` запускай только после явного решения установить собранный
-бинарник. Режим `tests --mode list` печатает исполняемую карту проверок и
-обоснованные исключения без запуска тестов.
+`tests --mode full`, `build-code-mode-host`, `build-fast`) запускай только когда
+они нужны текущему этапу. `fork install` запускай только после явного решения
+установить собранный бинарник. Режим `tests --mode list` печатает исполняемую
+карту проверок и обоснованные исключения без запуска тестов.

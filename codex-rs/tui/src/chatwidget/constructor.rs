@@ -7,6 +7,11 @@ impl ChatWidget {
         Self::new_with_op_target(common, CodexOpTarget::AppEvent)
     }
 
+    /// Создаёт `ChatWidget`, подключает зависимости времени выполнения и обновляет
+    /// поверхности состояния.
+    ///
+    /// Унаследованный кэш заголовка терминала уже должен находиться в `ChatWidgetInit`, чтобы
+    /// первоначальное обновление не повторяло неизменившуюся OSC-запись.
     pub(super) fn new_with_op_target(
         common: ChatWidgetInit,
         codex_op_target: CodexOpTarget,
@@ -30,6 +35,7 @@ impl ChatWidget {
             startup_tooltip_override,
             status_line_invalid_items_warned,
             terminal_title_invalid_items_warned,
+            inherited_terminal_title,
             session_telemetry,
         } = common;
         let model = model.filter(|m| !m.trim().is_empty());
@@ -229,7 +235,7 @@ impl ChatWidget {
             session_network_proxy: None,
             status_line_invalid_items_warned,
             terminal_title_invalid_items_warned,
-            last_terminal_title: None,
+            last_terminal_title: inherited_terminal_title,
             last_terminal_title_requires_action: false,
             terminal_title_setup_original_items: None,
             terminal_title_animation_origin: Instant::now(),

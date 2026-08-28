@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-08-22
+updated: 2026-08-26
 ---
 
 # Утилитарный core tool `get_thread_info`
@@ -40,6 +40,7 @@ updated: 2026-08-22
 | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` | Описание Responses API tool: имя, описание, input schema, output schema |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing `thread_id` |
 | `codex-rs/core/src/tools/handlers/thread_info_spec_tests.rs` | Unit tests для spec-контракта: optional `thread_id` и nullable output fields |
+| `codex-rs/core/tests/suite/thread_info.rs` | Интеграционные тесты настоящего runtime-обработчика: текущий root, реально созданный subagent, архивный сохранённый thread, сериализация metadata и ограничение обхода parent chain при цикле, превышении глубины и нечитаемом родителе |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `thread_info` и `thread_info_spec`, экспортирует `ThreadInfoHandler` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Отображает вызов `get_thread_info` в core tool activity как `kind = ThreadInfo` с кратким полем `detail` по текущему или указанному `thread_id` |
@@ -260,7 +261,9 @@ tool текущего runtime, а не app-server API и не extension tool.
 5. Зарегистрировать `ThreadInfoHandler` через `registry.add(...)` в
    `add_core_utility_tools(...)` рядом с `SystemTimeHandler` или ближайшим
    актуальным core utility block.
-6. Перенести tests для spec и runtime-контрактов helper-а.
+6. Перенести unit tests схемы и разбора аргументов, а также интеграционные тесты
+   текущих root и subagent sessions, архивного сохранённого thread и повреждённых
+   цепочек родителей.
 7. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.
 8. Сверить итоговый diff с контрактом: все описанные поля, ошибки, fallbacks и
@@ -279,7 +282,7 @@ tool текущего runtime, а не app-server API и не extension tool.
       "argv": ["just", "test", "-p", "codex-core", "agent_name"]
     },
     {
-      "purpose": "разбор thread_id, строгие аргументы и видимые модели схемы входа и выхода",
+      "purpose": "runtime-обработчик текущих и сохранённых threads, строгие аргументы, схемы и ограниченный обход parent chain",
       "argv": ["just", "test", "-p", "codex-core", "thread_info"]
     },
     {
@@ -316,9 +319,6 @@ tool текущего runtime, а не app-server API и не extension tool.
   `StoredThread` не хранит top-level profile `name`.
 - Для текущего root thread `agent_name` зависит от effective config на момент
   вызова tool.
-- Проверки уровня карточки покрывают разбор аргументов, видимые модели схемы,
-  регистрацию и core tool activity, но не исполняют обработчик на текущей `Session`
-  или цепочке `parent_thread_id` сохранённого thread.
 - Tool не является API для чтения истории, transcript или contents rollout.
 - Tool не должен расширяться до unbounded scan/search без отдельного design
   review.

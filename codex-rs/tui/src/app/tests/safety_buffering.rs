@@ -1,3 +1,5 @@
+//! Интеграционные тесты TUI для safety-buffering retry и связанного жизненного цикла runtime.
+
 use super::*;
 use crate::app::safety_buffering::SafetyBufferedRetry;
 use crate::app::session_lifecycle::ThreadAttachPresentation;
@@ -334,6 +336,9 @@ fn user_message_count(thread: &Thread, prompt: &str) -> usize {
         .count()
 }
 
+/// Выполняет сквозной safety-buffering retry через встроенный app-server.
+/// Успешные сценарии дополнительно подтверждают, что новый runtime уже подключён и остаётся
+/// единственным загруженным thread; ожидаемые ранние отказы завершаются до этой проверки.
 async fn run_safety_retry(
     previous_prompt: Option<&str>,
     failing_draft: Option<&str>,
@@ -741,7 +746,22 @@ goals = true
             app.chat_widget.composer_text_with_pending(),
             format!("{RETRY_PROMPT}\n{draft}")
         );
-        assert_eq!(app.chat_widget.thread_id(), Some(source_thread_id));
+        assert_eq!(
+            (
+                app.active_thread_id,
+                app.primary_thread_id,
+                app.chat_widget.thread_id(),
+            ),
+            (
+                Some(source_thread_id),
+                Some(source_thread_id),
+                Some(source_thread_id),
+            )
+        );
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![source_thread_id.to_string()]
+        );
         if let Some(release_active_response) = release_active_response.take() {
             let _ = release_active_response.send(());
         }
@@ -783,6 +803,10 @@ goals = true
     }
 
     let retry_thread_id = app.chat_widget.thread_id().expect("retry thread id");
+    assert_eq!(
+        app_server_loaded_thread_ids(&mut app_server).await?,
+        vec![retry_thread_id.to_string()]
+    );
     let source = app_server
         .thread_read(source_thread_id, /*include_turns*/ true)
         .await?;
@@ -911,8 +935,10 @@ goals = true
     Ok(())
 }
 
+/// Проверяет успешный retry: новый thread использует быстрые настройки и остаётся
+/// единственным загруженным runtime после подключения.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn safety_retry_forks_after_the_previous_turn_and_uses_faster_settings() -> Result<()> {
+async fn safety_retry_unloads_source_runtime_after_replacement_attach() -> Result<()> {
     run_safety_retry(
         Some(PREVIOUS_PROMPT),
         /*failing_draft*/ None,
@@ -966,8 +992,10 @@ async fn safety_retry_replays_older_interruption_notices() -> Result<()> {
     .await
 }
 
+/// Проверяет отказ создания thread для retry: исходный runtime и несохранённый черновик
+/// остаются активными, поэтому неуспешное подключение не оставляет TUI без рабочей сессии.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn safety_retry_branch_failure_preserves_unsent_draft() -> Result<()> {
+async fn safety_retry_branch_failure_keeps_source_runtime_and_unsent_draft() -> Result<()> {
     run_safety_retry(
         Some(PREVIOUS_PROMPT),
         Some(UNSENT_DRAFT),
