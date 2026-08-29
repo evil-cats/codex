@@ -2,34 +2,40 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-08-28
+updated: 2026-08-29
 ---
 
-# Release-fast build and runtime install
+# Release-fast сборка и установка runtime-комплекта
 
 ## Обзор
 
-Эта карточка фиксирует быстрый optimized build path Hermione и установку его
-runtime-комплекта. Cargo profile `release-fast` сохраняет параллельность
-финальных стадий и symbols для профилирования, skill-owned `fork build-fast`
-собирает и проверяет `codex` вместе с `codex-code-mode-host`, а `fork install`
-выполняет `strip` staged copies и согласованно устанавливает оба файла локально
-либо через `rsync` на явно перечисленные SSH-хосты, не меняя canonical upstream
-`release` profile.
+Эта карточка фиксирует быструю оптимизированную сборку Hermione, происхождение
+полученных бинарников и установку runtime-комплекта. Профиль Cargo
+`release-fast` сохраняет параллельность финальных стадий и таблицу символов для
+профилирования. Команда `fork build-fast` из skill `fork` собирает и
+проверяет `codex` вместе с `codex-code-mode-host` как артефакты разработки с
+`Revision: dev`.
+
+Команда `fork install` является границей выпуска. Она требует чистое рабочее
+дерево, встраивает полный Git SHA текущего `HEAD` в оба бинарника, выполняет
+`strip` над временными копиями и проверяет одну ревизию у кандидатов, временных
+копий и установленных файлов. Локальная и удалённая установка используют
+`rsync`, не меняя канонический upstream-профиль `release`.
 
 ## Зачем это нужно
 
-Upstream `release` является профилем для packaging и symbolication:
+Upstream `release` является профилем для упаковки и symbolication:
 
 - `debug = "line-tables-only"`;
 - `split-debuginfo = "off"`;
 - `strip = false`.
 
-Hermione нужен отдельный быстрый optimized profile с большей параллельностью
-финальных стадий. Build artifacts должны сохранять symbols, чтобы `perf` мог
-показывать Rust-функции без дорогой debug-сборки. Runtime-копии при этом должны
-оставаться stripped, поэтому граница удаления symbols переносится из Cargo
-profile в skill-owned install staging.
+Hermione нужен отдельный быстрый оптимизированный профиль с большей
+параллельностью финальных стадий. Артефакты сборки должны сохранять таблицу
+символов, чтобы `perf` мог показывать Rust-функции без дорогой сборки с
+отладочной информацией. Устанавливаемые копии при этом должны оставаться без
+таблицы символов, поэтому граница удаления символов переносится из профиля Cargo
+во временный каталог команды `fork install`.
 
 `release-fast` наследует от upstream `release` значения `lto = "thin"` и
 `strip = false`. Дельта fork ограничена `codegen-units = 32` и отключением
@@ -37,25 +43,40 @@ profile в skill-owned install staging.
 
 Code Mode исполняется отдельным `codex-code-mode-host`, который основной Codex
 лениво запускает как sidecar. Обычная локальная сборка и установка только
-`codex-hermione` оставляет Code Mode без запускаемого host, поэтому build и
-install gates должны работать с этой парой как с одним runtime-комплектом.
+`codex-hermione` оставляет Code Mode без запускаемого host-бинарника, поэтому
+проверки сборки и установки должны работать с этой парой как с одним
+runtime-комплектом.
+
+Одной версии `0.150.0+hermione` недостаточно, чтобы определить происхождение
+конкретного бинарника: несколько сборок одного выпуска могут относиться к разным
+коммитам. Оба исполняемых файла поэтому должны показывать отдельную строку
+`Revision: <value>` в корневом `--help`. Версия пакета остаётся SemVer-версией,
+а ревизия связывает установленный runtime-комплект с конкретным Git-коммитом.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/Cargo.toml` | Добавляет `[profile.release-fast]` |
-| `justfile` | Сохраняет внутреннюю цель `build-fast-release`, собирающую оба runtime binaries |
-| `.codex/skills/fork/scripts/fork_cli.py` | Проверяет оба build artifacts, выполняет `strip` staged copies и устанавливает их согласованной парой локально либо через `rsync`/SSH |
-| `.codex/skills/fork/scripts/fork_cli_tests.py` | Проверяет пути, staging, remote hosts и общий `rsync` contract |
-| `.codex/skills/fork/references/checks-and-gates.md` | Описывает публичный skill-owned build/install contract |
-| `codex-rs/install-context/src/lib.rs` | Upstream integration point: ищет `codex-code-mode-host` среди ресурсов или рядом с текущим executable |
-| `scripts/codex_package/targets.py` | Upstream source of truth для поддерживаемых native Cargo targets |
-| `scripts/codex_package/v8.py` | Upstream resolver проверенных V8 archive и generated binding для Cargo build |
+| `codex-rs/Cargo.toml` | Добавляет `[profile.release-fast]` и workspace-зависимость `codex-build-info` |
+| `codex-rs/cli/Cargo.toml` | Подключает `codex-build-info` к финальному бинарнику `codex` |
+| `codex-rs/cli/src/main.rs` | Инициализирует `BuildInfo` до разбора аргументов и добавляет ревизию в корневой `--help` |
+| `codex-rs/code-mode-host/Cargo.toml` | Подключает `codex-build-info` к финальному бинарнику Code Mode host |
+| `codex-rs/code-mode-host/src/main.rs` | Инициализирует `BuildInfo` до разбора аргументов и добавляет ревизию в корневой `--help` |
+| `codex-rs/build-info/src/lib.rs` | Интеграционная точка upstream: предоставляет существующие macro `initialize!()` и `BuildInfo::build_commit()` для встраивания ревизии |
+| `codex-rs/Cargo.lock` | Фиксирует новые внутренние зависимости crates с исполняемыми файлами |
+| `MODULE.bazel.lock` | Синхронизирует Bazel lockfile после изменения зависимостей Cargo |
+| `defs.bzl` | Интеграционная точка upstream: передаёт `STABLE_GIT_COMMIT` в stamped Bazel binaries |
+| `justfile` | Сохраняет внутреннюю цель `build-fast-release`, собирающую оба runtime-бинарника |
+| `.codex/skills/fork/scripts/fork_cli.py` | Управляет stamp разработки и выпуска, проверкой ревизий, временными копиями и локальной либо удалённой установкой пары |
+| `.codex/skills/fork/scripts/fork_cli_tests.py` | Проверяет порядок сборки и установки, чистоту рабочей копии, stamping и удалённые хосты |
+| `.codex/skills/fork/references/checks-and-gates.md` | Описывает публичный контракт сборки и установки skill `fork` |
+| `codex-rs/install-context/src/lib.rs` | Интеграционная точка upstream: ищет `codex-code-mode-host` среди ресурсов или рядом с текущим executable |
+| `scripts/codex_package/targets.py` | Единый upstream-источник поддерживаемых native Cargo targets |
+| `scripts/codex_package/v8.py` | Upstream resolver проверенных V8 archive и generated binding для сборки Cargo |
 
 ## Итоговый контракт
 
-### Build profile
+### Профиль сборки
 
 `codex-rs/Cargo.toml` должен содержать:
 
@@ -66,21 +87,52 @@ inherits = "release"
 # стадиях оптимизации; канонический профиль release выше предпочитает размер.
 codegen-units = 32
 # Сохраняем унаследованную через `strip = false` таблицу символов, но не добавляем
-# таблицы строк release. Skill-owned команда установки очищает staged runtime-копии.
+# таблицы строк release. Команда установки очищает временные runtime-копии.
 debug = "none"
 ```
 
-### Just target
+### Встроенная ревизия
 
-Корневой `justfile` должен сохранять target `build-fast-release`. Этот target
-остаётся деталью реализации для skill-owned `fork build-fast`: он одной Cargo
-сборкой обрабатывает packages `codex-cli` и `codex-code-mode-host` с profile
+Оба финальных бинарника должны вызывать `codex_build_info::initialize!()` до
+разбора CLI-аргументов. Макрос раскрывает `option_env!("STABLE_GIT_COMMIT")` в
+месте вызова конкретного бинарника, поэтому смена stamp требует пересборки и
+перелинковки только конечных бинарников, а не общей библиотеки `codex-build-info`
+и всего графа зависимостей.
+
+Корневые вызовы `codex --help` и `codex-code-mode-host --help` должны содержать
+ровно одну отдельную строку:
+
+```text
+Revision: <value>
+```
+
+Для сборки разработки `<value>` равен `dev`. Для устанавливаемой сборки это
+полный 40-символьный Git SHA в нижнем регистре. Отсутствующая, повторяющаяся или
+неразбираемая строка считается ошибкой проверки артефакта. `strip` не должен
+удалять значение ревизии из рабочего вывода `--help`.
+
+Ревизия не является частью SemVer и не меняет существующий вывод
+`codex --version` с `0.150.0+hermione`. Отдельный `--version` для
+`codex-code-mode-host` добавлять не требуется. Bazel-сборка продолжает получать
+`STABLE_GIT_COMMIT` через существующий контракт stamped binary в `defs.bzl`.
+
+### Внутренняя цель `just`
+
+Корневой `justfile` должен сохранять target `build-fast-release`. Эта цель
+остаётся деталью реализации для команды `fork build-fast`: она одной сборкой
+Cargo обрабатывает пакеты `codex-cli` и `codex-code-mode-host` с профилем
 `release-fast`, но не является нормативной workflow-командой карточки.
-Перед его запуском `fork build-fast` определяет native target через rustc и
+Перед её запуском `fork build-fast` определяет native target через rustc и
 переиспользует upstream `scripts.codex_package.v8` для передачи Cargo
 согласованной пары `RUSTY_V8_ARCHIVE` и `RUSTY_V8_SRC_BINDING_PATH`. Прямой
 fallback к архивам `denoland/rusty_v8` не является частью release-fast
 контракта.
+
+### Сборка для разработки
+
+`fork build-fast` остаётся доступным при грязном рабочем дереве и не требует
+предварительного коммита. Он должен собирать оба артефакта с `Revision: dev`, не
+доверяя случайному значению `STABLE_GIT_COMMIT` из окружения:
 
 Артефакты сборки:
 
@@ -89,163 +141,258 @@ codex-rs/target/release-fast/codex
 codex-rs/target/release-fast/codex-code-mode-host
 ```
 
-Оба артефакта должны существовать, быть executable и сохранять symbols.
-Проверка основного binary использует version probe, а host — help probe,
-поскольку `codex-code-mode-host` не публикует отдельный version flag. Эти
-build artifacts являются источником для профилирования и не устанавливаются
-напрямую без skill-owned staging.
+Оба артефакта должны существовать, быть исполняемыми, сохранять таблицу символов и
+показывать `Revision: dev`. Основной binary дополнительно проходит существующий
+проверочный вызов `--version`, а host — `--help`. Эти артефакты являются
+источником для профилирования и compile-check, но обычный `fork install` не
+должен публиковать их без перелинковки со stamp.
 
-### Install contract
+### Установка
 
-По умолчанию `fork install` переносит основной artifact в
+Вызов `fork install` является границей выпуска и выполняет следующий порядок:
+
+1. До сборки проверяет, что текущая рабочая копия Git не содержит изменённых,
+   `staged` или `untracked` файлов, кроме игнорируемых Git путей.
+2. Получает полный SHA через `git rev-parse HEAD` и запоминает текущий `HEAD`.
+3. Вызывает внутреннюю цель `build-fast-release` с теми же переменными окружения
+   V8, что и `fork build-fast`, и с
+   `STABLE_GIT_COMMIT=<полный SHA HEAD>`.
+4. После сборки повторно подтверждает чистоту рабочей копии и неизменность
+   `HEAD`.
+5. Проверяет, что оба кандидата показывают один ожидаемый полный SHA.
+
+Если сборка для разработки уже существует, изменение `STABLE_GIT_COMMIT` должно
+привести только к инкрементальной пересборке и перелинковке финальных бинарников.
+Полная повторная компиляция графа зависимостей не является частью этого
+контракта.
+
+### Lifecycle установки
+
+Локально `fork install` переносит основной артефакт в
 `${HOME}/.local/bin/codex-hermione`, а Code Mode host — в тот же каталог под
 каноническим именем `codex-code-mode-host`. Повторяемый `--host HOST` переключает
 команду с локальной установки на установку только на явно перечисленные
-SSH-хосты. Remote target по умолчанию равен `.local/bin/codex-hermione`
+SSH-хосты. Удалённый target по умолчанию равен `.local/bin/codex-hermione`
 относительно login home; authentication, aliases и host keys остаются в SSH
-configuration пользователя. Если основной source или target переопределён,
-путь Code Mode host автоматически выводится как канонический сосед.
+configuration пользователя. Если основной target переопределён, путь Code Mode
+host автоматически выводится как канонический сосед.
 
-До изменения установленных файлов workflow копирует оба build artifacts во
-временные файлы, выполняет над staged copies `strip` и проверяет их. Затем один
-общий путь `rsync --delay-updates` доставляет оба staged файла в локальный каталог
-либо на каждый выбранный SSH-хост. Remote-режим после обновления запускает probes
-по SSH. `rsync` не публикует частично переданный файл под рабочим именем, но два
-binary не образуют общую filesystem-транзакцию. При нескольких SSH-хостах каждый
-host завершается отдельно; общей cross-host транзакции нет.
+До изменения установленных файлов workflow копирует оба исходных артефакта во
+временный каталог, выполняет над копиями `strip` и повторно проверяет их ревизии.
+Обе временные копии должны сохранять ожидаемую ревизию кандидатов. Затем один
+общий путь `rsync --delay-updates` доставляет оба файла в локальный каталог либо
+на каждый выбранный SSH-хост.
+
+После локальной установки workflow запускает `--help` обоих установленных
+файлов и сравнивает их ревизии с кандидатами. Удалённый режим выполняет ту же
+проверку по SSH на каждом хосте. Успешная установка означает, что кандидат,
+временная копия после `strip` и каждый установленный binary показывают одну
+ревизию.
+
+`rsync` не публикует частично переданный файл под рабочим именем, но два binary
+не образуют общую filesystem-транзакцию. При нескольких SSH-хостах каждый host
+завершается отдельно; общей cross-host транзакции нет.
 
 ## Архитектурное решение
 
-`release-fast` остаётся отдельным Cargo profile, наследующим upstream `release`,
-а `build-fast-release` служит внутренней целью за skill-owned gate
-`fork build-fast`. Это отделяет upstream packaging profile от локального
-optimized runtime-комплекта и даёт fork workflow одну стабильную границу
+`release-fast` остаётся отдельным профилем Cargo, наследующим upstream `release`,
+а `build-fast-release` служит внутренней целью команды `fork build-fast`. Это
+отделяет upstream packaging profile от локального
+оптимизированного runtime-комплекта и даёт fork workflow одну стабильную границу
 сборки. Унаследованные `lto` и `strip` не повторяются в профиле fork: явно
 переопределяются только параллельность генерации кода и объём отладочной
 информации.
 
-Build и install моделируют основной binary и sidecar явными artifact
-contracts. Для каждого контракта определены каноническое имя и безопасный probe;
-общий install алгоритм оставляет build sources нетронутыми, выполняет `strip`
-только над staged copies и делегирует публикацию завершённых локальных и remote
-передач `rsync --delay-updates`. Namespace или runtime-логика Code Mode для этого
-не меняются.
+Происхождение встраивается на уровне финальных бинарников. Существующий макрос из
+`codex-build-info` читает compile-time environment именно в `main.rs` каждого
+бинарника. Обычный `fork build-fast` всегда даёт `dev`, а `fork install`
+становится единственной границей выпуска в skill `fork`, где чистый `HEAD`
+превращается в устанавливаемый stamped комплект. Это сохраняет возможность
+собирать и профилировать незакоммиченный код, но не позволяет выдать такой
+артефакт за сборку конкретного коммита.
 
-V8 artifacts не копируются и не описываются fork workflow самостоятельно.
-Skill-owned gate вызывает upstream resolver, поэтому checksum, release URL,
-cache и соответствие generated binding остаются в одном source of truth с
-canonical package builder.
+Сборка и установка моделируют основной binary и вспомогательный host явными
+контрактами артефактов. Для каждого контракта определены каноническое имя,
+безопасные проверочные вызовы и одна ожидаемая ревизия. Общий алгоритм установки
+оставляет исходные артефакты сборки нетронутыми, выполняет `strip` только над
+временными копиями и делегирует публикацию завершённых локальных и удалённых
+передач `rsync --delay-updates`.
+Пространство имён и runtime-логика Code Mode для этого не меняются.
+
+SemVer `0.150.0+hermione` и Git-ревизия остаются разными измерениями. Карточка
+`hermione-version-metadata.md` продолжает владеть маркировкой fork и сравнением
+версий обновления; эта карточка владеет происхождением конкретных артефактов и
+его проверкой во время установки.
+
+Артефакты V8 не копируются и не описываются fork workflow самостоятельно.
+Команда skill вызывает upstream resolver, поэтому checksum, release URL, cache
+и соответствие generated binding остаются в одном источнике истины с
+каноническим package builder.
 
 ## Порядок повторения при переносе
 
-### 1. Добавить profile
+### 1. Восстановить профиль и внутреннюю цель
 
-В root workspace `codex-rs/Cargo.toml` рядом с `[profile.release]` добавить
+В корневом workspace `codex-rs/Cargo.toml` рядом с `[profile.release]` добавить
 `[profile.release-fast]`, наследующий `release`.
 
-Не менять upstream `release`: он остаётся canonical profile для upstream
+Не менять upstream `release`: он остаётся каноническим профилем для upstream
 workflow упаковки. Hermione `release-fast` должен переопределять только
 специфичные для fork настройки быстрой оптимизированной сборки —
-`codegen-units = 32` и
-`debug = "none"`. Значения `lto = "thin"` и `strip = false` должны приходить
-через наследование, сохраняя symbols до skill-owned install staging.
+`codegen-units = 32` и `debug = "none"`. Значения `lto = "thin"` и
+`strip = false` должны приходить через наследование, сохраняя таблицу символов до
+временного каталога команды установки.
 
-### 2. Проверить owned target в `justfile`
+В корневом `justfile` должна оставаться цель `build-fast-release`. Она живёт
+рядом с целями release/build, чтобы `fork build-fast` имел
+стабильную внутреннюю цель и не зависел от ручной команды в карточке.
 
-В root `justfile` должен оставаться target `build-fast-release`. Он живёт рядом
-с release/build targets, чтобы skill-owned `fork build-fast` имел стабильный
-внутренний build target и не зависел от ручной команды в карточке.
+При переносе нужно подтвердить, что цель продолжает собирать и `codex-cli`, и
+`codex-code-mode-host` одним профилем `release-fast`.
 
-При переносе нужно подтвердить, что target продолжает собирать и `codex-cli`, и
-`codex-code-mode-host` одним profile `release-fast`.
+### 2. Подключить сведения о сборке к обоим бинарникам
 
-### 3. Восстановить skill-owned artifact contract
+Добавить `codex-build-info` в workspace dependencies и зависимости crates
+`codex-cli` и `codex-code-mode-host`. Обновить `Cargo.lock` и
+`MODULE.bazel.lock` через штатные генераторы fork workflow.
 
-В `fork_cli.py` сохранить два build artifacts: основной `codex` с version probe
-и `codex-code-mode-host` с help probe. `fork build-fast` должен проверять
-существование, executable metadata и probe обоих файлов.
+В обоих `main.rs` вызвать `codex_build_info::initialize!()` до операции Clap,
+которая может завершить процесс после `--help`. Корневой help обоих бинарников
+должен получать строку `Revision: <value>` из `BuildInfo::build_commit()`.
+Использовать существующий механизм встраивания макроса в месте вызова; не
+переносить `option_env!("STABLE_GIT_COMMIT")` в общую библиотечную функцию.
 
-До внутренней Cargo-сборки определить native rustc target и получить environment
-overrides через upstream V8 resolver. Не копировать URL, checksum или правила
+### 3. Восстановить контракт сборки для разработки
+
+В `fork_cli.py` сохранить два артефакта сборки: основной `codex` с проверочными
+вызовами `--version` и `--help`, а также `codex-code-mode-host` с `--help`.
+`fork build-fast` должен проверять существование, право исполнения, metadata,
+таблицу символов и `Revision: dev` обоих файлов. Грязное рабочее дерево остаётся
+разрешённым.
+
+До внутренней сборки Cargo определить native rustc target и получить переменные
+окружения через upstream V8 resolver. Не копировать URL, checksum или правила
 cache в fork skill: при изменении upstream packaging обновляется integration
 point, а не создаётся второй V8 downloader.
 
+### 4. Восстановить установку
+
+Сохранить проверку чистоты, полный SHA текущего `HEAD`, инкрементальную
+перелинковку со stamp, повторную проверку рабочей копии после сборки и совпадение
+ревизии обоих кандидатов с ожидаемым SHA.
+
 Для `fork install` сохранить вывод Code Mode host source/target из основных
-путей, `strip` staged copies и проверку обоих файлов. Локальная и remote
-установки должны использовать общий `rsync --delay-updates` path. Повторяемый
-`--host` использует SSH configuration пользователя, не добавляет hardcoded hosts
-и не выполняет неявную локальную установку. При изменении этого порядка
-синхронизировать unit tests и публичное описание в `checks-and-gates.md`.
+путей, `strip` временных копий и проверку обоих файлов до `rsync`. Локальная и
+удалённая установки должны использовать общий `rsync --delay-updates` path и
+после публикации сравнивать ревизии установленных файлов с кандидатами.
+Повторяемый `--host` использует SSH configuration пользователя, не добавляет
+жёстко заданные hosts и не выполняет неявную локальную установку.
 
-### 4. Проверить build и install contracts
+При изменении этого порядка синхронизировать тесты skill и публичное описание в
+`checks-and-gates.md`.
 
-Skill-owned `fork build-fast` должен создать оба release-fast artifacts с
-symbols. Проверка установки должна подтвердить, что build sources не изменены,
-staged copies прошли `strip`, а основной binary и канонически названный Code Mode
-host оказываются в одном целевом каталоге локально либо на каждом выбранном
-SSH-хосте.
+### 5. Проверить итоговые контракты
+
+`fork build-fast` должен создать оба release-fast артефакта с таблицей символов
+и `Revision: dev`. Проверка обычной установки должна подтвердить сборку с
+чистого `HEAD`, корректный stamp, неизменность исходных артефактов при `strip` и
+одну ревизию кандидатов, временных копий и установленных бинарников.
 
 ## Проверки
 
-Исполняемая карта card-level regression tests:
+Исполняемая карта регрессионных тестов уровня карточки:
 
 ```json
 {
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "парный build/install contract для codex и Code Mode host",
+      "purpose": "парный порядок сборки и установки, stamping и проверка ревизий",
       "argv": [
         "python3",
         ".codex/skills/fork/scripts/fork_cli_tests.py",
         "ReleaseFastWorkflowTests"
       ]
+    },
+    {
+      "purpose": "ревизия в --help основного Codex CLI",
+      "argv": ["just", "test", "-p", "codex-cli"]
     }
   ]
 }
 ```
 
-Дополнительно обязателен skill-owned gate `fork build-fast`: он подтверждает
-реальное появление и probes обоих optimized artifacts и сохраняет вывод `file`
-для проверки symbols. Сам gate не разбирает этот вывод автоматически.
+`ReleaseFastWorkflowTests` должны покрывать как минимум:
+
+- разрешённую грязную рабочую копию и `Revision: dev` у `fork build-fast`;
+- отказ обычного `fork install` при грязной рабочей копии;
+- передачу полного `HEAD` через `STABLE_GIT_COMMIT`, повторную проверку чистоты и
+  защиту от смены `HEAD` во время сборки;
+- отказ при отсутствующей, повторяющейся, неполной, `dev` или несовпадающей
+  ревизии;
+- сохранение ревизии после `strip`;
+- совпадение ревизий кандидатов с локально и удалённо установленной парой.
+
+Дополнительно обязательна проверка `fork build-fast`, принадлежащая skill `fork`:
+она подтверждает реальное появление обоих оптимизированных артефактов,
+`Revision: dev` и сохраняет вывод `file` для ручной проверки таблицы символов.
+Сама проверка не разбирает вывод `file` автоматически.
 
 ## Риски и ограничения
 
 ### Ограничения
 
-- Не заменять upstream `release` profile: он нужен для canonical
+- Не заменять upstream-профиль `release`: он нужен для канонического
   release-артефакта.
-- Не использовать canonical release build path для обычной Hermione compile-check:
-  он проверяет upstream release profile, а не быстрый fork build path.
-- Не выполнять `strip` над build sources: удаление symbols принадлежит skill-owned
-  install staging и не должно менять профилируемые artifacts.
+- Не использовать канонический release build path для обычной Hermione
+  compile-check: он проверяет upstream-профиль `release`, а не быстрый путь
+  сборки fork.
+- Не выполнять `strip` над исходными артефактами сборки: удаление таблицы
+  символов принадлежит временному каталогу `fork install` и не должно менять
+  профилируемые артефакты.
+- Не требовать чистую рабочую копию для `fork build-fast`: эта граница
+  принадлежит только `fork install`.
+- Не устанавливать `Revision: dev` и не принимать разные либо сокращённые SHA.
+- Не добавлять Git-ревизию к SemVer или вместо `+hermione`: это независимые
+  значения с разными владельцами.
+- Не вычислять stamp внутри `codex-build-info`: compile-time environment должен
+  читаться в месте вызова каждого финального бинарника.
 - Не переименовывать установленный host: `InstallContext` ищет канонический
   `codex-code-mode-host` рядом с основным executable.
-- Не запускать `rsync` до проверки обеих staged copies: основной binary и
-  sidecar устанавливаются только как заранее проверенный комплект.
-- Не возвращать release-fast Cargo build к неуправляемой загрузке
+- Не запускать `rsync` до проверки обеих временных копий: основной binary и
+  вспомогательный host устанавливаются только как заранее проверенный комплект.
+- Не возвращать release-fast сборку Cargo к неуправляемой загрузке
   `denoland/rusty_v8`: для Codex V8 profile требуются согласованные OpenAI
   archive и generated binding.
 
 ### Риски
 
-- Если `release-fast` не наследует `release`, build может отличаться слишком
-  сильно от shipped optimized behavior.
+- Если `release-fast` не наследует `release`, сборка может слишком сильно
+  отличаться от выпускаемого оптимизированного поведения.
 - Если `codegen-units` снова станет `1`, profile потеряет смысл.
 - `fork build-fast` не отклоняет stripped artifact автоматически: при проверке
-  сборки нужно убедиться по сохранённому выводу `file`, что оба build sources
-  сохранили symbols.
+  сборки нужно убедиться по сохранённому выводу `file`, что оба исходных
+  артефакта сохранили таблицу символов.
 - Если `fork install` перестанет выполнять `strip`, runtime-копии сохранят
-  symbols и вырастут до непрактичного размера.
+  таблицу символов и вырастут до непрактичного размера.
+- Если `STABLE_GIT_COMMIT` будет вычисляться в общей библиотеке, смена коммита
+  может перестать инвалидировать нужные final binary actions либо вызвать
+  ненужную пересборку общего графа.
+- Если рабочая копия изменится между первой проверкой чистоты и окончанием
+  stamped build, бинарники могут не соответствовать одному состоянию исходников;
+  поэтому неизменность `HEAD` и чистота дерева проверяются повторно до публикации.
+- Если формат строки `Revision:` изменится только в одном binary, installer
+  должен завершиться ошибкой до `rsync`, а не пропустить проверку.
 - `rsync --delay-updates` не превращает два binary в общую транзакцию;
   гарантия ограничена публикацией только полностью переданного отдельного файла.
 - Установка на несколько SSH-хостов не является cross-host транзакцией: ошибка
   более позднего host не откатывает уже завершённые установки.
-- Remote install требует совместимого OS/architecture target. Локальный staged
-  probe не доказывает совместимость remote runtime, а post-install probe сообщает
-  о ней уже после публикации файлов через `rsync`.
+- Удалённая установка требует совместимого OS/architecture target. Локальный
+  проверочный запуск временной копии не доказывает совместимость удалённого
+  runtime, а post-install probe сообщает о ней уже после публикации файлов через
+  `rsync`.
 - Если upstream добавит host version flag или изменит способ discovery sidecar,
-  probes, каноническое имя и install contract нужно пересмотреть вместе.
+  probes, каноническое имя и контракт установки нужно пересмотреть вместе.
 - Если native rustc target отсутствует в upstream `TARGET_SPECS` или V8 release
   pair ещё не опубликована, `fork build-fast` должен завершиться ошибкой до
   проверки binaries, а не переходить на непроверенный artifact.

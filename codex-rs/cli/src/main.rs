@@ -1,5 +1,12 @@
+//! Точка входа составного Codex CLI и маршрутизация его подкоманд.
+//!
+//! Корневой help получает Git-ревизию из `codex-build-info`, чтобы workflow
+//! установки мог проверить происхождение финального бинарника отдельно от
+//! SemVer-версии пакета.
+
 use clap::Args;
 use clap::CommandFactory;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
@@ -8,6 +15,7 @@ use codex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
 use codex_app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
+use codex_build_info::BuildInfo;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
 use codex_cli::read_access_token_from_stdin;
@@ -1061,6 +1069,20 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
+/// Строит корневую команду с единственной стабильной строкой ревизии.
+///
+/// Формат строки является интерфейсом `fork install`, поэтому ревизия остаётся
+/// отдельной от SemVer и не добавляется к `--version`.
+fn multitool_command(build_commit: &str) -> clap::Command {
+    MultitoolCli::command().after_help(format!("Revision: {build_commit}"))
+}
+
+/// Разбирает CLI после инициализации сведений конечного бинарника.
+fn parse_multitool_cli() -> MultitoolCli {
+    let matches = multitool_command(BuildInfo::get().build_commit()).get_matches();
+    MultitoolCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
 fn main() -> anyhow::Result<()> {
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
@@ -1073,13 +1095,14 @@ async fn cli_main(
     arg0_paths: Arg0DispatchPaths,
     remote_control_disabled: bool,
 ) -> anyhow::Result<()> {
+    codex_build_info::initialize!();
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
         feature_toggles,
         remote,
         mut interactive,
         subcommand,
-    } = MultitoolCli::parse();
+    } = parse_multitool_cli();
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
@@ -3481,10 +3504,38 @@ mod tests {
         );
     }
 
-    fn help_from_args(args: &[&str]) -> String {
-        let err = MultitoolCli::try_parse_from(args).expect_err("help should short-circuit");
+    fn help_from_args_with_revision(args: &[&str], revision: &str) -> String {
+        let err = multitool_command(revision)
+            .try_get_matches_from(args)
+            .expect_err("help should short-circuit");
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
         err.to_string()
+    }
+
+    fn help_from_args(args: &[&str]) -> String {
+        help_from_args_with_revision(args, "dev")
+    }
+
+    /// Ревизия должна появляться ровно один раз только в корневом help.
+    #[test]
+    fn root_help_displays_build_revision() {
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+        let root_help = help_from_args_with_revision(&["codex", "--help"], REVISION);
+        let exec_help = help_from_args_with_revision(&["codex", "exec", "--help"], REVISION);
+        fn revision_lines(help: &str) -> Vec<&str> {
+            help.lines()
+                .filter(|line| line.starts_with("Revision:"))
+                .collect::<Vec<_>>()
+        }
+
+        assert_eq!(
+            (revision_lines(&root_help), revision_lines(&exec_help)),
+            (
+                vec!["Revision: 0123456789abcdef0123456789abcdef01234567"],
+                vec![],
+            )
+        );
     }
 
     #[test]

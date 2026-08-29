@@ -30,6 +30,9 @@ SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
 FORK_TESTS_SCHEMA = "fork-tests.v1"
 FORK_TEST_PLATFORMS = ("linux", "macos", "windows")
+REVISION_PREFIX = "Revision: "
+DEVELOPMENT_REVISION = "dev"
+FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 
 REQUIRED_FILES = (
     "SKILL.md",
@@ -242,6 +245,12 @@ class InstallArtifact:
     contract: BinaryArtifactContract
     source: Path
     target: Path
+
+
+@dataclass(frozen=True)
+class RevisionProbe:
+    label: str
+    argv: tuple[str, ...]
 
 
 RELEASE_FAST_BINARY_CONTRACTS = (
@@ -799,6 +808,137 @@ class LogSession:
         if stderr:
             print(stderr, end="", file=sys.stderr)
         return self.fail(label=label, exit_code=status, argv=argv)
+
+
+def parse_binary_revision(help_output: str) -> str:
+    """Извлекает единственную допустимую ревизию из корневого CLI help."""
+    revisions = [
+        line.removeprefix(REVISION_PREFIX)
+        for line in help_output.splitlines()
+        if line.startswith(REVISION_PREFIX)
+    ]
+    if len(revisions) != 1:
+        raise ValueError(
+            "help должен содержать ровно одну отдельную строку "
+            f"{REVISION_PREFIX}<value>"
+        )
+
+    revision = revisions[0]
+    if revision == DEVELOPMENT_REVISION or FULL_GIT_REVISION_RE.fullmatch(revision):
+        return revision
+    raise ValueError(f"недопустимая ревизия бинарника: {revision!r}")
+
+
+def verify_revision_probes(
+    session: LogSession,
+    probes: tuple[RevisionProbe, ...],
+    *,
+    expected_revision: str | None = None,
+) -> tuple[int, str | None]:
+    """Проверяет формат и равенство ревизий набора бинарников.
+
+    Возвращает общую ревизию либо завершает текущий workflow до публикации
+    артефактов. Если передано ``expected_revision``, каждый probe должен вернуть
+    именно её.
+    """
+    revisions: list[str] = []
+    for probe in probes:
+        status, stdout, stderr = session.run_capture(probe.label, list(probe.argv))
+        if status != 0:
+            if stderr:
+                session.write(stderr)
+            return (
+                session.fail(
+                    label=probe.label,
+                    exit_code=status,
+                    argv=probe.argv,
+                ),
+                None,
+            )
+        try:
+            revision = parse_binary_revision(stdout)
+        except ValueError as exc:
+            session.write(f"{exc}\n")
+            return session.fail(label=probe.label, argv=probe.argv), None
+        session.write(f"{probe.label}: {revision}\n")
+        revisions.append(revision)
+
+    if not revisions:
+        session.write("не заданы проверки ревизии бинарников\n")
+        return session.fail(label="binary revision probes"), None
+    if len(set(revisions)) != 1:
+        session.write(f"ревизии бинарников различаются: {', '.join(revisions)}\n")
+        return session.fail(label="binary revisions match"), None
+
+    revision = revisions[0]
+    if expected_revision is not None and revision != expected_revision:
+        session.write(
+            f"ожидалась ревизия {expected_revision}, получена {revision}\n"
+        )
+        return session.fail(label="binary revision expected"), None
+    return 0, revision
+
+
+def revision_probes_for_artifacts(
+    artifacts: tuple[BinaryArtifact, ...], stage: str
+) -> tuple[RevisionProbe, ...]:
+    """Строит локальные ``--help`` probes для указанной стадии артефактов."""
+    return tuple(
+        RevisionProbe(
+            label=f"{artifact.contract.label} {stage} revision",
+            argv=(str(artifact.path), "--help"),
+        )
+        for artifact in artifacts
+    )
+
+
+def read_clean_git_head(
+    session: LogSession, git: str, *, phase: str
+) -> tuple[int, str | None]:
+    """Возвращает полный HEAD только для чистой рабочей копии Git.
+
+    Проверка учитывает tracked, staged и untracked файлы, но оставляет
+    игнорируемые Git пути вне release boundary.
+    """
+    status_argv = [git, "status", "--porcelain=v1", "--untracked-files=all"]
+    status, stdout, stderr = session.run_capture(
+        f"{phase} Git worktree status", status_argv
+    )
+    if status != 0:
+        if stderr:
+            session.write(stderr)
+        return (
+            session.fail(
+                label=f"{phase} Git worktree status",
+                exit_code=status,
+                argv=status_argv,
+            ),
+            None,
+        )
+    if stdout:
+        session.write("рабочая копия Git не является чистой:\n")
+        session.write(stdout)
+        return session.fail(label=f"{phase} clean Git worktree"), None
+
+    head_argv = [git, "rev-parse", "HEAD"]
+    status, stdout, stderr = session.run_capture(f"{phase} Git HEAD", head_argv)
+    if status != 0:
+        if stderr:
+            session.write(stderr)
+        return (
+            session.fail(
+                label=f"{phase} Git HEAD",
+                exit_code=status,
+                argv=head_argv,
+            ),
+            None,
+        )
+    head = stdout.strip()
+    if not FULL_GIT_REVISION_RE.fullmatch(head):
+        session.write(f"git rev-parse HEAD вернул недопустимую ревизию: {head!r}\n")
+        return session.fail(label=f"{phase} parse Git HEAD"), None
+    session.write(f"{phase} Git HEAD: {head}\n")
+    return 0, head
 
 
 def resolve_codex_v8_cargo_env_for_host(
@@ -1790,6 +1930,7 @@ def cmd_tests(args: argparse.Namespace) -> int:
 
 
 def cmd_build_fast(args: argparse.Namespace) -> int:
+    """Собирает development-комплект с явной ревизией ``dev``."""
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     version = resolved_version(args, repo_root)
     session = LogSession(
@@ -1819,7 +1960,7 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
     result = session.run_step(
         "release-fast build",
         [just, "build-fast-release"],
-        env_overrides=cargo_env,
+        env_overrides={**cargo_env, "STABLE_GIT_COMMIT": DEVELOPMENT_REVISION},
     )
     if result != 0:
         return result
@@ -1843,24 +1984,31 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
             if result != 0:
                 return result
 
+    result, revision = verify_revision_probes(
+        session,
+        revision_probes_for_artifacts(artifacts, "build"),
+        expected_revision=DEVELOPMENT_REVISION,
+    )
+    if result != 0:
+        return result
+    assert revision is not None
+
     return session.ok(
         [
             f"BINARY: {artifacts[0].path}",
             f"CODE_MODE_HOST_BINARY: {artifacts[1].path}",
+            f"REVISION: {revision}",
         ]
     )
 
 
 def cmd_install(args: argparse.Namespace) -> int:
+    """Собирает и устанавливает stamped-комплект из чистого Git HEAD."""
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     session = LogSession(repo_root=repo_root, log_kind="install", mode="install")
 
-    release_fast_artifacts = release_fast_binary_artifacts(repo_root)
-    source_path = (
-        resolve_path_arg(args.source, repo_root)
-        if args.source
-        else release_fast_artifacts[0].path
-    )
+    source_artifacts = release_fast_binary_artifacts(repo_root)
+    source_path = source_artifacts[0].path
     hosts = tuple(args.host)
     try:
         for host in hosts:
@@ -1879,7 +2027,6 @@ def cmd_install(args: argparse.Namespace) -> int:
         session.write(f"{exc}\n")
         return session.fail(label="resolve install target")
 
-    source_artifacts = binary_artifacts_from_main(source_path)
     file_cmd = session.check_command("file")
     if not file_cmd:
         return session.fail(label="require command: file")
@@ -1894,6 +2041,46 @@ def cmd_install(args: argparse.Namespace) -> int:
         ssh_cmd = session.check_command("ssh")
         if not ssh_cmd:
             return session.fail(label="require command: ssh")
+
+    just = session.check_command("just")
+    if not just:
+        return session.fail(label="require command: just")
+    git = session.check_command("git")
+    if not git:
+        return session.fail(label="require command: git")
+
+    result, expected_revision = read_clean_git_head(
+        session, git, phase="before release build"
+    )
+    if result != 0:
+        return result
+    assert expected_revision is not None
+
+    result, cargo_env = resolve_codex_v8_cargo_env_for_host(session, repo_root)
+    if result != 0:
+        return result
+    result = session.run_step(
+        "stamped release-fast build",
+        [just, "build-fast-release"],
+        env_overrides={
+            **cargo_env,
+            "STABLE_GIT_COMMIT": expected_revision,
+        },
+    )
+    if result != 0:
+        return result
+
+    result, final_head = read_clean_git_head(
+        session, git, phase="after release build"
+    )
+    if result != 0:
+        return result
+    if final_head != expected_revision:
+        session.write(
+            "HEAD изменился во время release build: "
+            f"{expected_revision} -> {final_head}\n"
+        )
+        return session.fail(label="release build Git HEAD unchanged")
 
     for artifact in source_artifacts:
         label = artifact.contract.label
@@ -1916,6 +2103,15 @@ def cmd_install(args: argparse.Namespace) -> int:
             result = session.run_step(step_label, argv)
             if result != 0:
                 return result
+
+    result, source_revision = verify_revision_probes(
+        session,
+        revision_probes_for_artifacts(source_artifacts, "source"),
+        expected_revision=expected_revision,
+    )
+    if result != 0:
+        return result
+    assert source_revision is not None
 
     local_artifacts = None
     if local_target is not None:
@@ -1970,6 +2166,18 @@ def cmd_install(args: argparse.Namespace) -> int:
                 if result != 0:
                     return result
 
+        staged_binary_artifacts = tuple(
+            BinaryArtifact(contract=artifact.contract, path=artifact.target)
+            for artifact in staging_artifacts
+        )
+        result, _staged_revision = verify_revision_probes(
+            session,
+            revision_probes_for_artifacts(staged_binary_artifacts, "staged"),
+            expected_revision=source_revision,
+        )
+        if result != 0:
+            return result
+
         rsync_sources = [str(artifact.target) for artifact in staging_artifacts]
         if local_artifacts is not None:
             local_directory = local_artifacts[0].target.parent
@@ -2007,12 +2215,26 @@ def cmd_install(args: argparse.Namespace) -> int:
                     result = session.run_step(step_label, argv)
                     if result != 0:
                         return result
+            installed_binary_artifacts = tuple(
+                BinaryArtifact(contract=artifact.contract, path=artifact.target)
+                for artifact in local_artifacts
+            )
+            result, _installed_revision = verify_revision_probes(
+                session,
+                revision_probes_for_artifacts(
+                    installed_binary_artifacts, "installed"
+                ),
+                expected_revision=source_revision,
+            )
+            if result != 0:
+                return result
             return session.ok(
                 [
                     f"SOURCE: {local_artifacts[0].source}",
                     f"TARGET: {local_artifacts[0].target}",
                     f"CODE_MODE_HOST_SOURCE: {local_artifacts[1].source}",
                     f"CODE_MODE_HOST_TARGET: {local_artifacts[1].target}",
+                    f"REVISION: {source_revision}",
                 ]
             )
 
@@ -2075,6 +2297,28 @@ def cmd_install(args: argparse.Namespace) -> int:
             )
             if result != 0:
                 return result
+            remote_revision_probes = tuple(
+                RevisionProbe(
+                    label=(
+                        f"{host} {artifact.contract.label} installed revision"
+                    ),
+                    argv=(
+                        ssh_cmd,
+                        host,
+                        shlex.join([str(target), "--help"]),
+                    ),
+                )
+                for artifact, target in zip(
+                    staging_artifacts, remote_targets, strict=True
+                )
+            )
+            result, _remote_revision = verify_revision_probes(
+                session,
+                remote_revision_probes,
+                expected_revision=source_revision,
+            )
+            if result != 0:
+                return result
 
     return session.ok(
         [
@@ -2084,6 +2328,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             f"REMOTE_TARGET: {remote_target}",
             f"REMOTE_CODE_MODE_HOST_TARGET: "
             f"{remote_target.with_name(RELEASE_FAST_BINARY_CONTRACTS[1].binary_name)}",
+            f"REVISION: {source_revision}",
         ]
     )
 
@@ -2176,13 +2421,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     install = sub.add_parser("install")
     install.add_argument("--repo-root")
-    install.add_argument(
-        "--source",
-        help=(
-            "Main binary to install. The Code Mode host is read from the same "
-            "directory. Defaults to codex-rs/target/release-fast/codex."
-        ),
-    )
     install.add_argument(
         "--target",
         help=(

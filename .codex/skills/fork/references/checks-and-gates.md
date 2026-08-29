@@ -46,24 +46,31 @@ commands.
 решением пользователя о возобновлении миграции. Подкоманды `fork migration`
 требуют явный `--version`.
 
-`fork install` по умолчанию устанавливает пару release-fast-артефактов локально:
-`codex-rs/target/release-fast/codex` в
-`${HOME}/.local/bin/codex-hermione` и соседний `codex-code-mode-host` под его
+`fork install` является release boundary: требует чистую рабочую копию, получает
+полный SHA текущего `HEAD`, собирает пару release-fast-артефактов с этим stamp и
+повторно проверяет чистоту и неизменность `HEAD`. Установка заранее собранной
+пары из произвольного каталога не входит в контракт команды.
+
+Локально основной binary устанавливается в
+`${HOME}/.local/bin/codex-hermione`, а соседний `codex-code-mode-host` — под
 каноническим именем. Повторяемый `--host HOST` переключает команду на установку
-этой пары только на явно перечисленные SSH-хосты; SSH aliases, authentication и
-host keys принадлежат пользовательской SSH-конфигурации. Remote target по
-умолчанию равен `.local/bin/codex-hermione` относительно login home.
-`--source PATH` и `--target PATH` переопределяют основной binary, а соседний
-Code Mode host выводится автоматически. Source-артефакты остаются unstripped;
-команда выполняет `strip` только над staged copies и проверяет их. Затем один
-общий путь `rsync --delay-updates` доставляет пару в локальный каталог либо на
-каждый выбранный host; remote-режим после доставки запускает probes по SSH. Это
-остаётся skill-owned установкой, а не ручным копированием файлов.
+пары только на явно перечисленные SSH-хосты; SSH aliases, authentication и host
+keys принадлежат пользовательской SSH-конфигурации. Remote target по умолчанию
+равен `.local/bin/codex-hermione` относительно login home. `--target PATH`
+переопределяет основной target, а путь Code Mode host выводится автоматически.
+
+Собранные артефакты остаются unstripped. Команда выполняет `strip` только над
+staged copies и проверяет одну ревизию у кандидатов, временных копий и
+установленных файлов. Затем один общий путь `rsync --delay-updates` доставляет
+пару в локальный каталог либо на каждый выбранный host; remote-режим после
+доставки запускает функциональные probes и проверку ревизии по SSH. Это остаётся
+skill-owned установкой, а не ручным копированием файлов.
 
 `fork build-fast` перед внутренней Cargo-сборкой определяет native rustc target
 и через upstream `scripts/codex_package/v8.py` получает согласованные
 `RUSTY_V8_ARCHIVE` и `RUSTY_V8_SRC_BINDING_PATH`. Fork skill не дублирует URL,
-checksums и cache policy V8 artifacts.
+checksums и cache policy V8 artifacts. Команда разрешена в dirty checkout и
+всегда собирает оба development-артефакта с `Revision: dev`.
 
 `fork build-code-mode-host` использует тот же механизм разрешения артефактов V8,
 но собирает только отладочный `codex-code-mode-host` для тестов карточек Cargo. Команда

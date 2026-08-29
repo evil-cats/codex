@@ -17,6 +17,8 @@ import unittest.mock
 from pathlib import Path
 
 
+TEST_GIT_REVISION = "0123456789abcdef0123456789abcdef01234567"
+OTHER_GIT_REVISION = "89abcdef0123456789abcdef0123456789abcdef"
 SCRIPT_PATH = Path(__file__).with_name("fork_cli.py")
 sys.path.insert(0, str(SCRIPT_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("fork_cli", SCRIPT_PATH)
@@ -28,9 +30,12 @@ SPEC.loader.exec_module(fork_cli)
 
 class RecordingLogSession:
     instances = []
+    capture_responses = {}
 
-    def __init__(self, **_kwargs) -> None:
+    def __init__(self, **kwargs) -> None:
+        self.mode = kwargs.get("mode")
         self.steps = []
+        self.capture_steps = []
         self.env_overrides = []
         self.output = []
         self.ok_extra = None
@@ -52,6 +57,25 @@ class RecordingLogSession:
         self.steps.append((label, argv))
         self.env_overrides.append(env_overrides)
         return 0
+
+    def run_capture(
+        self, label: str, argv: list[str]
+    ) -> tuple[int, str, str]:
+        self.capture_steps.append((label, argv))
+        if label in RecordingLogSession.capture_responses:
+            return RecordingLogSession.capture_responses[label]
+        if label.endswith("Git worktree status"):
+            return 0, "", ""
+        if label.endswith("Git HEAD"):
+            return 0, f"{TEST_GIT_REVISION}\n", ""
+        if label.endswith(" revision"):
+            revision = (
+                fork_cli.DEVELOPMENT_REVISION
+                if self.mode == "build-fast"
+                else TEST_GIT_REVISION
+            )
+            return 0, f"Usage: test\n\nRevision: {revision}\n", ""
+        return 0, "", ""
 
     def fail(
         self,
@@ -98,6 +122,90 @@ FORK_TESTS_BLOCK = textwrap.dedent(
 class ReleaseFastWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         RecordingLogSession.instances.clear()
+        RecordingLogSession.capture_responses.clear()
+
+    def create_executable_pair(self, main_path: Path) -> None:
+        """Создаёт минимальную пару файлов для mocked build/install workflow."""
+        main_path.parent.mkdir(parents=True, exist_ok=True)
+        for path, content in (
+            (main_path, "main"),
+            (main_path.with_name("codex-code-mode-host"), "host"),
+        ):
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o755)
+
+    def create_release_fast_pair(self, repo_root: Path) -> Path:
+        """Создаёт пару в единственном каталоге кандидатов `fork install`."""
+        main_path = repo_root / "codex-rs/target/release-fast/codex"
+        self.create_executable_pair(main_path)
+        return main_path
+
+    def test_parse_binary_revision_accepts_only_dev_or_full_git_sha(self) -> None:
+        """Парсер принимает два контрактных формата и отклоняет неоднозначный help."""
+        self.assertEqual(
+            (
+                fork_cli.parse_binary_revision("Revision: dev\n"),
+                fork_cli.parse_binary_revision(
+                    f"Usage: codex\n\nRevision: {TEST_GIT_REVISION}\n"
+                ),
+            ),
+            ("dev", TEST_GIT_REVISION),
+        )
+        for output in (
+            "Usage: codex\n",
+            "Revision: unknown\n",
+            "Revision: abc123\n",
+            "Revision: dev\nRevision: dev\n",
+        ):
+            with self.subTest(output=output):
+                with self.assertRaises(ValueError):
+                    fork_cli.parse_binary_revision(output)
+
+    def test_build_fast_forces_development_revision_without_clean_check(self) -> None:
+        """Development build остаётся доступным для dirty checkout и всегда даёт dev."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            self.create_executable_pair(
+                repo_root / "codex-rs/target/release-fast/codex"
+            )
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "build-fast",
+                    "--repo-root",
+                    str(repo_root),
+                    "--version",
+                    "0.150.0",
+                    "--skip-branch-check",
+                ]
+            )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli, "run_preconditions", return_value=0
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {"V8_TEST": "1"}),
+                ),
+            ):
+                result = fork_cli.cmd_build_fast(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[0]
+        build_index = [label for label, _argv in session.steps].index(
+            "release-fast build"
+        )
+        self.assertEqual(
+            session.env_overrides[build_index],
+            {"V8_TEST": "1", "STABLE_GIT_COMMIT": "dev"},
+        )
+        self.assertEqual(
+            [label for label, _argv in session.capture_steps],
+            ["Codex build revision", "Code Mode host build revision"],
+        )
 
     def test_default_install_target_uses_home_local_bin(self) -> None:
         self.assertEqual(
@@ -174,20 +282,257 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             self.assertEqual(os.environ["CODEX_REPO_ROOT"], "/previous/repo")
             self.assertEqual(sys.path.count(str(repo_root)), previous_path_count)
 
-    def test_install_parser_accepts_source_and_target(self) -> None:
+    def test_default_install_rejects_dirty_checkout_before_build(self) -> None:
+        """Обычная установка не собирает и не публикует binary из dirty checkout."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            RecordingLogSession.capture_responses[
+                "before release build Git worktree status"
+            ] = (0, " M codex-rs/cli/src/main.rs\n", "")
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "stamped release-fast build",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_default_install_stamps_clean_head_and_verifies_all_stages(self) -> None:
+        """Clean install встраивает HEAD и сверяет source, staged и installed пары."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            self.create_executable_pair(
+                repo_root / "codex-rs/target/release-fast/codex"
+            )
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {"V8_TEST": "1"}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 0)
+        session = RecordingLogSession.instances[0]
+        build_index = [label for label, _argv in session.steps].index(
+            "stamped release-fast build"
+        )
+        self.assertEqual(
+            session.env_overrides[build_index],
+            {"V8_TEST": "1", "STABLE_GIT_COMMIT": TEST_GIT_REVISION},
+        )
+        self.assertEqual(
+            [
+                label
+                for label, _argv in session.capture_steps
+                if label.endswith(" revision")
+            ],
+            [
+                "Codex source revision",
+                "Code Mode host source revision",
+                "Codex staged revision",
+                "Code Mode host staged revision",
+                "Codex installed revision",
+                "Code Mode host installed revision",
+            ],
+        )
+        self.assertIn(f"REVISION: {TEST_GIT_REVISION}", session.ok_extra)
+
+    def test_default_install_rejects_head_change_during_build(self) -> None:
+        """Смена HEAD между clean-checks блокирует публикацию собранной пары."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            self.create_executable_pair(
+                repo_root / "codex-rs/target/release-fast/codex"
+            )
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            RecordingLogSession.capture_responses["after release build Git HEAD"] = (
+                0,
+                f"{OTHER_GIT_REVISION}\n",
+                "",
+            )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_default_install_rejects_candidate_revision_other_than_head(self) -> None:
+        """Stamped candidate обязан соответствовать зафиксированному clean HEAD."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            self.create_executable_pair(
+                repo_root / "codex-rs/target/release-fast/codex"
+            )
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            for label in ("Codex source revision", "Code Mode host source revision"):
+                RecordingLogSession.capture_responses[label] = (
+                    0,
+                    f"Revision: {OTHER_GIT_REVISION}\n",
+                    "",
+                )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_install_rejects_development_candidate_revision(self) -> None:
+        """Stamped install не позволяет опубликовать пару с Revision: dev."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            main_source = repo_root / "codex-rs/target/release-fast/codex"
+            self.create_executable_pair(main_source)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            for label in ("Codex source revision", "Code Mode host source revision"):
+                RecordingLogSession.capture_responses[label] = (
+                    0,
+                    "Revision: dev\n",
+                    "",
+                )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_install_rejects_mismatched_candidate_revisions(self) -> None:
+        """Собранная пара отклоняется до staging при разных ревизиях."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            main_source = repo_root / "codex-rs/target/release-fast/codex"
+            self.create_executable_pair(main_source)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(repo_root),
+                    "--target",
+                    str(repo_root / "install/codex-hermione"),
+                ]
+            )
+            RecordingLogSession.capture_responses["Codex source revision"] = (
+                0,
+                f"Revision: {TEST_GIT_REVISION}\n",
+                "",
+            )
+            RecordingLogSession.capture_responses[
+                "Code Mode host source revision"
+            ] = (0, f"Revision: {OTHER_GIT_REVISION}\n", "")
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_install_parser_accepts_target(self) -> None:
         parser = fork_cli.build_parser()
         args = parser.parse_args(
             [
                 "install",
-                "--source",
-                "codex-rs/target/release-fast/codex",
                 "--target",
                 "/tmp/codex-hermione",
             ]
         )
 
         self.assertEqual(args.command, "install")
-        self.assertEqual(args.source, "codex-rs/target/release-fast/codex")
         self.assertEqual(args.target, "/tmp/codex-hermione")
         self.assertEqual(args.host, [])
 
@@ -241,35 +586,35 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
     def test_install_syncs_both_artifacts_with_one_rsync_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            source_dir = repo_root / "build"
-            source_dir.mkdir()
-            main_source = source_dir / "codex"
-            host_source = source_dir / "codex-code-mode-host"
-            main_source.write_text("main", encoding="utf-8")
-            host_source.write_text("host", encoding="utf-8")
-            main_source.chmod(0o755)
-            host_source.chmod(0o755)
+            main_source = self.create_release_fast_pair(repo_root)
+            host_source = main_source.with_name("codex-code-mode-host")
             main_target = repo_root / "install/codex-hermione"
             args = fork_cli.build_parser().parse_args(
                 [
                     "install",
                     "--repo-root",
                     str(repo_root),
-                    "--source",
-                    str(main_source),
                     "--target",
                     str(main_target),
                 ]
             )
-            with unittest.mock.patch.object(
-                fork_cli, "LogSession", RecordingLogSession
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
             ):
                 result = fork_cli.cmd_install(args)
 
             self.assertEqual(result, 0)
+            session = RecordingLogSession.instances[0]
             sync_steps = [
                 argv
-                for label, argv in RecordingLogSession.instances[0].steps
+                for label, argv in session.steps
                 if label == "sync local binaries"
             ]
             self.assertEqual(len(sync_steps), 1)
@@ -283,15 +628,15 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "Code Mode host source binary probe",
                     [str(host_source), "--help"],
                 ),
-                RecordingLogSession.instances[0].steps,
+                session.steps,
             )
 
     def test_install_strips_temporary_binaries_without_changing_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            main_source = root / "build/codex"
-            host_source = root / "build/codex-code-mode-host"
-            main_source.parent.mkdir()
+            main_source = root / "codex-rs/target/release-fast/codex"
+            host_source = main_source.with_name("codex-code-mode-host")
+            main_source.parent.mkdir(parents=True)
             main_source.write_text("main source", encoding="utf-8")
             host_source.write_text("host source", encoding="utf-8")
             main_source.chmod(0o755)
@@ -302,15 +647,20 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "install",
                     "--repo-root",
                     str(root),
-                    "--source",
-                    str(main_source),
                     "--target",
                     str(main_target),
                 ]
             )
 
-            with unittest.mock.patch.object(
-                fork_cli, "LogSession", RecordingLogSession
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
             ):
                 result = fork_cli.cmd_install(args)
 
@@ -330,24 +680,62 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "Code Mode host strip staged binary": "codex-code-mode-host",
                 },
             )
+            self.assertEqual(
+                [
+                    label
+                    for label, _argv in RecordingLogSession.instances[0].capture_steps
+                    if "staged revision" in label
+                ],
+                ["Codex staged revision", "Code Mode host staged revision"],
+            )
 
-    def test_remote_install_syncs_and_probes_each_host(self) -> None:
+    def test_install_rejects_revision_changed_after_strip(self) -> None:
+        """Изменение stamp во временной копии блокирует публикацию через rsync."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            main_source = root / "build/codex"
-            host_source = root / "build/codex-code-mode-host"
-            main_source.parent.mkdir()
-            main_source.write_text("main", encoding="utf-8")
-            host_source.write_text("host", encoding="utf-8")
-            main_source.chmod(0o755)
-            host_source.chmod(0o755)
+            self.create_release_fast_pair(root)
             args = fork_cli.build_parser().parse_args(
                 [
                     "install",
                     "--repo-root",
                     str(root),
-                    "--source",
-                    str(main_source),
+                    "--target",
+                    str(root / "install/codex-hermione"),
+                ]
+            )
+            for label in ("Codex staged revision", "Code Mode host staged revision"):
+                RecordingLogSession.capture_responses[label] = (
+                    0,
+                    f"Revision: {OTHER_GIT_REVISION}\n",
+                    "",
+                )
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
+    def test_remote_install_syncs_and_probes_each_host(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.create_release_fast_pair(root)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(root),
                     "--host",
                     "oleg.home",
                     "--host",
@@ -355,8 +743,15 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ]
             )
 
-            with unittest.mock.patch.object(
-                fork_cli, "LogSession", RecordingLogSession
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
             ):
                 result = fork_cli.cmd_install(args)
 
@@ -367,6 +762,20 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 self.assertIn(f"{host} create install directory", labels)
                 self.assertIn(f"{host} sync binaries", labels)
                 self.assertIn(f"{host} probe installed binaries", labels)
+                self.assertIn(
+                    f"{host} Codex installed revision",
+                    [
+                        label
+                        for label, _argv in RecordingLogSession.instances[0].capture_steps
+                    ],
+                )
+                self.assertIn(
+                    f"{host} Code Mode host installed revision",
+                    [
+                        label
+                        for label, _argv in RecordingLogSession.instances[0].capture_steps
+                    ],
+                )
             sync_commands = [
                 argv
                 for label, argv in steps
@@ -382,7 +791,8 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
     def test_install_requires_code_mode_host_before_syncing_main(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            main_source = repo_root / "codex"
+            main_source = repo_root / "codex-rs/target/release-fast/codex"
+            main_source.parent.mkdir(parents=True)
             main_source.write_text("new main", encoding="utf-8")
             main_source.chmod(0o755)
             main_target = repo_root / "install/codex-hermione"
@@ -394,15 +804,20 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "install",
                     "--repo-root",
                     str(repo_root),
-                    "--source",
-                    str(main_source),
                     "--target",
                     str(main_target),
                 ]
             )
 
-            with unittest.mock.patch.object(
-                fork_cli, "LogSession", RecordingLogSession
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
             ):
                 result = fork_cli.cmd_install(args)
 
