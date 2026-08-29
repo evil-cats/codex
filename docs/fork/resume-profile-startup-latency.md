@@ -2,17 +2,18 @@
 id: fork-resume-profile-startup-latency
 status: active
 created: 2026-08-25
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Ускорение `resume` с расширенной filesystem policy
 
 ## Обзор
 
-Карточка владеет fork-доработкой, которая устраняет сверхлинейную обработку
-filesystem policy при начальном восстановлении истории TUI. Доработка
-переиспользует один `InlineVisualizationContext` в пределах одной hydration и
-один snapshot разрешённых policy entries в пределах одной составной проверки.
+Карточка владеет fork-доработкой, которая устраняет повторное разрешение и
+нормализацию filesystem policy в горячем пути начального восстановления истории
+TUI. Доработка переиспользует один `InlineVisualizationContext` в пределах одной
+hydration и один snapshot разрешённых policy entries в пределах одной составной
+проверки.
 
 Исправление не ослабляет защиту inline visualization viewers, не уменьшает
 бюджет восстанавливаемой истории и не отключает свойства выбранного permission
@@ -36,7 +37,7 @@ entries из вложенных access checks, а постраничное во�
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/protocol/src/permissions.rs` | Владеет локальным snapshot restricted policy, batch-проверкой candidate paths, построением writable roots без повторного разрешения entries и test-only счётчиком полных проходов |
+| `codex-rs/protocol/src/permissions.rs` | Владеет локальным snapshot restricted policy, batch-проверкой candidate paths, построением effective и preserve-mutable writable roots без повторного разрешения entries и test-only счётчиком полных проходов |
 | `codex-rs/tui/src/inline_visualization.rs` | Проверяет viewer caches и их parents одним batch-запросом, сохраняя fail-closed поведение |
 | `codex-rs/tui/src/app_server_session/history.rs` | Вычисляет visualization context один раз на initial hydration до цикла item pages |
 | `codex-rs/tui/src/thread_transcript.rs` | Даёт transcript conversion готовый context и сохраняет обычный entrypoint для остальных callers |
@@ -57,8 +58,8 @@ entries из вложенных access checks, а постраничное во�
 - Context не сохраняется в `App`, `ChatWidget`, static state или другом
   долгоживущем кэше. Следующая hydration заново учитывает `thread_id`, `cwd`,
   `codex_home` и filesystem policy.
-- Callers вне paginated hydration сохраняют обычный transcript entrypoint,
-  который самостоятельно строит context для своего единичного преобразования.
+- Callers вне initial hydration сохраняют обычный transcript entrypoint, который
+  самостоятельно строит context для своего единичного преобразования.
 
 ### Snapshot filesystem policy
 
@@ -72,8 +73,12 @@ entries из вложенных access checks, а постраничное во�
 - Effective writable roots группируются после одной нормализации каждого raw
   path. Raw aliases сохраняются рядом с effective root, чтобы symlink carveouts
   продолжали маскировать пользовательский path, а не только resolved target.
-- Effective non-write paths и `cwd` нормализуются до root loop. Построение
-  каждого `WritableRoot` не повторяет filesystem probes для всего набора.
+- `get_writable_roots_with_cwd_preserving_mutable_paths` использует тот же
+  snapshot, но применяет `PreserveMutableComponents`: trusted top-level aliases
+  нормализуются, а более глубокие mutable components остаются в исходном виде.
+- Non-write paths и `cwd` обрабатываются выбранной
+  `WritableRootPathResolution` до root loop. Построение каждого `WritableRoot`
+  не повторяет filesystem probes для всего набора.
 - Защита `.git`, `.agents` и `.codex`, explicit write overrides, missing-path
   behavior и полный disk access сохраняют прежнюю семантику.
 - Публичные одиночные `resolve_access_with_cwd`, `can_read_path_with_cwd` и
@@ -102,10 +107,11 @@ write и один раз подготовленный порядок entry indic
 checks после этого не перечитывают исходную policy и не повторяют path URI
 resolution.
 
-`get_writable_roots_with_cwd` использует тот же snapshot на всём пути. Writable
-aliases группируются по effective root до построения `WritableRoot`, а
-effective non-write entries вычисляются один раз независимо от числа roots.
-Protected metadata helpers принимают resolved entries либо snapshot напрямую.
+Оба entrypoint построения writable roots используют тот же snapshot на всём
+пути. Writable aliases группируются по root, полученному через выбранный
+`WritableRootPathResolution`, а соответствующие non-write entries вычисляются
+один раз независимо от числа roots. Protected metadata helpers принимают
+resolved entries либо snapshot напрямую.
 
 Batch-метод принадлежит `FileSystemSandboxPolicy`, потому что только policy
 может сохранить одинаковую семантику для restricted, unrestricted и external
@@ -130,7 +136,8 @@ sandbox. Он не является долгоживущим кэшем и не 
    history hydration; ускорение не должно удалять ни одну из этих гарантий.
 4. При необходимости перенести ephemeral restricted-policy snapshot, порядок
    precedence и построение writable roots из предварительно нормализованных
-   групп, сохранив raw symlink aliases.
+   групп. Сохранить raw symlink aliases и обе стратегии
+   `WritableRootPathResolution`.
 5. Перенести batch-проверку viewer caches и их parents без раскрытия resolved
    policy type за границу `codex-protocol`.
 6. Вычислять `InlineVisualizationContext` до page loop и передавать его по ссылке
@@ -139,9 +146,10 @@ sandbox. Он не является долгоживущим кэшем и не 
 7. Проверить protected metadata, explicit overrides, symlink carveouts,
    unrestricted/external policies и неизменность transcript output через
    card-level tests.
-8. Сравнить optimized `resume` одной большой сессии с profile и без него. Замер
-   должен использовать один binary и одинаковый row budget; абсолютный порог,
-   зависящий от host, в контракт не входит.
+8. Сравнить baseline и migrated optimized binaries на одной большой сессии,
+   отдельно с profile и без него. Сборка, toolchain, features, row budget и
+   порядок повторений должны совпадать; абсолютный порог, зависящий от host, в
+   контракт не входит.
 
 ## Проверки
 
@@ -152,7 +160,7 @@ sandbox. Он не является долгоживущим кэшем и не 
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "filesystem policy snapshot строится один раз и сохраняет precedence, symlink carveouts и protected metadata",
+      "purpose": "filesystem policy snapshot строится один раз для effective и preserve-mutable roots и сохраняет precedence, symlink carveouts и protected metadata",
       "argv": ["just", "test", "-p", "codex-protocol"]
     },
     {
@@ -164,19 +172,24 @@ sandbox. Он не является долгоживущим кэшем и не 
 ```
 
 Тест `writable_roots_resolve_policy_entries_once_for_many_nested_checks`
-вызывает настоящий `get_writable_roots_with_cwd` для наборов из одной и 32 пар
-`writable root + read-only carveout`. Строго test-only thread-local счётчик
+вызывает настоящие `get_writable_roots_with_cwd` и
+`get_writable_roots_with_cwd_preserving_mutable_paths` для наборов из одной и 32
+пар `writable root + read-only carveout`. Строго test-only thread-local счётчик
 инкрементируется внутри `resolved_entries_with_cwd` и требует ровно один полный
-проход в обоих случаях. Дополнительно тест сравнивает все материализованные
-carveouts. При возврате вложенных одиночных access checks число полных проходов
-снова вырастет вместе с набором policy entries.
+проход для каждой комбинации entrypoint и размера policy. Дополнительно тест
+сравнивает все материализованные carveouts. При возврате вложенных одиночных
+access checks число полных проходов снова вырастет вместе с набором policy
+entries.
 
-Тест принят статической вычиткой; его компиляция, форматирование и запуск
-отложены до общего прохода по карточкам.
-
-Для performance smoke дополнительно нужен skill-owned gate `fork build-fast`,
-поскольку измерение должно использовать оптимизированный binary. Smoke
-сравнивает одинаковый rollout и row budget с profile и без него.
+Измерение производительности выполняется отдельно от card-level tests и требует
+оптимизированных binaries. Baseline и migrated binary собираются одним
+toolchain и с одинаковыми features; на обоих поочерёдно повторяется `resume`
+одного и того же большого rollout с одинаковым row budget сначала без profile,
+затем с `--profile lora`. Для каждого варианта фиксируются hardware, ОС, тип
+сборки, toolchain, команда, размер rollout, число повторений и распределение
+wall time. Сравнивается не только абсолютное время, но и добавочная стоимость
+profile относительно запуска без него. Одиночный smoke подтверждает лишь
+работоспособность сценария и не доказывает ускорение.
 
 ## Риски и ограничения
 
@@ -186,9 +199,13 @@ carveouts. При возврате вложенных одиночных access 
   внутри одного вызова намеренно используется единый согласованный результат.
 - Batch API устраняет повторную обработку только внутри переданного набора.
   Несвязанные одиночные access checks по-прежнему создают собственный snapshot.
+- Snapshot устраняет повторные path resolution и filesystem probes, но lookup по
+  precedence и группировка большого числа уникальных roots всё ещё могут
+  выполнять сверхлинейное число сравнений в памяти. Отдельное измерение должно
+  показать, существенна ли эта остаточная стоимость для реального profile.
 - Автоматические тесты проверяют семантику policy и transcript, но не задают
-  переносимый wall-time threshold. После миграции нужен optimized smoke на
-  большой сессии.
+  переносимый wall-time threshold. После миграции нужно отдельное сравнимое
+  измерение baseline и migrated optimized binaries на большой сессии.
 - Новые viewer cache paths должны добавляться в существующий batch. Возврат к
   отдельным `can_write_path_with_cwd` внутри цикла способен восстановить
   сверхлинейную задержку.

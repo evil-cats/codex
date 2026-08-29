@@ -16,12 +16,17 @@ impl ToolOutputHistoryPolicy {
     /// `read_file` уже ограничивает содержимое собственным config budget, поэтому
     /// повторное усечение нарушило бы его `complete=yes`. Поиск по history, а не
     /// отдельный cache, сохраняет одинаковый результат после replay, rollback и
-    /// замены history при compaction.
+    /// замены history при compaction. `FunctionCallOutput` без `call_id` нельзя
+    /// связать с исходным вызовом, поэтому для него сохраняется общая политика.
     pub(super) fn for_item<'a>(
         item: &ResponseItem,
         history: impl DoubleEndedIterator<Item = &'a ResponseItem>,
     ) -> Self {
-        let ResponseItem::FunctionCallOutput { call_id, .. } = item else {
+        let ResponseItem::FunctionCallOutput {
+            call_id: Some(call_id),
+            ..
+        } = item
+        else {
             return Self::ModelDefault;
         };
 

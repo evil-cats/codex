@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Runtime-переменные окружения Codex
@@ -71,8 +71,6 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что runtime-переменные вставляются после фильтров policy и перезаписывают родительское окружение |
 | `codex-rs/exec-server/src/local_process.rs` | Использует актуальную upstream-сигнатуру `shell_environment::create_env(...)` при построении policy env для локального процесса |
 | `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Использует актуальную upstream-сигнатуру `shell_environment::create_env_from_vars(...)` в проверке remote exec policy |
-| `codex-rs/core/src/tools/handlers/shell/shell_command.rs` | Передает имя агента, `call_id` и best-effort `rollout_path` в env для обычного `shell_command`, используя `ShellEnvironmentPolicy` выбранного `TurnEnvironment`; сохраняет upstream `CODEX_SESSION_ID` и apply-patch env |
-| `codex-rs/core/src/tools/handlers/shell_tests.rs` | Проверяет expected env через `create_env_with_runtime(...)` |
 | `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task; использует `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, тот же UUID как `CommandExecutionItem.id` и сохраняет upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
 | `codex-rs/core/tests/suite/user_shell_cmd.rs` | Интеграционно доказывает один UUID `CODEX_CALL_ID` в окружении дочерней `/shell`-команды, элементах `CommandExecutionItem` и событиях `ExecCommandBegin`/`ExecCommandEnd` |
 | `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает fork-переменные и связанные upstream runtime-переменные после обертки shell snapshot |
@@ -113,7 +111,7 @@ Hermione workflow использует несколько агентов и suba
 
 `CODEX_CALL_ID` содержит логический id текущего запуска команды:
 
-- для обычного `shell_command` и unified `exec_command`: `ToolInvocation.call_id`;
+- для unified `exec_command`: `ToolInvocation.call_id`;
 - для пользовательской `/shell`-команды: UUID, который генерируется перед
   сборкой env и затем используется как `CommandExecutionItem.id` в
   `ItemStarted`/`ItemCompleted`; производные legacy-события
@@ -162,17 +160,6 @@ Hermione workflow использует несколько агентов и suba
 одноименные значения из inherited env или `set`.
 
 ### Runtime-точки вызова
-
-`shell_command`:
-
-- `ShellCommandHandler::to_exec_params(...)` получает `TurnContext`;
-- вызывает `current_agent_name(turn_context)`;
-- получает `call_id` из `ToolInvocation`;
-- получает best-effort `rollout_path` через `Session::hook_transcript_path()`;
-- использует `ShellEnvironmentPolicy` выбранного `TurnEnvironment`;
-- передает `RuntimeEnv` в `create_env_with_runtime(...)`;
-- после этого добавляет upstream `CODEX_SESSION_ID` и apply-patch env;
-- дочерний процесс получает доступные runtime-переменные.
 
 `/shell` user task:
 
@@ -356,9 +343,9 @@ rollout не удалось получить.
    - persisted fields: `agent_role`, затем leaf `agent_path`, затем
      `agent_nickname`.
 7. Переключить `get_thread_info` на общий helper.
-8. Передать `current_agent_name(...)`, `call_id` и best-effort `rollout_path` в
-   shell command env и `/shell` user task. Для shell policy использовать
-   выбранный `TurnEnvironment`, не общий `TurnContext.config`.
+8. Передать `current_agent_name(...)`, UUID `call_id` и best-effort
+   `rollout_path` в `/shell` user task. Для shell policy использовать выбранный
+   `TurnEnvironment`, не общий `TurnContext.config`.
 9. Для `/shell` генерировать UUID `call_id` до сборки env, а потом использовать
     тот же id как `CommandExecutionItem.id` в `ItemStarted`/`ItemCompleted` и
     производных legacy-событиях `ExecCommandBegin`/`ExecCommandEnd`, сохраняя
@@ -413,16 +400,6 @@ rollout не удалось получить.
         "-p",
         "codex-core",
         "env_overlay_for_exec_server_keeps_runtime_changes_only"
-      ]
-    },
-    {
-      "purpose": "shell tool использует выбранное environment и передаёт стабильную runtime identity",
-      "argv": [
-        "just",
-        "test",
-        "-p",
-        "codex-core",
-        "shell_command_handler_to_exec_params_uses_selected_environment"
       ]
     },
     {

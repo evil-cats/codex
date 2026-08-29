@@ -2,7 +2,7 @@
 id: fork-tui-successful-command-list
 status: active
 created: 2026-08-24
-updated: 2026-08-24
+updated: 2026-08-28
 ---
 
 # Список успешных команд в компактной TUI-группе
@@ -17,8 +17,7 @@ updated: 2026-08-24
 
 ## Зачем это нужно
 
-Upstream Codex `0.149.0` начал объединять последовательные успешные команды в
-одну строку:
+Upstream Codex объединяет последовательные успешные команды в одну строку:
 
 ```text
 • Ran 3 commands · ctrl + t to view transcript
@@ -45,6 +44,7 @@ Hermione сохраняет новую компактную группу, но �
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует заголовок компактной группы, список команд без вывода, перенос длинных команд и неизменённые отдельные строки для остальных вызовов |
 | `codex-rs/tui/src/exec_cell/model.rs` | Сохраняет текущие правила объединения успешных команд и границу `MAX_GROUPED_COMMANDS` |
 | `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет видимый список команд, отсутствие вывода в компактной истории, полный `transcript` и смешанный жизненный цикл |
+| `codex-rs/tui/src/history_cell/tests.rs` | Проверяет список непосредственно на уровне `ExecCell` |
 | `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__exploring_step4_finish_cat_foo.snap` | Фиксирует компактный список из двух команд |
 | `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__exploring_step5_finish_sed_range.snap` | Фиксирует расширение компактного списка третьей командой |
 | `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__exploring_step6_finish_cat_bar.snap` | Фиксирует итоговый список из четырёх команд |

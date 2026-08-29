@@ -11,6 +11,7 @@ use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::environment_selection::TurnEnvironmentState;
 use crate::session::turn_context::TurnEnvironment;
 use codex_exec_server::Environment;
+use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::items::CoreToolActivityKind;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EnvironmentConfig;
@@ -57,6 +58,9 @@ async fn read_file_detail_uses_selected_environment_path_convention() {
         allow_login_shell: true,
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::read_only()),
         shell_environment_policy: Default::default(),
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+        windows_sandbox_private_desktop: false,
+        use_legacy_landlock: false,
         exec_policy: None,
         mcp_policy: None,
         network_policy: None,

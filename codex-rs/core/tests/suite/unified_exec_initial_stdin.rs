@@ -6,7 +6,6 @@
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -35,15 +34,9 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Создаёт тестовую конфигурацию с включённым unified exec для всех сценариев модуля.
+/// Создаёт тестовую конфигурацию с обязательным unified exec для всех сценариев модуля.
 fn unified_exec_builder() -> core_test_support::test_codex::TestCodexBuilder {
-    test_codex().with_config(|config| {
-        config.use_experimental_unified_exec_tool = true;
-        config
-            .features
-            .enable(Feature::UnifiedExec)
-            .expect("test config should allow feature update");
-    })
+    test_codex()
 }
 
 /// Монтирует один вызов `exec_command` и завершающий ответ модели.

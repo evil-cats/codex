@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Spill-файлы для длинного exec output
@@ -80,7 +80,7 @@ inline cap и spill-механику, что прямой `exec_command`.
 | `codex-rs/core/src/unified_exec/mod.rs` | Владеть типом получателя, request/result-полями и вспомогательными типами политики exec output, зависящей от источника |
 | `codex-rs/core/src/unified_exec/output_spill.rs` | Владеть spill metadata, рассчитать действующий inline-лимит, выбрать line-prefix excerpt, построить безопасный путь и записать model-visible exec artifact для прямого exec или внешнего Code Mode результата |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch выбрать spill для модели либо полный результат/ошибку Code Mode по типу получателя |
-| `codex-rs/core/src/tools/context.rs` | Включить общий spill body в metadata wrapper прямого exec; не превращать неполный результат Code Mode в успешный JSON со вставленным marker-ом усечения |
+| `codex-rs/core/src/tools/context.rs` | Разделить ответ модели `response_text()` и журналирование `ToolOutput::log_output()`: первый ограничивает вывод или показывает сведения о spill-файле, второй получает весь сохранённый вывод и не дублирует отметку о пропущенных байтах; не превращать неполный результат Code Mode в успешный JSON |
 | `codex-rs/utils/path-utils/src/lib.rs` | При необходимости добавить atomic bytes write helper |
 | `codex-rs/core/src/tools/context_tests.rs` | Проверить `Lines`/`Full output`/`Output excerpt`, oversized first line и отсутствие suffix/marker в model-visible prefix |
 | `codex-rs/core/src/tools/line_utils.rs` | Разбить текст на строки с сохранением завершающего `\n` для общего контракта `read_file` и spill excerpt |
@@ -193,6 +193,23 @@ Error: first line exceeds excerpt token limit
 - строки из конца не добавляются;
 - `…N tokens truncated…`, `Warning: truncated output` и другие marker-ы
   model-visible усечения не вставляются.
+
+### Ответ для модели и журнал телеметрии
+
+`ExecCommandToolOutput` формирует два представления захваченного вывода.
+`response_text()` строит ограниченный ответ для модели: короткий вывод проходит
+через действующую политику усечения, а при записи spill-файла ответ содержит
+сведения о строках, путь и последовательный префикс. `ToolOutput::log_output()`
+не наследует ограничение ответа модели и передаёт в журнал общие сведения о
+вызове вместе со всем доступным `raw_output`.
+
+Если слой захвата сообщил `output_omitted_bytes`, `ToolOutput::log_output()`
+обязан включить каноническую строку `format_output_omission_marker()` ровно один
+раз: сохранить уже присутствующую строку либо добавить её перед `raw_output`.
+Сведения о spill-файле не заменяют и не сокращают запись журнала. Общие поля
+ответа формируются одним внутренним методом, но `Output:` используется только в
+обычном ответе модели и заголовке журнала; в ответе модели со spill-файлом вместо
+него выводится общий блок сведений о сохранённом результате.
 
 ### Вложенный вызов из Code Mode
 
@@ -672,6 +689,11 @@ artifact попадет уже усеченный итог ячейки. Общ�
    - если первая строка не помещается, вернуть `returned=none` и
      `Error: first line exceeds excerpt token limit` без excerpt body;
    - не добавлять suffix, line numbers или marker усечения.
+   - сохранить отдельный `ToolOutput::log_output()` без ограничения ответа
+     модели: общие поля вызова плюс весь доступный `raw_output`;
+   - при `output_omitted_bytes` включить каноническую строку
+     `format_output_omission_marker()` ровно один раз независимо от сведений о
+     spill-файле.
 8. Не использовать `ExecCommandToolOutput::truncated_output()` или
    `formatted_truncate_text()` для spill excerpt. Model-visible границы получают
    line prefix, а вложенный Code Mode при превышении лимита возвращает ошибку;
@@ -729,6 +751,26 @@ artifact попадет уже усеченный итог ячейки. Общ�
         "-p",
         "codex-core",
         "exec_command_tool_output_formats_spilled_response"
+      ]
+    },
+    {
+      "purpose": "ответ response_text() ограничен, а ToolOutput::log_output() содержит весь сохранённый вывод",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_tool_output_formats_truncated_response"
+      ]
+    },
+    {
+      "purpose": "ToolOutput::log_output() включает format_output_omission_marker() ровно один раз",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-core",
+        "exec_command_tool_output_preserves_omission_metadata_when_truncated"
       ]
     },
     {

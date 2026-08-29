@@ -124,6 +124,7 @@ fn parse_terminal_title_items(items: Vec<String>) -> (Vec<String>, Vec<String>) 
 fn terminal_title_item_id(item: &str) -> Option<&'static str> {
     match item {
         "app-name" => Some("app-name"),
+        "session-label" => Some("session-label"),
         "project-name" | "project" => Some("project-name"),
         "current-dir" => Some("current-dir"),
         "activity" | "spinner" => Some("activity"),
@@ -325,6 +326,24 @@ mod tests {
             check.details.contains(
                 &"terminal title items: thread-credits, estimated-thread-cost".to_string()
             )
+        );
+        assert!(check.issues.is_empty());
+    }
+
+    #[test]
+    fn terminal_title_accepts_session_label() {
+        let check = terminal_title_check_from_inputs(TerminalTitleInputs {
+            configured_items: Some(vec!["session-label".to_string()]),
+            cwd: PathBuf::from("/workspace/project"),
+            project_root: None,
+        });
+
+        assert_eq!(check.status, CheckStatus::Ok);
+        assert_eq!(check.summary, "terminal title configured");
+        assert!(
+            check
+                .details
+                .contains(&"terminal title items: session-label".to_string())
         );
         assert!(check.issues.is_empty());
     }

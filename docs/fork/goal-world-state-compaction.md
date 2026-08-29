@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -126,6 +126,9 @@ Extension-owned section использует стабильный section ID и 
   продолжать прежнюю goal как активную;
 - clearing fragment не записывается в conversation history: он добавляется
   только в ближайший sampling request, после чего исчезает;
+- goal extension сохраняет для fragment актуальные upstream-метаданные
+  `ContentItemKind("active_goal.instructions")`; одноразовая доставка меняет
+  только способ сохранения, а не классификацию содержимого;
 - snapshot при этом сразу продвигается в `inactive`, поэтому следующий model
   step не создаёт тот же fragment повторно;
 - отсутствие goal при `PreviousWorldStateSection::Absent` или

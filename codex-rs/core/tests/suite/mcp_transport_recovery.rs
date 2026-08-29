@@ -34,7 +34,7 @@ use super::rmcp_client::remote_aware_stdio_server_bin;
 
 const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
 const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
-const RECOVERY_EXIT_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_EXIT_STATE_FILE";
+const EXIT_FILE_ENV: &str = "MCP_TEST_EXIT_FILE";
 
 fn insert_mcp_server(
     config: &mut Config,
@@ -250,26 +250,16 @@ async fn mcp_idle_process_exit_recovers_before_next_call() -> anyhow::Result<()>
     skip_if_no_network!(Ok(()));
 
     let server_name = "rmcp_recovery_idle_exit";
-    let state_file = unique_state_file("idle-exit");
+    let exit_file = unique_state_file("idle-exit");
     let (server, fixture) = build_fixture(
         server_name,
-        HashMap::from([(RECOVERY_EXIT_STATE_FILE_ENV.to_string(), state_file)]),
+        HashMap::from([(EXIT_FILE_ENV.to_string(), exit_file.clone())]),
     )
     .await?;
 
-    let scheduled = call_recovery_probe(
-        &server,
-        &fixture,
-        server_name,
-        "mcp-recovery-schedule-exit",
-        "schedule the MCP process exit",
-    )
-    .await?
-    .expect("the scheduling call should succeed");
-    assert_eq!(
-        scheduled.structured_content,
-        Some(json!({ "result": "exit_scheduled" }))
-    );
+    // Стандартный маркер тестового сервера завершает уже инициализированный
+    // процесс вне MCP-операции, сохраняя проверяемую границу простоя.
+    std::fs::write(exit_file, "exit")?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let recovered = call_recovery_probe(

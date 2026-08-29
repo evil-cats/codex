@@ -239,6 +239,21 @@ pub struct FileSystemSandboxPolicy {
     pub entries: Vec<FileSystemSandboxEntry>,
 }
 
+#[derive(Clone, Copy)]
+enum WritableRootPathResolution {
+    Effective,
+    PreserveMutableComponents,
+}
+
+impl WritableRootPathResolution {
+    fn resolve(self, path: AbsolutePathBuf) -> AbsolutePathBuf {
+        match self {
+            Self::Effective => normalize_effective_absolute_path(path),
+            Self::PreserveMutableComponents => normalize_trusted_top_level_alias(path),
+        }
+    }
+}
+
 /// Serialized filesystem policy used at legacy string-based seams.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[schemars(rename = "FileSystemSandboxPolicy")]
@@ -1159,6 +1174,44 @@ impl FileSystemSandboxPolicy {
     /// Returns the writable roots together with read-only carveouts resolved
     /// against the provided cwd.
     pub fn get_writable_roots_with_cwd(&self, cwd: &Path) -> Vec<WritableRoot> {
+        self.get_writable_roots_with_cwd_impl(cwd, WritableRootPathResolution::Effective)
+    }
+
+    /// Returns whether any effective writable root exists without materializing its carveouts.
+    pub fn has_writable_roots_with_cwd(&self, cwd: &Path) -> bool {
+        !self.has_full_disk_write_access()
+            && self
+                .resolved_entries_with_cwd(cwd)
+                .into_iter()
+                .any(|entry| {
+                    entry.access.can_write()
+                        && self.can_write_path_with_cwd(entry.path.as_path(), cwd)
+                })
+    }
+
+    /// Returns writable roots without following attacker-mutable path components.
+    ///
+    /// Trusted top-level aliases such as `/tmp -> /private/tmp` are still
+    /// normalized so roots and carveouts are compared in the same namespace.
+    /// Deeper components remain exactly as configured until the platform
+    /// sandbox binds them.
+    pub fn get_writable_roots_with_cwd_preserving_mutable_paths(
+        &self,
+        cwd: &Path,
+    ) -> Vec<WritableRoot> {
+        self.get_writable_roots_with_cwd_impl(
+            cwd,
+            WritableRootPathResolution::PreserveMutableComponents,
+        )
+    }
+
+    /// Строит writable roots по выбранной стратегии разрешения путей, используя
+    /// один ephemeral snapshot restricted policy для всей составной операции.
+    fn get_writable_roots_with_cwd_impl(
+        &self,
+        cwd: &Path,
+        path_resolution: WritableRootPathResolution,
+    ) -> Vec<WritableRoot> {
         if self.has_full_disk_write_access() {
             return Vec::new();
         }
@@ -1171,17 +1224,17 @@ impl FileSystemSandboxPolicy {
             .filter(|entry| resolved_policy.can_write_resolved_path(&entry.path))
             .map(|entry| entry.path.clone())
             .collect();
-        let effective_non_write_entries = resolved_policy
+        let resolved_non_write_entries = resolved_policy
             .entries
             .iter()
             .filter(|entry| !entry.access.can_write())
             .filter(|entry| !resolved_policy.can_write_resolved_path(&entry.path))
-            .map(|entry| (entry, normalize_effective_absolute_path(entry.path.clone())))
+            .map(|entry| (entry, path_resolution.resolve(entry.path.clone())))
             .collect::<Vec<_>>();
         let mut writable_root_groups: Vec<(AbsolutePathBuf, Vec<&AbsolutePathBuf>)> =
             Vec::with_capacity(writable_entries.len());
         for path in &writable_entries {
-            let root = normalize_effective_absolute_path(path.clone());
+            let root = path_resolution.resolve(path.clone());
             if let Some((_, raw_writable_roots)) = writable_root_groups
                 .iter_mut()
                 .find(|(candidate_root, _)| candidate_root == &root)
@@ -1191,27 +1244,25 @@ impl FileSystemSandboxPolicy {
                 writable_root_groups.push((root, vec![path]));
             }
         }
-        let effective_cwd = AbsolutePathBuf::from_absolute_path(cwd)
+        let resolved_cwd = AbsolutePathBuf::from_absolute_path(cwd)
             .ok()
-            .map(normalize_effective_absolute_path);
+            .map(|cwd| path_resolution.resolve(cwd));
 
         writable_root_groups
             .into_iter()
             .map(|(root, raw_writable_roots)| {
-                // Filesystem-root policies stay in their effective canonical form
-                // so root-wide aliases do not create duplicate top-level masks.
-                // Example: keep `/var/...` normalized under `/` instead of
-                // materializing both `/var/...` and `/private/var/...`.
-                // Nested symlink paths under a writable root stay logical so
-                // downstream sandboxes can still bind the real target while
-                // masking the user-visible symlink inode when needed.
+                // Выбранная стратегия приводит root и carveouts к одному пространству имён.
+                // `Effective` схлопывает filesystem aliases, а
+                // `PreserveMutableComponents` сохраняет вложенные paths с symlink, чтобы
+                // нижестоящий sandbox мог привязать target и при необходимости
+                // замаскировать пользовательский symlink inode.
                 let preserve_raw_carveout_paths = root.as_path().parent().is_some();
                 let protected_metadata_names = protected_metadata_names_for_writable_root(
                     &resolved_policy,
                     &root,
                     &raw_writable_roots,
                 );
-                let protect_missing_dot_codex = effective_cwd.as_ref() == Some(&root);
+                let protect_missing_dot_codex = resolved_cwd.as_ref() == Some(&root);
                 let mut read_only_subpaths: Vec<AbsolutePathBuf> =
                     default_read_only_subpaths_for_writable_root(&root, protect_missing_dot_codex)
                         .into_iter()
@@ -1219,21 +1270,16 @@ impl FileSystemSandboxPolicy {
                             !has_explicit_resolved_path_entry(&resolved_policy.entries, path)
                         })
                         .collect();
-                // Narrower explicit non-write entries carve out broader writable roots.
-                // More specific write entries still remain writable because they appear
-                // as separate WritableRoot values and are checked independently.
-                // Preserve symlink path components that live under the writable root
-                // so downstream sandboxes can still mask the symlink inode itself.
-                // Example: if `<root>/.codex -> <root>/decoy`, bwrap must still see
-                // `<root>/.codex`, not only the resolved `<root>/decoy`.
-                read_only_subpaths.extend(effective_non_write_entries.iter().filter_map(
-                    |(entry, effective_path)| {
-                        // Preserve the literal in-root path whenever the
-                        // carveout itself lives under this writable root, even
-                        // if following symlinks would resolve back to the root
-                        // or escape outside it. Downstream sandboxes need that
-                        // raw path so they can mask the symlink inode itself.
-                        // Examples:
+                // Более узкие explicit non-write entries вырезаются из широких
+                // writable roots. Более специфичные write entries остаются доступными
+                // через отдельные `WritableRoot`. Path с symlink внутри root сохраняется,
+                // чтобы нижестоящий sandbox маскировал сам inode, а не только target.
+                read_only_subpaths.extend(resolved_non_write_entries.iter().filter_map(
+                    |(entry, resolved_path)| {
+                        // Исходный path сохраняется, когда carveout расположен внутри
+                        // writable root, даже если symlink ведёт обратно в root или за
+                        // его пределы. Нижестоящему sandbox нужен исходный path самого inode.
+                        // Примеры:
                         // - `<root>/linked-private -> <root>/decoy-private`
                         // - `<root>/linked-private -> /tmp/outside-private`
                         // - `<root>/alias-root -> <root>`
@@ -1263,21 +1309,20 @@ impl FileSystemSandboxPolicy {
                             return Some(raw_carveout_path);
                         }
 
-                        if effective_path == &root
-                            || !effective_path.as_path().starts_with(root.as_path())
+                        if resolved_path == &root
+                            || !resolved_path.as_path().starts_with(root.as_path())
                         {
                             return None;
                         }
 
-                        Some(effective_path.clone())
+                        Some(resolved_path.clone())
                     },
                 ));
                 WritableRoot {
                     protected_metadata_names,
                     root,
-                    // Preserve literal in-root protected paths like `.git` and
-                    // `.codex` so downstream sandboxes can still detect and mask
-                    // the symlink itself instead of only its resolved target.
+                    // Исходные protected paths вроде `.git` и `.codex` сохраняются,
+                    // чтобы нижестоящий sandbox обнаруживал и маскировал сам symlink.
                     read_only_subpaths: dedup_absolute_paths(
                         read_only_subpaths,
                         /*normalize_effective_paths*/ false,
@@ -1836,6 +1881,27 @@ fn normalize_effective_absolute_path(path: AbsolutePathBuf) -> AbsolutePathBuf {
     path
 }
 
+fn normalize_trusted_top_level_alias(path: AbsolutePathBuf) -> AbsolutePathBuf {
+    let Some(top_level) = path.as_path().ancestors().find(|ancestor| {
+        ancestor.parent().is_some() && ancestor.parent().and_then(Path::parent).is_none()
+    }) else {
+        return path;
+    };
+    let Ok(metadata) = std::fs::symlink_metadata(top_level) else {
+        return path;
+    };
+    if !metadata.file_type().is_symlink() {
+        return path;
+    }
+    let Ok(canonical_top_level) = top_level.canonicalize() else {
+        return path;
+    };
+    let Ok(suffix) = path.as_path().strip_prefix(top_level) else {
+        return path;
+    };
+    AbsolutePathBuf::from_absolute_path(canonical_top_level.join(suffix)).unwrap_or(path)
+}
+
 pub(crate) fn default_read_only_subpaths_for_writable_root(
     writable_root: &AbsolutePathBuf,
     protect_missing_dot_codex: bool,
@@ -2187,6 +2253,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn writable_root_presence_matches_materialized_roots() {
+        let cwd = TempDir::new().expect("tempdir");
+        let writable_root = AbsolutePathBuf::resolve_path_against_base("work", cwd.path());
+        let policies = [
+            FileSystemSandboxPolicy::read_only(),
+            FileSystemSandboxPolicy::unrestricted(),
+            FileSystemSandboxPolicy::external_sandbox(),
+            FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
+                writable_root.clone().into(),
+                FileSystemAccessMode::Write,
+            )]),
+            FileSystemSandboxPolicy::restricted(vec![
+                FileSystemSandboxEntry::new(
+                    writable_root.clone().into(),
+                    FileSystemAccessMode::Write,
+                ),
+                FileSystemSandboxEntry::new(writable_root.into(), FileSystemAccessMode::Deny),
+            ]),
+            FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
+                FileSystemPath::Special {
+                    value: FileSystemSpecialPath::unknown(
+                        ":future_special_path",
+                        /*subpath*/ None,
+                    ),
+                },
+                FileSystemAccessMode::Write,
+            )]),
+        ];
+
+        for policy in policies {
+            assert_eq!(
+                policy.has_writable_roots_with_cwd(cwd.path()),
+                !policy.get_writable_roots_with_cwd(cwd.path()).is_empty()
+            );
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn permission_paths_preserve_native_slash_unc_strings() {
@@ -2374,6 +2478,94 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn preserving_mutable_paths_normalizes_top_level_aliases_consistently() {
+        let root = TempDir::new_in("/tmp").expect("tempdir under /tmp");
+        let logical_root =
+            AbsolutePathBuf::from_absolute_path(root.path()).expect("absolute logical root");
+        let canonical_root = AbsolutePathBuf::from_absolute_path(
+            root.path().canonicalize().expect("canonicalize root"),
+        )
+        .expect("absolute canonical root");
+        let protected = canonical_root.join("protected");
+        fs::create_dir(&protected).expect("create protected path");
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry::new(logical_root.into(), FileSystemAccessMode::Write),
+            FileSystemSandboxEntry::new(protected.clone().into(), FileSystemAccessMode::Read),
+        ]);
+
+        let roots = policy.get_writable_roots_with_cwd_preserving_mutable_paths(root.path());
+
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].root, canonical_root);
+        assert!(roots[0].read_only_subpaths.contains(&protected));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserving_writable_roots_cannot_be_rebound_during_projection() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+        use std::thread;
+
+        let tmp = TempDir::new().expect("tempdir");
+        let active_ancestor = tmp.path().join("active");
+        let parked_ancestor = tmp.path().join("parked");
+        let outside_ancestor = tmp.path().join("outside");
+        let writable_root = active_ancestor.join("workspace");
+        let outside_root = outside_ancestor.join("workspace");
+        fs::create_dir_all(&writable_root).expect("create writable root");
+        fs::create_dir_all(&outside_root).expect("create outside root");
+        let writable_root =
+            AbsolutePathBuf::from_absolute_path(writable_root).expect("absolute writable root");
+        let outside_root =
+            AbsolutePathBuf::from_absolute_path(outside_root).expect("absolute outside root");
+        let expected_writable_root = normalize_trusted_top_level_alias(writable_root.clone());
+        let expected_outside_root = normalize_trusted_top_level_alias(outside_root);
+        let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
+            writable_root.into(),
+            FileSystemAccessMode::Write,
+        )]);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let swaps = Arc::new(AtomicUsize::new(0));
+        let racer_stop = Arc::clone(&stop);
+        let racer_swaps = Arc::clone(&swaps);
+        let racer = thread::spawn(move || {
+            while !racer_stop.load(Ordering::Relaxed) {
+                if fs::rename(&active_ancestor, &parked_ancestor).is_err() {
+                    thread::yield_now();
+                    continue;
+                }
+                if symlink_dir(&outside_ancestor, &active_ancestor).is_ok() {
+                    racer_swaps.fetch_add(1, Ordering::Relaxed);
+                    thread::yield_now();
+                    let _ = fs::remove_file(&active_ancestor);
+                }
+                fs::rename(&parked_ancestor, &active_ancestor).expect("restore writable ancestor");
+            }
+        });
+
+        let mut rebound_root = None;
+        for _ in 0..2_000 {
+            let roots = policy.get_writable_roots_with_cwd_preserving_mutable_paths(tmp.path());
+            if roots.len() != 1 || roots[0].root != expected_writable_root {
+                rebound_root = roots.first().map(|root| root.root.clone());
+                break;
+            }
+            assert_ne!(roots[0].root, expected_outside_root);
+            thread::yield_now();
+        }
+        stop.store(true, Ordering::Relaxed);
+        racer.join().expect("join path racer");
+
+        assert!(swaps.load(Ordering::Relaxed) > 0, "racer did not run");
+        assert_eq!(rebound_root, None);
+    }
+
     #[test]
     fn legacy_workspace_write_projection_preserves_symbolic_project_root() {
         let policy = SandboxPolicy::WorkspaceWrite {
@@ -2558,14 +2750,15 @@ mod tests {
         );
     }
 
-    /// Составное построение writable roots должно разрешать restricted policy
+    /// Оба способа построения writable roots должны разрешать restricted policy
     /// один раз независимо от числа roots, read-only carveouts и вложенных
     /// проверок metadata.
     #[test]
     fn writable_roots_resolve_policy_entries_once_for_many_nested_checks() {
-        let mut resolution_passes_by_root_count = Vec::new();
+        let mut resolution_passes_by_mode_and_root_count = Vec::new();
 
-        for root_count in [1, 32] {
+        for (preserve_mutable_paths, root_count) in [(false, 1), (false, 32), (true, 1), (true, 32)]
+        {
             let cwd = TempDir::new().expect("tempdir");
             let mut entries = Vec::with_capacity(root_count * 2);
             let mut expected_carveouts = Vec::with_capacity(root_count);
@@ -2593,7 +2786,11 @@ mod tests {
             let policy = FileSystemSandboxPolicy::restricted(entries);
             RESOLVED_POLICY_ENTRY_PASSES.with(|passes| passes.set(0));
 
-            let writable_roots = policy.get_writable_roots_with_cwd(cwd.path());
+            let writable_roots = if preserve_mutable_paths {
+                policy.get_writable_roots_with_cwd_preserving_mutable_paths(cwd.path())
+            } else {
+                policy.get_writable_roots_with_cwd(cwd.path())
+            };
             let resolution_passes = RESOLVED_POLICY_ENTRY_PASSES.with(std::cell::Cell::get);
 
             assert_eq!(
@@ -2603,10 +2800,17 @@ mod tests {
                     .collect::<Vec<_>>(),
                 expected_carveouts,
             );
-            resolution_passes_by_root_count.push((root_count, resolution_passes));
+            resolution_passes_by_mode_and_root_count.push((
+                preserve_mutable_paths,
+                root_count,
+                resolution_passes,
+            ));
         }
 
-        assert_eq!(resolution_passes_by_root_count, vec![(1, 1), (32, 1)]);
+        assert_eq!(
+            resolution_passes_by_mode_and_root_count,
+            vec![(false, 1, 1), (false, 32, 1), (true, 1, 1), (true, 32, 1)],
+        );
     }
 
     #[test]

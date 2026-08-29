@@ -69,7 +69,6 @@ const RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV: &str =
     "MCP_TEST_RECOVERY_CLOSE_BARRIER_PARTICIPANTS";
 const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
 const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
-const RECOVERY_EXIT_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_EXIT_STATE_FILE";
 const RECOVERY_INITIALIZE_FAIL_AT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAIL_AT";
 const RECOVERY_INITIALIZE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_STATE_FILE";
 const RECOVERY_LAUNCH_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_LAUNCH_LOG_FILE";
@@ -1054,16 +1053,6 @@ impl TestToolServer {
             ));
         }
 
-        if write_state_file_once(RECOVERY_EXIT_STATE_FILE_ENV, "process-exit-scheduled")? {
-            tokio::spawn(async {
-                sleep(Duration::from_millis(50)).await;
-                std::process::exit(87);
-            });
-            return Ok(Self::structured_result(
-                json!({ "result": "exit_scheduled" }),
-            ));
-        }
-
         Ok(Self::structured_result(json!({ "result": "recovered" })))
     }
 
@@ -1316,8 +1305,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service = TestToolServer::new();
     let running = service.serve(stdio()).await?;
 
-    // Wait for the client to finish interacting with the server.
-    running.waiting().await?;
+    // A test can close an initialized transport without killing an arbitrary PID.
+    let exit_file = std::env::var_os("MCP_TEST_EXIT_FILE");
+    tokio::select! {
+        result = running.waiting() => { result?; }
+        result = async {
+            let Some(exit_file) = exit_file else {
+                return std::future::pending::<std::io::Result<()>>().await;
+            };
+            let exit_file = std::path::Path::new(&exit_file);
+            while !exit_file.exists() {
+                sleep(Duration::from_millis(/*millis*/ 20)).await;
+            }
+            std::fs::remove_file(exit_file)
+        } => {
+            result?;
+            std::process::exit(0);
+        },
+    }
     // Drain background tasks to ensure clean shutdown.
     task::yield_now().await;
     Ok(())

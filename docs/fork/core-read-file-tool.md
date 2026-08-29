@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-24
+updated: 2026-08-28
 ---
 
 # Утилитарный core tool `read_file`
@@ -73,12 +73,12 @@ Owner-файлы реализации:
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
 | `codex-rs/core/tests/suite/tools.rs` | Интеграционное покрытие: tool доступен при local environment, отсутствует без environment, следует environment выбранного шага и возвращает line metadata для UTF-8 fixture |
 | `codex-rs/core/tests/suite/code_mode.rs` | Интеграционно проверяет фактический Responses request: `read_file` остается отдельным tool в code-mode-only surface и отсутствует в описании `exec` |
-| `codex-rs/core/src/session/mod.rs` | Передаёт handler-у ключ `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконный provenance после rollout replay |
+| `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконные сведения о происхождении после replay rollout; UUID текущего окна остаётся отдельной частью возвращаемого upstream-кортежа |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history последней сохранившейся compaction от вызовов в хвосте текущего окна и последовательно восстанавливает typed items через тот же `ContextManager`, что используется live path |
 | `codex-rs/core/src/session/rollout_reconstruction_tests.rs` | Проверяет маркировку вызовов, принесённых replacement-history, и replay-stable history policy при resume-реконструкции |
-| `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy`: сохраняет уже ограниченный `read_file` output и выполняет model-default truncation для остальных outputs |
+| `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy`: сохраняет уже ограниченный результат `read_file` и использует `ToolOutputHistoryPolicy::ModelDefault` для остальных результатов, не изменяя upstream-поля `name`, `namespace` и внутренние метаданные history |
 | `codex-rs/core/src/context_manager/tool_output_history.rs` | Выбирает `ToolOutputHistoryPolicy` по typed `FunctionCall`/`FunctionCallOutput` через `call_id`, не разбирая текст output и не вводя отдельное persisted state |
-| `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет пару `FunctionCall(name=read_file)`/`FunctionCallOutput`, отсутствие анализа текста и сохранение общего truncation для outputs других tools |
+| `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет пару `FunctionCall(name=read_file)`/`FunctionCallOutput`, обязательность `call_id` для обхода общего лимита, отсутствие анализа текста и общее усечение результатов других инструментов |
 | `codex-rs/core/config.schema.json` | Описывает `[tools.read_file].content_max_tokens` |
 
 Owner-файлы контекстной дедупликации:
@@ -86,7 +86,7 @@ Owner-файлы контекстной дедупликации:
 | Файл | Ответственность |
 | --- | --- |
 | `codex-rs/core/src/tools/handlers/read_file_context.rs` | Приватный helper: bounded provenance index для одного `window_id`, resolved `environment_id + PathUri`, консервативное восстановление после resume, поиск одного полностью покрывающего output и короткая ссылка |
-| `codex-rs/core/src/tools/handlers/read_file_context_tests.rs` | Unit tests typed call/output, полного вложения, raw/numbered content, несовпадений, смены окна, compaction-replacement exclusion, cold-resume fallback и запрета reference chaining |
+| `codex-rs/core/src/tools/handlers/read_file_context_tests.rs` | Модульные тесты типизированной пары вызова и результата, обязательного `call_id`, полного вложения, raw/numbered content, несовпадений, смены окна, исключения replacement-history compaction, fallback после cold resume и запрета цепочек ссылок |
 | `codex-rs/core/tests/suite/read_file_context.rs` | Integration coverage обычного результата, `already_in_context`, overlap/union, изменения файла, смены primary cwd, rollback, явной compaction и cold resume |
 | `codex-rs/core/tests/suite/mod.rs` | Регистрирует отдельный integration test module контекстной дедупликации на non-Windows targets |
 
@@ -106,20 +106,24 @@ typed call/output пара из хвоста после последней со�
 окно.
 Summary или один лишь provenance ссылку также не разрешают.
 
-Отдельная history policy для `read_file` является replay-stable и определяется
-по typed связи `FunctionCall(name=read_file)` и `FunctionCallOutput` через
-`call_id`. `ContextManager` ищет соответствующий call в фактической текущей
-history; поэтому live-запись и последовательный rollout replay получают одно
-поведение без отдельного cache. Анализ header/body вроде `ReadFile: ...` не
+Отдельная политика сохранения history для `read_file` устойчива к replay и
+определяется по типизированной связи `FunctionCall(name=read_file)` и
+`FunctionCallOutput` через присутствующий `call_id`. `ContextManager` ищет
+соответствующий вызов в фактической текущей history; поэтому живая запись и
+последовательный replay rollout получают одно поведение без отдельного cache.
+`FunctionCallOutput` без `call_id` не получает исключение из общей политики и
+не создаёт контекстное покрытие. Анализ header/body вроде `ReadFile: ...` не
 используется. Публичный wire-формат и persisted rollout не получают
 fork-specific флаг: при resume та же связь восстанавливается из сохранённой
-typed пары.
+типизированной пары.
 
 History хранит `ResponseItemEnvelope` с metadata, предназначенной только для
 history. Политика `read_file` обрабатывает только вложенный `ResponseItem`,
 сохраняет metadata исходного envelope без изменений и при replay передаёт
 механизму сопоставления только вложенные raw items, не отбрасывая metadata из
-восстанавливаемой history.
+восстанавливаемой history. При перестроении `FunctionCallOutput` политика также
+сохраняет его `name` и `namespace`: исключение касается только усечения поля
+`output`.
 
 Намеренно не входит в MVP:
 
@@ -336,9 +340,10 @@ Error: line 10 exceeds ReadFile content token limit
 filesystem cache и не разрешает отвечать по устаревшему снимку.
 
 Runtime должен получить ту же нормализованную историю, которая используется
-для следующего inference, и текущий `window_id`. Он сопоставляет только typed пары
-`FunctionCall(name=read_file)` и content-bearing `FunctionCallOutput` по
-`call_id`, всегда отвергая явно неуспешный output.
+для следующего inference, и текущий `window_id`. Он сопоставляет только
+типизированные пары `FunctionCall(name=read_file)` и содержащий текст
+`FunctionCallOutput` с присутствующим `call_id`, всегда отвергая явно
+неуспешный результат.
 Append-only rollout, TUI history, compaction summary, пользовательское сообщение
 или произвольное совпадение текста не доказывают, что содержимое файла доступно
 модели.
@@ -355,6 +360,12 @@ live-записи и reconstruction из persisted rollout. Общая policy с
 call/output пару в replacement-history. Первое чтение в новом окне
 возвращает обычный полный результат и создаёт новое coverage только для этого
 окна.
+
+`Session::current_window()` возвращает этот логический ключ вместе с отдельным
+UUID текущего окна, который используют upstream-метаданные запроса.
+Дедупликация `read_file` намеренно использует только строковый ключ: UUID не
+подменяет `<thread_id>:<window_number>` и не меняет формат восстановленных
+сведений о происхождении.
 
 Один прежний вызов подходит для ссылки, только если одновременно выполнены все
 условия:

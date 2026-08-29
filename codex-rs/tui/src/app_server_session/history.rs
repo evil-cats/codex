@@ -239,8 +239,8 @@ impl AppServerSession {
         };
         let mut scanned_items = 0;
         let mut rendered_rows = 0;
-        // Rendering runs once per item page. Resolve permission-dependent visualization roots once
-        // for this hydration instead of rebuilding the same context on every page.
+        // Рендеринг выполняется для каждой страницы items, но зависящий от permissions
+        // visualization context должен строиться только один раз на всю hydration.
         let inline_visualization_context =
             config.and_then(|config| InlineVisualizationContext::from_config(config, thread_id));
         loop {

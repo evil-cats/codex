@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-08-13
+updated: 2026-08-28
 ---
 
 # Видимость core tools в TUI
@@ -51,11 +51,18 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
 | `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, исключение одноимённого extension tool и выбор `environment_id`/path convention для `read_file detail` |
-| `codex-rs/core/src/tools/registry.rs` | Оборачивает выполнение подходящих core function tools событиями `emit_turn_item_started` и `emit_turn_item_completed` без изменения model-visible `FunctionCallOutput` |
+| `codex-rs/core/tests/suite/core_tool_activity.rs` | Через настоящий function call Responses API проверяет согласованную пару `ItemStarted`/`ItemCompleted` для успешного `read_file` и итоговый `CoreToolActivityStatus::Completed` |
+| `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный тест core tool activity к общему core test binary |
+| `codex-rs/core/src/tools/registry.rs` | Оборачивает текущий путь выполнения, возвращающий `AnyToolResult`, событиями `emit_turn_item_started` и `emit_turn_item_completed` для подходящих core function tools без отдельной ячейки передачи результата и без изменения model-visible `FunctionCallOutput` |
 | `codex-rs/core/src/tools/mod.rs` | Подключает модуль `core_tool_activity` |
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Экспортирует v2 `ThreadItem::CoreToolActivity`, wire enums, `id()` и conversion из core `TurnItem` |
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Восстанавливает `CoreToolActivity` из `ItemStarted`/`ItemCompleted` при replay сохраненной thread history |
+| `codex-rs/app-server-protocol/schema/` | Хранит сгенерированные JSON, TypeScript и precomputed schema artifacts для v2 `CoreToolActivity` |
 | `codex-rs/analytics/src/reducer.rs` | Явно игнорирует `CoreToolActivity` в analytics reducer, чтобы новый UI/history item не расширял telemetry contract этой карточкой |
+| `codex-rs/rollout/src/persistence_metrics.rs` | Классифицирует вложенный `CoreToolActivity` как отдельный тип сохраняемого item без изменения решения о сохранении legacy history |
+| `codex-rs/rollout/src/persistence_metrics_tests.rs` | Проверяет тип вложенного completed item и сохранение действующего решения о фильтрации |
+| `codex-rs/thread-store/src/local/thread_history.rs` | Не использует UI-only activity для вычисления заголовка thread history |
+| `codex-rs/thread-store/src/local/thread_history/search.rs` | Не добавляет UI-only activity в searchable text thread history |
 | `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time`; для `File` показывает короткие имена, убирает диапазоны строк и дедуплицирует повторы |
 | `codex-rs/tui/src/exec_cell/model.rs` | Хранит core `File` как отдельную запись внутри существующего exploration cell, не маскируя `read_file` под shell command |
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
@@ -68,6 +75,8 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity, completed-only replay и смешанные `Search`/`File` exploration-блоки в одну ячейку |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
+| `codex-rs/tui/src/dynamic_tools.rs` | Сохраняет structured `CoreToolActivity` в thread summary и распознаёт его как latest tool marker |
+| `codex-rs/tui/src/dynamic_tools_tests.rs` | Проверяет structured thread summary для core tool activity вместе с остальными activity metadata |
 
 Намеренно не входит в эту карточку:
 
@@ -259,6 +268,10 @@ function tools и не притворяется shell execution.
 - не показывать обобщенный `Tool read_file` как основной label;
 - добавить структурированное сопоставление выбранного core tool call с
   пользовательской activity;
+- начинать activity перед текущим future обработчика registry и завершать её по
+  `Result<AnyToolResult, FunctionCallError>`; результат уже содержит
+  `ToolOutput`, поэтому отдельная ячейка результата или повторно подготовленный
+  `ToolInvocation` не нужны;
 - считать отсутствующий, пустой и нормализованный upstream namespace `functions`
   одним default namespace через `ToolName::is_default_namespace()`, но не
   материализовать одноимённые tools из других namespaces как core activity;
@@ -306,8 +319,11 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    core tool activity; текущая реализация использует `CoreToolActivity` item.
 4. Реализовать mapping только для `read_file`, `get_thread_info` и
    `get_system_time`.
-5. Сохранить model-visible outputs без изменений: результат tool call по-прежнему
-   возвращается модели как `FunctionCallOutput`.
+5. Подключить lifecycle к текущему API результата registry без промежуточного
+   хранилища: activity создаётся перед future обработчика, а completion использует
+   success/error итогового `AnyToolResult`. Сохранить model-visible outputs без
+   изменений: результат tool call по-прежнему возвращается модели как
+   `FunctionCallOutput`.
 6. Добавить TUI rendering с точными labels из этой карточки.
 7. Для `read_file` в компактной истории показывать короткое имя файла без
    диапазонов строк; коалесить соседние `File` activity в один блок без
@@ -341,11 +357,11 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "typed activity, default namespace и безопасная detail-строка для трёх core tools",
+      "purpose": "типизированная activity, lifecycle registry и безопасная detail-строка для трёх core tools",
       "argv": ["just", "test", "-p", "codex-core", "core_tool_activity"]
     },
     {
-      "purpose": "TUI grouping, lifecycle и snapshots core tool activity",
+      "purpose": "TUI grouping, lifecycle, dynamic thread summary и snapshots core tool activity",
       "argv": ["just", "test", "-p", "codex-tui", "core_tool_activity"]
     },
     {
@@ -365,6 +381,16 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
     {
       "purpose": "analytics reducer учитывает core tool activity",
       "argv": ["just", "test", "-p", "codex-analytics"]
+    },
+    {
+      "purpose": "метрики сохранения классифицируют вложенную core tool activity",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-rollout",
+        "filtered_core_tool_activity_completion_includes_its_nested_item_type"
+      ]
     },
     {
       "purpose": "отсутствие непреднамеренных изменений TUI snapshots",
@@ -402,14 +428,16 @@ app-server v2 schema и wire enums.
   выводить из такого завершения, что текущий `File` поток уже можно flush-ить.
 - Выбран item уровня protocol, поэтому нужно поддерживать app-server v2 schema,
   replay/history и обратную совместимость.
-- Динамическое значение времени может сделать snapshots нестабильными. Базовый snapshot
-  должен проверять label `System time` и детерминированный detail из аргументов,
-  а не реальное текущее время.
+- Динамическое значение времени может сделать snapshots нестабильными. Базовый
+  snapshot должен проверять label `System time` и детерминированный detail из
+  аргументов, а не реальное текущее время.
 - Видимость не должна раскрывать лишний полный path, если текущий TUI обычно
   показывает workspace-relative или compact path.
 - `read_file detail` нельзя вычислять через primary cwd, если handler выбрал
   другую environment: host-native разбор foreign path может показать соседний
   сегмент вместо basename реально прочитанного файла.
+- Интеграционный тест registry покрывает успешный `read_file` и согласованную пару
+  `ItemStarted`/`ItemCompleted`; отдельный сценарий ошибки остаётся непокрытым.
 - Нельзя проверять default tool только как `namespace == None`: upstream может
   заранее нормализовать его в `functions`. При этом любой иной namespace должен
   оставаться исключённым, чтобы одноимённый extension tool не выглядел как core.

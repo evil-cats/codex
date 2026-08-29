@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-08-13
+updated: 2026-08-28
 ---
 
 # Memory read template: встроенная политика обновления памяти
@@ -38,7 +38,7 @@ Hermione-профиль должен получать инструкции чт�
 | `codex-rs/ext/memories/templates/memories/read_path.md` | Содержит канонический read-path prompt и расширенный раздел `Updating memories` |
 | `codex-rs/ext/memories/src/prompts.rs` | Рендерит только встроенный шаблон с `{{ base_path }}` и `{{ memory_summary }}` |
 | `codex-rs/ext/memories/src/prompts_tests.rs` | Проверяет встроенный шаблон, подстановку summary и отсутствие старого запрета на самостоятельные memory updates |
-| `codex-rs/ext/memories/src/extension.rs` | Хранит только `codex_home`; не прокидывает template path |
+| `codex-rs/ext/memories/src/extension.rs` | Хранит runtime-флаги и `codex_home`; не принимает и не прокидывает template path |
 | `codex-rs/ext/memories/src/tests.rs` | Создает `MemoriesExtensionConfig` без template path |
 | `codex-rs/config/src/types.rs` | Не содержит `read_template_path` в `MemoriesToml` и `MemoriesConfig` |
 | `codex-rs/core/config.schema.json` | Не экспортирует `read_template_path` в memories schema |
@@ -92,6 +92,12 @@ Hermione-профиль должен получать инструкции чт�
 установки не могут незаметно получить разный memory contract. Config schema и
 tests закрепляют отсутствие удалённого override-слоя.
 
+Базовое чтение и ограничение `memory_summary.md`, встроенный `read_path.md` и
+отсутствие `[memories].read_template_path` уже обеспечивает upstream.
+Fork-дельта ограничена расширенной политикой `Updating memories`, явной
+проверкой разрешённых placeholders в `prompts.rs`, проверками этой политики и
+уточнением владельца runtime-шаблона в `codex-rs/memories/README.md`.
+
 ## Порядок повторения при переносе
 
 1. Найти живого runtime-владельца по
@@ -101,17 +107,21 @@ tests закрепляют отсутствие удалённого override-с
 2. В `codex-rs/ext/memories/templates/memories/read_path.md` сохранить расширенный
    раздел `Updating memories` без старого запрета `only when explicitly asked by
    the user`.
-3. Удалить `read_template_path` из `MemoriesToml`, `MemoriesConfig`,
-   `Default for MemoriesConfig` и `From<MemoriesToml> for MemoriesConfig`.
-4. Обновить `codex-rs/core/config.schema.json` через skill-owned владельца
-   `fork generators`, чтобы schema больше не экспортировала удаленный key.
-5. Удалить `read_template_path` из `MemoriesExtensionConfig` и из вызова prompt
-   builder.
-6. Упростить `build_memory_tool_developer_instructions`: убрать параметр
-   template path и чтение configured template, оставить render встроенного
-   шаблона.
-7. Удалить configured-template test. Embedded-template test должен проверять, что
-   prompt содержит новый безопасный путь обновления и не содержит старый запрет.
+3. Проверить, что `read_template_path` отсутствует в `MemoriesToml`,
+   `MemoriesConfig`, `Default for MemoriesConfig` и
+   `From<MemoriesToml> for MemoriesConfig`. Если upstream вернул этот key,
+   удалить его, а не сохранять как deprecated no-op.
+4. Если config types пришлось менять, обновить
+   `codex-rs/core/config.schema.json` через skill-owned владельца
+   `fork generators`, чтобы schema не экспортировала удалённый key.
+5. Проверить, что `MemoriesExtensionConfig` не хранит template path, а вызов
+   prompt builder передаёт только `codex_home`.
+6. Проверить `build_memory_tool_developer_instructions`: он не должен принимать
+   template path или читать configured template и должен рендерить встроенный
+   шаблон.
+7. Проверить, что configured-template test отсутствует. Embedded-template test
+   должен проверять, что prompt содержит новый безопасный путь обновления и не
+   содержит старый запрет.
 8. Обновить `codex-rs/memories/README.md`: не документировать
    `[memories].read_template_path`, оставить in-place editing undated runtime
    templates.
@@ -136,8 +146,10 @@ tests закрепляют отсутствие удалённого override-с
 }
 ```
 
-Дополнительно обязателен `fork generators`, поскольку удаление
-`read_template_path` должно синхронно отражаться в config schema.
+Если при переносе пришлось удалять `read_template_path` из config types,
+дополнительно обязателен `fork generators`, чтобы синхронно обновить config
+schema. Если upstream уже не содержит key, а config types и schema не менялись,
+этот gate для карточки не нужен.
 
 Точный фильтр `test_toml_parsing` запускает только владеющий тест TOML и
 `MemoriesConfig`, не включая посторонние тесты Code Mode по совпадению слова

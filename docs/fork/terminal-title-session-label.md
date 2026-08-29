@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Terminal title: `session-label`
@@ -12,6 +12,11 @@ updated: 2026-08-27
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет статический
 label в terminal title TUI через config key `tui.terminal_title_label` и item
 `session-label`.
+
+Доработка расширяет существующую upstream-инфраструктуру terminal title. Общая
+санитизация, OSC I/O, очистка при завершении `App` и поздний перенос кэша при
+замене `ChatWidget` остаются upstream-механизмами. В fork остаются только label,
+его проведение из config в runtime, раннее наследование кэша и регрессионное покрытие.
 
 ## Зачем это нужно
 
@@ -29,17 +34,17 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective `Config.tui_terminal_title_label` и load assignment |
 | `codex-rs/core/src/config/config_tests.rs` | Обновляет defaults/expected config shape |
 | `codex-rs/thread-manager-sample/src/main.rs` | Задаёт `tui_terminal_title_label: None` при ручной инициализации `Config` |
+| `codex-rs/cli/src/doctor/title.rs` | Считает `session-label` допустимым item в `codex doctor title` и проверяет отсутствие ложного предупреждения |
 | `codex-rs/tui/src/bottom_pane/title_setup.rs` | Добавляет terminal title item `SessionLabel` |
 | `codex-rs/tui/src/bottom_pane/status_surface_preview.rs` | Добавляет preview item `SessionLabel` |
 | `codex-rs/tui/src/chatwidget/status_surfaces.rs` | Рендерит label в preview и terminal title |
-| `codex-rs/tui/src/chatwidget.rs` | Передаёт унаследованный кэш заголовка терминала в `ChatWidgetInit` |
+| `codex-rs/tui/src/chatwidget.rs` | Добавляет унаследованный кэш заголовка терминала в `ChatWidgetInit` |
 | `codex-rs/tui/src/chatwidget/constructor.rs` | Заполняет кэш до первого обновления поверхностей состояния |
-| `codex-rs/tui/src/terminal_title.rs` | Санитизирует итоговый title, безопасно пишет или очищает OSC title и даёт тестам task-local recorder логических I/O-запросов |
+| `codex-rs/tui/src/terminal_title.rs` | Добавляет тестам task-local recorder логических I/O-запросов поверх upstream set/clear пути |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
-| `codex-rs/tui/src/app/session_lifecycle.rs` | Заменяет `ChatWidget` и сохраняет поздний резервный перенос кэша для остальных путей создания |
-| `codex-rs/tui/src/app/tests.rs` | Проверяет общий перенос кэша, реальные пути новой, возобновлённой и ответвлённой сессии, а также однократную очистку отключённого заголовка |
-| `codex-rs/tui/src/app.rs` | Перемещает текущий кэш в параметры замены до конструктора и очищает управляемый Codex заголовок при завершении `App` |
-| TUI snapshots | Обновляют popup со строкой `session-label` |
+| `codex-rs/tui/src/app/tests.rs` | Проверяет upstream fallback и реальные пути новой, возобновлённой и ответвлённой сессии, а также однократную очистку отключённого заголовка |
+| `codex-rs/tui/src/app.rs` | Перемещает текущий кэш в параметры замены до конструктора |
+| TUI snapshots | Обновляют основной selector и пять popup-вариантов строкой `session-label` |
 
 ## Итоговый контракт
 
@@ -81,39 +86,42 @@ items вроде project name, current dir или run state не всегда п
     - если config value отсутствует, item omitted;
     - если value есть, оно truncate'ится через
       `ChatWidget::truncate_terminal_title_part(..., 24)`.
-11. Итоговая строка terminal title перед OSC-записью проходит централизованную
-    санитизацию в `codex-rs/tui/src/terminal_title.rs`:
+11. `session-label` проходит существующий централизованный upstream-путь
+    санитизации в `codex-rs/tui/src/terminal_title.rs`:
     - управляющие символы и невидимые/bidi форматирующие codepoints удаляются;
     - последовательности пробельных символов сворачиваются в один пробел;
     - итог ограничивается 240 символами;
     - OSC 0 завершается через `BEL`.
-12. Если настроенные items не дают видимого текста, ранее записанный Codex title
-    очищается; успешное значение кэшируется, чтобы не повторять одинаковые
-    OSC-записи.
-13. Item должен быть доступен в terminal title selector snapshots.
-14. Низкоуровневые set/clear операции пишут OSC только когда `stdout` является
-    terminal; Windows использует ANSI-реализацию `SetWindowTitle`.
-15. При завершении `App::drop` очищает последний управляемый Codex title.
+12. Существующий upstream-цикл очищает ранее записанный Codex title, если
+    настроенные items не дают видимого текста, и кэширует успешное значение,
+    чтобы не повторять одинаковые OSC-записи.
+13. Item должен быть доступен в основном selector snapshot и во всех пяти
+    terminal title popup snapshots.
+14. Существующие upstream set/clear операции пишут OSC только когда `stdout`
+    является terminal; Windows использует ANSI-реализацию `SetWindowTitle`.
+15. Существующий upstream `App::drop` очищает последний управляемый Codex title.
     Предыдущий title shell/terminal не читается и не восстанавливается, потому
     что переносимого механизма для этого нет.
 16. Перед созданием замещающего `ChatWidget` жизненный цикл `App` перемещает текущий
     `last_terminal_title` в `ChatWidgetInit`. Конструктор заполняет кэш до
     первого `refresh_status_surfaces`, поэтому неизменившийся OSC-заголовок не
     записывается повторно, а отключённый заголовок очищается ровно один раз.
-    `App::replace_chat_widget` сохраняет поздний резервный перенос для путей,
-    которые создают замену без унаследованного состояния.
+    Существующий upstream-метод `App::replace_chat_widget` сохраняет поздний перенос для
+    путей, которые создают замену без унаследованного состояния.
 17. Ручная инициализация `Config` в `codex-thread-manager-sample` задаёт
     `tui_terminal_title_label: None`, поскольку sample не получает значение
     через общий config loading.
+18. `codex doctor title` принимает `session-label` как допустимый item и не
+    предлагает удалить рабочую fork-конфигурацию.
 
 ## Архитектурное решение
 
 Config layer владеет optional label, типизированные TUI items проводят его в
-предварительный просмотр селектора и заголовок терминала, а `terminal_title.rs`
-централизованно владеет санитизацией и OSC I/O. Жизненный цикл `App` передаёт
-кэш в параметры замены до первого обновления поверхностей состояния и очищает
-управляемый заголовок при завершении. Недоверенный текст из config никогда не
-обходит общий sanitizer.
+предварительный просмотр селектора и заголовок терминала, а CLI-диагностика
+признаёт тот же item допустимым. Fork передаёт кэш в параметры замены до первого
+обновления поверхностей состояния. Санитизация, OSC I/O, очистка при завершении
+и поздний резервный перенос остаются общей upstream-инфраструктурой; недоверенный
+текст из config никогда её не обходит.
 
 ## Порядок повторения при переносе
 
@@ -142,9 +150,8 @@ pub tui_terminal_title_label: Option<String>,
 В `Config::load_from_base_config_with_overrides` заполнить значение из
 `cfg.tui`.
 
-Важно: на `0.137.0` merge это поле однажды потерялось именно на effective
-`Config` слое. При будущих migrations проверять не только TOML type, но и
-runtime `Config`.
+При переносе проверять не только TOML type, но и effective runtime `Config`:
+одного поля в `Tui` недостаточно для рендеринга label.
 
 В `codex-rs/thread-manager-sample/src/main.rs` ручная инициализация `Config`
 должна задавать `tui_terminal_title_label: None`.
@@ -197,15 +204,18 @@ TerminalTitleItem::SessionLabel => {
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_hardcoded_only.snap`;
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_live_only.snap`;
 - `codex_tui__chatwidget__tests__terminal_title_setup_popup_mixed.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`.
+- `codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`;
+- `codex_tui__chatwidget__tests__terminal_title_setup_popup_thread_usage.snap`.
 
 ### 7. Сохранить общий lifecycle и escaping terminal title
 
-`session-label` является текстом из config, то есть недоверенным вводом. Не
-добавлять для него отдельную OSC-запись или обход общего пути
-`set_terminal_title`.
+Сначала проверить существующую upstream-инфраструктуру terminal title и не
+переносить её повторно. `session-label` является текстом из config, то есть
+недоверенным вводом: не добавлять для него отдельную OSC-запись или обход общего
+пути `set_terminal_title`.
 
-`ChatWidget::refresh_terminal_title_from_selections` должен:
+Существующий `ChatWidget::refresh_terminal_title_from_selections` должен
+сохранять следующие свойства:
 
 - пропускать отсутствующее значение `terminal_title_label` как недоступный
   сегмент;
@@ -222,7 +232,7 @@ TerminalTitleItem::SessionLabel => {
 через `ChatWidgetInit.inherited_terminal_title`. Конструктор должен заполнить
 `last_terminal_title` до первого `refresh_status_surfaces`: только так
 неизменившийся заголовок пропускает повторную OSC-запись, а удалённый новой
-конфигурацией заголовок очищается немедленно. Поздний перенос в
+конфигурацией заголовок очищается немедленно. Поздний upstream-перенос в
 `App::replace_chat_widget` остаётся резервным путём для остальных мест создания.
 
 Пути нового, возобновлённого и ответвлённого потока структурно сходятся в
@@ -235,6 +245,10 @@ TerminalTitleItem::SessionLabel => {
 включая значение `session-label`. Этот слой удаляет управляющие и
 невидимые/bidi форматирующие codepoints, нормализует пробельные символы,
 применяет общий лимит длины и кодирует OSC 0 с terminator `BEL`.
+
+После добавления item синхронизировать список допустимых значений в
+`codex-rs/cli/src/doctor/title.rs`, иначе `codex doctor title` ошибочно помечает
+`session-label` как неизвестную настройку.
 
 ## Проверки
 
@@ -252,6 +266,16 @@ TerminalTitleItem::SessionLabel => {
         "-p",
         "codex-core",
         "load_config_resolves_tui_terminal_title_label"
+      ]
+    },
+    {
+      "purpose": "codex doctor title принимает terminal session label",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-cli",
+        "terminal_title_accepts_session_label"
       ]
     },
     {
@@ -297,8 +321,10 @@ TTY; каждый сценарий требует отсутствия I/O ка�
 
 ### Риски
 
-- Проверка только `config/src/types.rs` недостаточна. При merge `0.137.0`
-  `Tui.terminal_title_label` существовал, но effective `Config` потерял поле.
+- Проверка только `config/src/types.rs` недостаточна: без effective
+  `Config.tui_terminal_title_label` значение не доходит до TUI.
+- Upstream-диагностика terminal title хранит отдельный allowlist; новый item
+  нужно синхронизировать с `codex doctor title`.
 - Selector snapshots легко устаревают, потому что добавление item меняет список
   в нескольких popup variants.
 - Long labels должны truncate'иться, иначе terminal title становится шумным.

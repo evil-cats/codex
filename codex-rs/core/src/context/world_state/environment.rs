@@ -8,6 +8,7 @@ use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use codex_protocol::models::ContentItemKind;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -198,6 +199,10 @@ impl WorldStateSection for EnvironmentsState {
 }
 
 impl ContextualUserFragment for EnvironmentsState {
+    fn content_kind(&self) -> ContentItemKind {
+        ContentItemKind("environments.environment_context".to_string())
+    }
+
     fn role(&self) -> &'static str {
         "user"
     }
@@ -233,6 +238,10 @@ enum EnvironmentUpdate {
 }
 
 impl ContextualUserFragment for RenderedEnvironments {
+    fn content_kind(&self) -> ContentItemKind {
+        ContentItemKind("environments.environment_context".to_string())
+    }
+
     fn role(&self) -> &'static str {
         "user"
     }

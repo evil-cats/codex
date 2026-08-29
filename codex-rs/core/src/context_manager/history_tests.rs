@@ -14,6 +14,7 @@ use codex_protocol::AgentPath;
 use codex_protocol::ResponseItemId;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::ContentItemKind;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -48,6 +49,13 @@ const EXEC_FORMAT_MAX_BYTES: usize = 10_000;
 const EXEC_FORMAT_MAX_TOKENS: usize = 2_500;
 const TEST_WAV_SAMPLE_RATE: u32 = 8_000;
 
+fn unknown_content_metadata() -> InternalChatMessageMetadataPassthrough {
+    InternalChatMessageMetadataPassthrough {
+        content_item_kinds: Some(vec![ContentItemKind("unknown".to_string())]),
+        ..Default::default()
+    }
+}
+
 fn pcm_wav_data_url(sample_count: u32) -> (String, usize) {
     let padding = sample_count % 2;
     let mut bytes = Vec::new();
@@ -80,7 +88,7 @@ fn assistant_msg(text: &str) -> ResponseItem {
             text: text.to_string(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     }
 }
 
@@ -99,7 +107,7 @@ fn inter_agent_assistant_msg(text: &str) -> ResponseItem {
             text: serde_json::to_string(&communication).unwrap(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     }
 }
 
@@ -136,6 +144,12 @@ fn conversation_history_snapshot_shares_response_items_until_history_changes() {
     assert_eq!(
         raw_items(&history),
         vec![assistant_msg("original"), assistant_msg("later")],
+    );
+
+    history.replace(vec![assistant_msg("replacement")]);
+    assert_ne!(
+        snapshot.history_version(),
+        history.conversation_history_snapshot().history_version()
     );
 }
 
@@ -253,7 +267,7 @@ fn user_msg(text: &str) -> ResponseItem {
             text: text.to_string(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     }
 }
 
@@ -265,7 +279,7 @@ fn user_input_text_msg(text: &str) -> ResponseItem {
             text: text.to_string(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     }
 }
 
@@ -277,7 +291,7 @@ fn developer_msg(text: &str) -> ResponseItem {
             text: text.to_string(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     }
 }
 
@@ -292,7 +306,10 @@ fn developer_msg_with_fragments(texts: &[&str]) -> ResponseItem {
             })
             .collect(),
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(InternalChatMessageMetadataPassthrough {
+            content_item_kinds: Some(vec![ContentItemKind("unknown".to_string()); texts.len()]),
+            ..Default::default()
+        }),
     }
 }
 
@@ -393,41 +410,7 @@ fn filters_non_api_messages() {
     let a = assistant_msg("hello");
     h.record_items([&u, &a], policy);
 
-    let items = raw_items(&h);
-    assert_eq!(
-        items,
-        vec![
-            ResponseItem::Reasoning {
-                id: None,
-                summary: vec![ReasoningItemReasoningSummary::SummaryText {
-                    text: "summary".to_string(),
-                }],
-                content: Some(vec![ReasoningItemContent::ReasoningText {
-                    text: "thinking...".to_string(),
-                }]),
-                encrypted_content: None,
-                internal_chat_message_metadata_passthrough: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "hi".to_string()
-                }],
-                phase: None,
-                internal_chat_message_metadata_passthrough: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "hello".to_string()
-                }],
-                phase: None,
-                internal_chat_message_metadata_passthrough: None,
-            }
-        ]
-    );
+    assert_eq!(raw_items(&h), vec![reasoning, u, a]);
 }
 
 #[test]
@@ -550,7 +533,9 @@ fn record_annotated_items_preserves_metadata_while_processing_item() {
     let envelope = ResponseItemEnvelope {
         item: ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload {
                 body: FunctionCallOutputBody::Text("word ".repeat(100)),
                 success: Some(true),
@@ -674,7 +659,17 @@ fn for_prompt_strips_media_when_model_does_not_support_it() {
                 },
             ],
             phase: None,
-            internal_chat_message_metadata_passthrough: None,
+            internal_chat_message_metadata_passthrough: Some(
+                InternalChatMessageMetadataPassthrough {
+                    content_item_kinds: Some(vec![
+                        ContentItemKind("user.text".to_string()),
+                        ContentItemKind("user.image".to_string()),
+                        ContentItemKind("user.audio".to_string()),
+                        ContentItemKind("user.text".to_string()),
+                    ]),
+                    ..Default::default()
+                },
+            ),
         },
         ResponseItem::FunctionCall {
             id: None,
@@ -687,7 +682,9 @@ fn for_prompt_strips_media_when_model_does_not_support_it() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_content_items(vec![
                 FunctionCallOutputContentItem::InputText {
                     text: "image result".to_string(),
@@ -756,7 +753,17 @@ fn for_prompt_strips_media_when_model_does_not_support_it() {
                 },
             ],
             phase: None,
-            internal_chat_message_metadata_passthrough: None,
+            internal_chat_message_metadata_passthrough: Some(
+                InternalChatMessageMetadataPassthrough {
+                    content_item_kinds: Some(vec![
+                        ContentItemKind("user.text".to_string()),
+                        ContentItemKind("images.unsupported".to_string()),
+                        ContentItemKind("audio.unsupported".to_string()),
+                        ContentItemKind("user.text".to_string()),
+                    ]),
+                    ..Default::default()
+                },
+            ),
         },
         ResponseItem::FunctionCall {
             id: None,
@@ -769,7 +776,9 @@ fn for_prompt_strips_media_when_model_does_not_support_it() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_content_items(vec![
                 FunctionCallOutputContentItem::InputText {
                     text: "image result".to_string(),
@@ -857,7 +866,7 @@ fn for_prompt_strips_media_when_model_does_not_support_it() {
             audio_url: "data:audio/wav;base64,YXVkaW8=".to_string(),
         }],
         phase: None,
-        internal_chat_message_metadata_passthrough: None,
+        internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
     };
     let with_audio = create_history_with_items(vec![audio_message.clone()]);
     assert_eq!(
@@ -904,7 +913,7 @@ fn for_prompt_preserves_image_generation_calls_when_images_are_supported() {
                     text: "hi".to_string(),
                 }],
                 phase: None,
-                internal_chat_message_metadata_passthrough: None,
+                internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
             }
         ]
     );
@@ -941,7 +950,7 @@ fn for_prompt_clears_image_generation_result_when_images_are_unsupported() {
                     text: "generate a lobster".to_string(),
                 }],
                 phase: None,
-                internal_chat_message_metadata_passthrough: None,
+                internal_chat_message_metadata_passthrough: Some(unknown_content_metadata()),
             },
             ResponseItem::ImageGenerationCall {
                 id: Some(ResponseItemId::with_suffix("ig", "123")),
@@ -992,7 +1001,9 @@ fn remove_first_item_removes_matching_output_for_function_call() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-1".to_string(),
+            call_id: Some("call-1".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("ok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -1007,7 +1018,9 @@ fn remove_first_item_removes_matching_call_for_output() {
     let items = vec![
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-2".to_string(),
+            call_id: Some("call-2".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("ok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -1044,7 +1057,9 @@ fn remove_first_item_handles_local_shell_pair() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-3".to_string(),
+            call_id: Some("call-3".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("ok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -1196,6 +1211,9 @@ fn drop_last_n_user_turns_trims_context_updates_above_rolled_back_turn() {
         assistant_msg("session prefix item"),
         user_input_text_msg("turn 1 user"),
         assistant_msg("turn 1 assistant"),
+        developer_msg(
+            "<managed_developer_instructions>\nROLLED_BACK_MANAGED_INSTRUCTIONS\n</managed_developer_instructions>",
+        ),
         developer_msg(&format!(
             "{APPS_INSTRUCTIONS_OPEN_TAG}\nROLLED_BACK_APPS_INSTRUCTIONS"
         )),
@@ -1234,6 +1252,67 @@ fn drop_last_n_user_turns_trims_context_updates_above_rolled_back_turn() {
             .expect("serialize retained reference context item"),
         serde_json::to_value(Some(reference_context_item))
             .expect("serialize expected reference context item")
+    );
+}
+
+#[test]
+fn drop_last_n_user_turns_preserves_annotations_for_surviving_developer_fragments() {
+    let turn_id = "rolled-back-turn";
+    let model_switch = ModelSwitchInstructions::new("switched model instructions").render();
+    let developer_message = ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![
+            ContentItem::InputText {
+                text: "persistent developer instructions".to_string(),
+            },
+            ContentItem::InputText { text: model_switch },
+            ContentItem::InputText {
+                text: "persistent environment instructions".to_string(),
+            },
+        ],
+        phase: None,
+        internal_chat_message_metadata_passthrough: Some(InternalChatMessageMetadataPassthrough {
+            turn_id: Some(turn_id.to_string()),
+            content_item_kinds: Some(vec![
+                ContentItemKind("generic.developer_instructions".to_string()),
+                ContentItemKind("model_switch.instructions".to_string()),
+                ContentItemKind("environments.instructions".to_string()),
+            ]),
+            ..Default::default()
+        }),
+    };
+    let mut user_message = user_input_text_msg("turn to roll back");
+    user_message.set_turn_id_if_missing(turn_id);
+    let mut history = create_history_with_items(vec![developer_message, user_message]);
+
+    history.drop_last_n_user_turns(/*num_turns*/ 1);
+
+    assert_eq!(
+        raw_items(&history),
+        vec![ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![
+                ContentItem::InputText {
+                    text: "persistent developer instructions".to_string(),
+                },
+                ContentItem::InputText {
+                    text: "persistent environment instructions".to_string(),
+                },
+            ],
+            phase: None,
+            internal_chat_message_metadata_passthrough: Some(
+                InternalChatMessageMetadataPassthrough {
+                    turn_id: Some(turn_id.to_string()),
+                    content_item_kinds: Some(vec![
+                        ContentItemKind("generic.developer_instructions".to_string()),
+                        ContentItemKind("environments.instructions".to_string()),
+                    ]),
+                    ..Default::default()
+                },
+            ),
+        }],
     );
 }
 
@@ -1338,7 +1417,9 @@ fn normalization_retains_local_shell_outputs() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "shell-1".to_string(),
+            call_id: Some("shell-1".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("Total output lines: 1\n\nok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -1360,7 +1441,9 @@ fn record_items_truncates_function_call_output_content() {
     let long_output = long_line.repeat(2_500);
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-100".to_string(),
+        call_id: Some("call-100".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::Text(long_output.clone()),
             success: Some(true),
@@ -1392,7 +1475,7 @@ fn record_items_truncates_function_call_output_content() {
     assert_eq!(history.items[0].turn_id(), Some("turn-1"));
 }
 
-/// Проверяет, что typed-пара `read_file` сохраняет уже ограниченный output целиком.
+/// Проверяет, что типизированная пара `read_file` сохраняет ограниченный результат целиком.
 #[test]
 fn record_items_preserves_read_file_output_above_model_default_limit() {
     let mut history = ContextManager::new();
@@ -1408,7 +1491,9 @@ fn record_items_preserves_read_file_output_above_model_default_limit() {
     };
     let output = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "read-file-large".to_string(),
+        call_id: Some("read-file-large".to_string()),
+        name: Some("read_file".to_string()),
+        namespace: Some("functions".to_string()),
         output: FunctionCallOutputPayload::from_text(
             "ReadFile: example.txt\ncomplete=yes\n\n".to_string()
                 + &"large file content\n".repeat(2_500),
@@ -1422,7 +1507,34 @@ fn record_items_preserves_read_file_output_above_model_default_limit() {
     assert_eq!(history.into_raw_items(), vec![call, output]);
 }
 
-/// Проверяет, что текстовый префикс `ReadFile` не отключает лимит для другого tool.
+/// Проверяет, что `FunctionCallOutput` без `call_id` не получает исключение из лимита.
+#[test]
+fn record_items_truncates_read_file_output_without_call_id() {
+    let mut history = ContextManager::new();
+    let policy = TruncationPolicy::Tokens(10);
+    let long_output = "ReadFile: example.txt\ncomplete=yes\n\n".to_string()
+        + &"unpaired file content\n".repeat(2_500);
+    let output = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: None,
+        name: Some("read_file".to_string()),
+        namespace: Some("functions".to_string()),
+        output: FunctionCallOutputPayload::from_text(long_output.clone()),
+        internal_chat_message_metadata_passthrough: None,
+    };
+
+    history.record_items([&output], policy);
+
+    let recorded = history.into_raw_items();
+    let ResponseItem::FunctionCallOutput { output, .. } = &recorded[0] else {
+        panic!("expected function call output");
+    };
+    let stored = output.text_content().expect("text output");
+    assert_ne!(stored, long_output);
+    assert!(stored.contains("tokens truncated"));
+}
+
+/// Проверяет, что текстовый префикс `ReadFile` не отключает лимит для другого инструмента.
 #[test]
 fn record_items_truncates_non_read_file_output_with_read_file_text() {
     let mut history = ContextManager::new();
@@ -1440,7 +1552,9 @@ fn record_items_truncates_non_read_file_output_with_read_file_text() {
         + &"foreign tool output\n".repeat(2_500);
     let output = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "other-tool-large".to_string(),
+        call_id: Some("other-tool-large".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_text(long_output.clone()),
         internal_chat_message_metadata_passthrough: None,
     };
@@ -1499,7 +1613,9 @@ fn record_items_respects_custom_token_limit() {
     let long_output = "tokenized content repeated many times ".repeat(200);
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-custom-limit".to_string(),
+        call_id: Some("call-custom-limit".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::Text(long_output),
             success: Some(true),
@@ -1645,7 +1761,9 @@ fn normalize_adds_missing_output_for_function_call() {
             },
             ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: "call-x".to_string(),
+                call_id: Some("call-x".to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_text("aborted".to_string()),
                 internal_chat_message_metadata_passthrough: None,
             },
@@ -1730,7 +1848,9 @@ fn normalize_adds_missing_output_for_local_shell_call_with_id() {
             },
             ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: "shell-1".to_string(),
+                call_id: Some("shell-1".to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_text("aborted".to_string()),
                 internal_chat_message_metadata_passthrough: None,
             },
@@ -1743,7 +1863,9 @@ fn normalize_adds_missing_output_for_local_shell_call_with_id() {
 fn normalize_removes_orphan_function_call_output() {
     let items = vec![ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "orphan-1".to_string(),
+        call_id: Some("orphan-1".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_text("ok".to_string()),
         internal_chat_message_metadata_passthrough: None,
     }];
@@ -1788,7 +1910,9 @@ fn normalize_mixed_inserts_and_removals() {
         // Orphan output that should be removed
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "c2".to_string(),
+            call_id: Some("c2".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("ok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -1835,7 +1959,9 @@ fn normalize_mixed_inserts_and_removals() {
             },
             ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: "c1".to_string(),
+                call_id: Some("c1".to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_text("aborted".to_string()),
                 internal_chat_message_metadata_passthrough: None,
             },
@@ -1870,7 +1996,9 @@ fn normalize_mixed_inserts_and_removals() {
             },
             ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: "s1".to_string(),
+                call_id: Some("s1".to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_text("aborted".to_string()),
                 internal_chat_message_metadata_passthrough: None,
             },
@@ -1905,12 +2033,29 @@ fn normalize_adds_missing_output_for_function_call_inserts_output() {
             },
             ResponseItem::FunctionCallOutput {
                 id: None,
-                call_id: "call-x".to_string(),
+                call_id: Some("call-x".to_string()),
+                name: None,
+                namespace: None,
                 output: FunctionCallOutputPayload::from_text("aborted".to_string()),
                 internal_chat_message_metadata_passthrough: None,
             },
         ]
     );
+}
+
+#[test]
+fn normalize_preserves_named_function_call_output_without_call_id() {
+    let item = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: None,
+        name: Some("send_message_to_thread".to_string()),
+        namespace: Some("codex_app".to_string()),
+        output: FunctionCallOutputPayload::from_text("cross-thread message".to_string()),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let history = create_history_with_items(vec![item.clone()]);
+
+    assert_eq!(history.for_prompt(&default_input_modalities()), vec![item]);
 }
 
 #[test]
@@ -2038,7 +2183,9 @@ fn normalize_adds_missing_output_for_local_shell_call_with_id_panics_in_debug() 
 fn normalize_removes_orphan_function_call_output_panics_in_debug() {
     let items = vec![ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "orphan-1".to_string(),
+        call_id: Some("orphan-1".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_text("ok".to_string()),
         internal_chat_message_metadata_passthrough: None,
     }];
@@ -2138,7 +2285,9 @@ fn normalize_mixed_inserts_and_removals_panics_in_debug() {
         },
         ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "c2".to_string(),
+            call_id: Some("c2".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload::from_text("ok".to_string()),
             internal_chat_message_metadata_passthrough: None,
         },
@@ -2214,7 +2363,9 @@ fn image_data_url_payload_does_not_dominate_function_call_output_estimate() {
     let image_url = format!("data:image/png;base64,{payload}");
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-abc".to_string(),
+        call_id: Some("call-abc".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputText {
                 text: "Screenshot captured".to_string(),
@@ -2287,7 +2438,9 @@ fn audio_data_url_payload_does_not_dominate_function_call_output_estimate() {
     let (audio_url, payload_len) = pcm_wav_data_url(/*sample_count*/ 800);
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-audio".to_string(),
+        call_id: Some("call-audio".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputAudio { audio_url },
         ]),
@@ -2347,7 +2500,9 @@ fn record_items_omits_audio_that_exceeds_the_output_budget() {
     let (audio_url, _) = pcm_wav_data_url(/*sample_count*/ 80_000);
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-audio".to_string(),
+        call_id: Some("call-audio".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::ContentItems(vec![
                 FunctionCallOutputContentItem::InputAudio { audio_url },
@@ -2364,7 +2519,9 @@ fn record_items_omits_audio_that_exceeds_the_output_budget() {
         raw_items(&history),
         &[ResponseItem::FunctionCallOutput {
             id: None,
-            call_id: "call-audio".to_string(),
+            call_id: Some("call-audio".to_string()),
+            name: None,
+            namespace: None,
             output: FunctionCallOutputPayload {
                 body: FunctionCallOutputBody::ContentItems(vec![
                     FunctionCallOutputContentItem::InputText {
@@ -2392,7 +2549,9 @@ fn non_base64_image_urls_are_unchanged() {
     };
     let function_output_item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-1".to_string(),
+        call_id: Some("call-1".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
                 image_url: "file:///tmp/foo.png".to_string(),
@@ -2417,7 +2576,9 @@ fn encrypted_function_output_uses_plaintext_byte_estimate() {
     let encrypted_content = "A".repeat(1_868);
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-encrypted".to_string(),
+        call_id: Some("call-encrypted".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::EncryptedContent {
                 encrypted_content: encrypted_content.clone(),
@@ -2476,7 +2637,9 @@ fn non_image_base64_data_url_is_unchanged() {
     let image_url = format!("data:application/octet-stream;base64,{payload}");
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-octet".to_string(),
+        call_id: Some("call-octet".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
                 image_url,
@@ -2565,7 +2728,9 @@ fn original_detail_images_scale_with_dimensions() {
     let image_url = format!("data:image/png;base64,{payload}");
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-original".to_string(),
+        call_id: Some("call-original".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
                 image_url,
@@ -2597,7 +2762,9 @@ fn original_detail_images_are_capped_at_max_patch_count() {
     let image_url = format!("data:image/png;base64,{payload}");
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-original-capped".to_string(),
+        call_id: Some("call-original-capped".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
                 image_url,
@@ -2632,7 +2799,9 @@ fn original_detail_webp_images_scale_with_dimensions() {
     let image_url = format!("data:image/webp;base64,{payload}");
     let item = ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: "call-original-webp".to_string(),
+        call_id: Some("call-original-webp".to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload::from_content_items(vec![
             FunctionCallOutputContentItem::InputImage {
                 image_url,

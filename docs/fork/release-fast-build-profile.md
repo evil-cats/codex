@@ -2,7 +2,7 @@
 id: fork-release-fast-build-profile
 status: active
 created: 2026-06-08
-updated: 2026-08-24
+updated: 2026-08-28
 ---
 
 # Release-fast build and runtime install
@@ -31,6 +31,10 @@ Hermione нужен отдельный быстрый optimized profile с бо�
 оставаться stripped, поэтому граница удаления symbols переносится из Cargo
 profile в skill-owned install staging.
 
+`release-fast` наследует от upstream `release` значения `lto = "thin"` и
+`strip = false`. Дельта fork ограничена `codegen-units = 32` и отключением
+унаследованных таблиц строк через `debug = "none"`.
+
 Code Mode исполняется отдельным `codex-code-mode-host`, который основной Codex
 лениво запускает как sidecar. Обычная локальная сборка и установка только
 `codex-hermione` оставляет Code Mode без запускаемого host, поэтому build и
@@ -58,15 +62,12 @@ install gates должны работать с этой парой как с о�
 ```toml
 [profile.release-fast]
 inherits = "release"
-# Local optimized builds should keep using multiple cores during the final
-# optimization stages. The canonical release profile above favors size.
-lto = "thin"
+# Локальная оптимизированная сборка должна сохранять параллельность на последних
+# стадиях оптимизации; канонический профиль release выше предпочитает размер.
 codegen-units = 32
-# Keep the optimized build artifact available for local profiling. The
-# skill-owned install command strips staged copies before installing runtime
-# binaries with rsync.
+# Сохраняем унаследованную через `strip = false` таблицу символов, но не добавляем
+# таблицы строк release. Skill-owned команда установки очищает staged runtime-копии.
 debug = "none"
-strip = false
 ```
 
 ### Just target
@@ -119,7 +120,9 @@ host завершается отдельно; общей cross-host транза
 а `build-fast-release` служит внутренней целью за skill-owned gate
 `fork build-fast`. Это отделяет upstream packaging profile от локального
 optimized runtime-комплекта и даёт fork workflow одну стабильную границу
-сборки.
+сборки. Унаследованные `lto` и `strip` не повторяются в профиле fork: явно
+переопределяются только параллельность генерации кода и объём отладочной
+информации.
 
 Build и install моделируют основной binary и sidecar явными artifact
 contracts. Для каждого контракта определены каноническое имя и безопасный probe;
@@ -142,8 +145,10 @@ canonical package builder.
 
 Не менять upstream `release`: он остаётся canonical profile для upstream
 workflow упаковки. Hermione `release-fast` должен переопределять только
-fork-specific настройки быстрой optimized-сборки и сохранять symbols до
-skill-owned install staging.
+специфичные для fork настройки быстрой оптимизированной сборки —
+`codegen-units = 32` и
+`debug = "none"`. Значения `lto = "thin"` и `strip = false` должны приходить
+через наследование, сохраняя symbols до skill-owned install staging.
 
 ### 2. Проверить owned target в `justfile`
 
@@ -201,7 +206,8 @@ SSH-хосте.
 ```
 
 Дополнительно обязателен skill-owned gate `fork build-fast`: он подтверждает
-реальное появление и probes обоих optimized artifacts с symbols.
+реальное появление и probes обоих optimized artifacts и сохраняет вывод `file`
+для проверки symbols. Сам gate не разбирает этот вывод автоматически.
 
 ## Риски и ограничения
 
@@ -226,6 +232,9 @@ SSH-хосте.
 - Если `release-fast` не наследует `release`, build может отличаться слишком
   сильно от shipped optimized behavior.
 - Если `codegen-units` снова станет `1`, profile потеряет смысл.
+- `fork build-fast` не отклоняет stripped artifact автоматически: при проверке
+  сборки нужно убедиться по сохранённому выводу `file`, что оба build sources
+  сохранили symbols.
 - Если `fork install` перестанет выполнять `strip`, runtime-копии сохранят
   symbols и вырастут до непрактичного размера.
 - `rsync --delay-updates` не превращает два binary в общую транзакцию;

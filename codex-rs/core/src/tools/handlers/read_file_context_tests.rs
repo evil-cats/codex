@@ -67,7 +67,9 @@ fn read_output(call_id: &str, args: &ReadFileArgs, content: &str) -> ResponseIte
 fn output_item(call_id: &str, output: String, success: Option<bool>) -> ResponseItem {
     ResponseItem::FunctionCallOutput {
         id: None,
-        call_id: call_id.to_string(),
+        call_id: Some(call_id.to_string()),
+        name: None,
+        namespace: None,
         output: FunctionCallOutputPayload {
             body: FunctionCallOutputBody::Text(output),
             success,
@@ -580,6 +582,29 @@ fn read_file_context_ignores_unsuccessful_output() {
         read_call("call-failed", &previous_args),
         output_item("call-failed", output, Some(false)),
     ];
+
+    assert_eq!(
+        coverage(
+            &history,
+            &previous_args,
+            content,
+            source("primary", "example.txt"),
+        ),
+        None
+    );
+}
+
+/// Проверяет, что `FunctionCallOutput` без `call_id` не создаёт контекстное покрытие.
+#[test]
+fn read_file_context_ignores_output_without_call_id() {
+    let content = "one\ntwo\n";
+    let previous_args = args("example.txt", None, None);
+    let mut output = read_output("call-without-output-id", &previous_args, content);
+    let ResponseItem::FunctionCallOutput { call_id, .. } = &mut output else {
+        panic!("expected function call output");
+    };
+    *call_id = None;
+    let history = vec![read_call("call-without-output-id", &previous_args), output];
 
     assert_eq!(
         coverage(

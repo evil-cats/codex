@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-08-26
+updated: 2026-08-28
 ---
 
 # Выгрузка live-runtime при переключении TUI thread
@@ -18,7 +18,7 @@ TUI. При этом сохраненная сессия, rollout, metadata, а�
 
 ## Зачем это нужно
 
-Текущее поведение выглядит странно для пользователя:
+Доработка устраняет следующий lifecycle-разрыв:
 
 ```text
 /resume или /clear
@@ -69,10 +69,10 @@ TUI переключается на другой primary thread
 | `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle; строго `#[cfg(test)]` hook воспроизводит ошибку attach после создания replacement runtime |
 | `codex-rs/tui/src/app/event_dispatch.rs` | `/fork` и shutdown-first exit переведены на runtime unload там, где live-runtime больше не нужен |
 | `codex-rs/tui/src/app/safety_buffering.rs` | Safety-buffering retry сначала прикрепляет forked thread, затем выгружает прежние tracked runtimes |
-| `codex-rs/tui/src/app/side.rs` | Явный и post-switch cleanup side conversation ожидают interrupt plus runtime unload и только затем удаляют локальное UI state |
+| `codex-rs/tui/src/app/side.rs` | Синхронная очистка сохраняет side UI при ошибке interrupt или unload; фоновая очистка после переключения сразу закрывает локальные источники событий и `dynamic_tool_tasks`, затем выполняет interrupt и runtime unload |
 | `codex-rs/core/src/agent/control/legacy.rs` | Не менять без новой причины; `close_agent` уже является настоящим shutdown path |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
-| `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, новой сессии, `/fork`, prompt backtrack, attach failure, shutdown-first и выгрузки runtime при side close |
+| `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, новой сессии, `/fork`, prompt backtrack, attach failure, shutdown-first, синхронного side close и фоновой очистки после переключения |
 | `codex-rs/tui/src/app/tests/safety_buffering.rs` | Проверяет успешный safety-buffering retry и сохранение старого runtime с черновиком при ранней ошибке fork |
 | `docs/fork/tui-thread-runtime-unload.md` | Владеющий handoff-артефакт этой fork-доработки |
 
@@ -90,7 +90,7 @@ TUI переключается на другой primary thread
 
 ### Новый runtime unload
 
-Добавить или переиспользовать app-server v2 метод с семантикой:
+Реализован app-server v2 метод со следующей семантикой:
 
 ```text
 thread/unload({ threadId })
@@ -114,8 +114,10 @@ ThreadUnloadResponse {
 
 `status: "unloaded"` возвращается только после успешного
 `CodexThread::shutdown_and_wait()` и удаления thread из loaded map. Ошибки
-submit shutdown и timeout возвращаются как request error, чтобы TUI не удалял
-локальное state после неуспешной server-side выгрузки.
+submit shutdown и timeout возвращаются как request error. Переходы primary
+thread и синхронная очистка side conversation сохраняют прежнее локальное state
+при такой ошибке; фоновая очистка после уже состоявшегося переключения описана
+отдельно ниже.
 
 ### TUI primary transitions
 
@@ -140,7 +142,9 @@ safety-buffering retry сначала получают и прикрепляют
 
 ### TUI side conversation
 
-TUI side conversation close/discard должен выгружать side runtime:
+TUI side conversation close/discard должен выгружать side runtime. Синхронная
+очистка, при которой side conversation ещё можно оставить видимой, использует
+следующую последовательность:
 
 ```text
 discard_side_thread
@@ -150,10 +154,17 @@ discard_side_thread
 ```
 
 Если unload завершился ошибкой, side conversation остается видимой или
-восстанавливается в UI, как текущий код уже делает при ошибке cleanup.
-Post-switch cleanup также не должен возвращаться к fire-and-forget
-`thread/unsubscribe`: он ожидает тот же unload path перед удалением локального
-state, даже если пользователь уже переключился на parent thread.
+восстанавливается в UI, как текущий синхронный путь уже делает при ошибке
+очистки.
+
+После успешного переключения на другой thread действует отдельный фоновый путь.
+Он сразу помечает side thread как abandoned, отменяет связанные
+`dynamic_tool_tasks`, удаляет локальные event channels и navigation state, чтобы
+поздние события не вернули закрытую conversation в UI. Затем отдельная задача
+последовательно отправляет interrupt и `thread/unload`. Ошибки этого позднего
+server-side cleanup записываются в журнал, но уже удалённое локальное state не
+восстанавливается. Фоновый путь не должен возвращаться к
+`thread/unsubscribe`.
 
 ### Что остается только unsubscribe
 
@@ -174,10 +185,10 @@ unsubscribe только там, где runtime действительно до�
 ### Почему не менять `thread/unsubscribe`
 
 Изменение `thread/unsubscribe` на immediate shutdown сломало бы app-server
-контракт для внешних клиентов и существующие tests. Сейчас unsubscribe сохраняет
-thread loaded до idle unload, что может быть полезно для reattach. Баг не в
-самом unsubscribe, а в том, что TUI использует его в местах, где нужна выгрузка
-runtime.
+контракт для внешних клиентов и существующие tests. Unsubscribe сохраняет thread
+loaded до idle unload, что может быть полезно для reattach. Поэтому TUI явно
+использует `thread/unload` в lifecycle paths, где runtime больше не нужен, не
+меняя семантику общей операции unsubscribe.
 
 ### Почему не delete/archive
 
@@ -191,8 +202,9 @@ thread должен снова открываться через resume.
 Core tool `close_agent` вызывает `AgentControl::close_agent`, который помечает
 spawn edge closed для non-ephemeral agents и затем вызывает shutdown дерева
 agents. Для live agents это отправляет `Op::Shutdown`, ждет termination и
-удаляет thread из manager. Поэтому утечка MCP из обсуждаемого симптома скорее
-идет из TUI paths, где "закрытие" реализовано как `thread/unsubscribe`.
+удаляет thread из manager. Поэтому этот путь уже владеет полноценным shutdown,
+а TUI lifecycle transitions отдельно используют `thread/unload` там, где
+сохранённая сессия должна остаться доступной.
 
 ### Почему `/agent` navigation исключена из автоматической выгрузки
 
@@ -200,6 +212,16 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 Если agent продолжает работу или ожидает approval, автоматическая выгрузка при
 каждом переключении view нарушит multi-agent workflow. Закрывать runtime нужно
 только для явных lifecycle transitions и close/discard actions.
+
+### Почему очистка после переключения остаётся фоновой
+
+После успешного переключения на parent или другой thread side conversation уже
+не должна принимать approvals, dynamic-tool completions и прочие поздние
+события. Поэтому upstream cleanup немедленно закрывает локальные источники этих
+событий и не удерживает переход UI на время interrupt/unload. Fork сохраняет
+этот порядок, но заменяет завершающий `thread/unsubscribe` на
+`thread/unload`, чтобы фоновая очистка освобождала live-runtime, а не только
+subscription.
 
 ## Порядок повторения при переносе
 
@@ -214,7 +236,10 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
 5. Разделить TUI helpers: plain unsubscribe для event subscription cleanup и
    runtime unload для переходов active primary thread.
 6. Перевести `/resume`, `/clear`, новую сессию, `/fork`, shutdown-first exit и
-   TUI side close на runtime unload, сохраняя UX восстановления после ошибки.
+   TUI side close на runtime unload. Для синхронной очистки side conversation
+   сохранить UI state при ошибке; в фоновой очистке после переключения сохранить
+   upstream-порядок немедленного удаления локального state с последующим
+   interrupt/unload.
    Отдельно проверить появившиеся в upstream переходы prompt backtrack и
    safety-buffering retry: новый thread должен быть прикреплен до выгрузки старых
    runtime.
@@ -352,17 +377,27 @@ agents. Для live agents это отправляет `Op::Shutdown`, ждет 
         "codex-tui",
         "discard_side_thread_unloads_side_runtime"
       ]
+    },
+    {
+      "purpose": "TUI фоновая очистка отменяет side tasks, игнорирует поздние события и выгружает runtime",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "background_side_cleanup_unloads_runtime_and_ignores_late_events"
+      ]
     }
   ]
 }
 ```
 
-Новые сценарии проверяют полный список загруженных app-server threads и активное
+Сценарии проверяют полный список загруженных app-server threads и активное
 состояние TUI. Test-only attach hook срабатывает после создания replacement
 runtime, но до замены `ChatWidget`: при этой ошибке source runtime и прежнее
-состояние TUI сохраняются. Код этих тестов принят статической вычиткой, но пока
-не компилировался, не форматировался и не запускался; исполняемая проверка карты
-отложена до общего тестового прохода по карточкам.
+состояние TUI сохраняются. Фоновая очистка side conversation отдельно проверяет
+отмену dynamic-tool task, игнорирование поздних событий и наблюдаемую выгрузку
+реального side runtime.
 
 Дополнительно обязателен `fork generators`, поскольку доработка добавляет `thread/unload` в app-server API и generated TypeScript schema.
 
@@ -374,9 +409,10 @@ runtime, но до замены `ChatWidget`: при этой ошибке sourc
 - `thread/unload` должен быть bounded и не должен зависнуть навсегда на
   shutdown: существующий app-server path уже использует timeout для thread
   shutdown.
-- Side conversation close должен сохранить текущий UX восстановления после
+- Синхронная очистка side conversation должна сохранить текущий UX после
   ошибки: если server-side close завершился ошибкой, локальное UI state нельзя
-  молча удалить.
+  молча удалить. Фоновая очистка после переключения уже удаляет локальное state и
+  при поздней ошибке interrupt/unload ограничивается записью в журнал.
 - `/agent` view switching нельзя смешивать с lifecycle close. Для работающих
   subagents автоматический unload при навигации был бы behavioral regression.
 - Если MCP server игнорирует terminate, нижний `RmcpClient::shutdown` и

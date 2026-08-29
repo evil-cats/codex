@@ -159,7 +159,7 @@ struct ParsedContentOutput<'a> {
     body: &'a str,
 }
 
-/// Ищет самый свежий одиночный output, который сам полностью покрывает запрос.
+/// Ищет самый свежий одиночный результат с `call_id`, полностью покрывающий запрос.
 pub(super) fn find_context_coverage(
     history: &[ResponseItem],
     request: &ReadFileContextRequest<'_>,
@@ -200,7 +200,8 @@ pub(super) fn find_context_coverage(
             if output.success == Some(false) {
                 return None;
             }
-            let (call_index, arguments) = calls.get(call_id.as_str())?;
+            let call_id = call_id.as_deref()?;
+            let (call_index, arguments) = calls.get(call_id)?;
             if *call_index >= output_index {
                 return None;
             }
@@ -225,7 +226,7 @@ pub(super) fn find_context_coverage(
             }
 
             Some(ReadFileContextCoverage {
-                call_id: call_id.clone(),
+                call_id: call_id.to_string(),
                 available_range: parsed.returned_range,
             })
         })
