@@ -10,15 +10,64 @@ use serde::Serialize;
 
 static BUILD_INFO: OnceLock<BuildInfo> = OnceLock::new();
 
-/// Initialize build information from the commit stamped into the calling executable.
+/// Размер payload в секции ревизии: полный SHA-1 Git занимает ровно 40 байт.
+pub const BUILD_COMMIT_STAMP_LEN: usize = 40;
+
+/// Инициализирует сведения о сборке из секции конечного executable.
 ///
-/// The environment lookup intentionally expands at the macro call site so Git
-/// changes invalidate only final binary actions, not this shared library.
+/// `STABLE_GIT_COMMIT` раскрывается в месте вызова макроса. На ELF-целях
+/// фиксированный payload получает отдельную секцию, которую release workflow
+/// может заменить через `objcopy` без повторной линковки бинарника.
 #[macro_export]
 macro_rules! initialize {
-    () => {
-        $crate::BuildInfo::initialize(option_env!("STABLE_GIT_COMMIT").unwrap_or("dev"));
+    () => {{
+        #[used]
+        #[cfg_attr(
+            any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "illumos",
+                target_os = "linux",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "solaris"
+            ),
+            unsafe(link_section = ".hermione_revision")
+        )]
+        static BUILD_COMMIT_STAMP: [u8; $crate::BUILD_COMMIT_STAMP_LEN] =
+            $crate::encode_build_commit_stamp(option_env!("STABLE_GIT_COMMIT"));
+
+        $crate::BuildInfo::initialize($crate::decode_build_commit_stamp(&BUILD_COMMIT_STAMP));
+    }};
+}
+
+/// Кодирует compile-time ревизию в фиксированный payload секции executable.
+#[doc(hidden)]
+pub const fn encode_build_commit_stamp(build_commit: Option<&str>) -> [u8; BUILD_COMMIT_STAMP_LEN] {
+    let build_commit = match build_commit {
+        Some(build_commit) => build_commit.as_bytes(),
+        None => b"dev",
     };
+    assert!(build_commit.len() <= BUILD_COMMIT_STAMP_LEN);
+
+    let mut stamp = [0; BUILD_COMMIT_STAMP_LEN];
+    let mut index = 0;
+    while index < build_commit.len() {
+        stamp[index] = build_commit[index];
+        index += 1;
+    }
+    stamp
+}
+
+/// Декодирует нуль-терминированный payload секции без выделения памяти.
+#[doc(hidden)]
+pub fn decode_build_commit_stamp(stamp: &'static [u8; BUILD_COMMIT_STAMP_LEN]) -> &'static str {
+    let length = stamp
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(BUILD_COMMIT_STAMP_LEN);
+    std::str::from_utf8(&stamp[..length]).expect("build commit stamp must be valid UTF-8")
 }
 
 /// The packaged release version and build provenance for the current runtime.

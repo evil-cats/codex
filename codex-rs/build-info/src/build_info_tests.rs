@@ -5,9 +5,36 @@ use pretty_assertions::assert_eq;
 use semver::Version;
 use tempfile::tempdir;
 
+use crate::BUILD_COMMIT_STAMP_LEN;
 use crate::BuildInfo;
+use crate::decode_build_commit_stamp;
+use crate::encode_build_commit_stamp;
 
 const BUILD_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// Фиксированный stamp сохраняет короткое development-значение и полный Git SHA.
+#[test]
+fn build_commit_stamp_round_trips_supported_revisions() {
+    static DEVELOPMENT_STAMP: [u8; BUILD_COMMIT_STAMP_LEN] =
+        encode_build_commit_stamp(/*build_commit*/ None);
+    static RELEASE_STAMP: [u8; BUILD_COMMIT_STAMP_LEN] =
+        encode_build_commit_stamp(Some(BUILD_COMMIT));
+
+    assert_eq!(
+        (
+            decode_build_commit_stamp(&DEVELOPMENT_STAMP),
+            decode_build_commit_stamp(&RELEASE_STAMP),
+        ),
+        ("dev", BUILD_COMMIT),
+    );
+}
+
+/// Payload длиннее полного SHA не может незаметно изменить соседние ELF-секции.
+#[test]
+#[should_panic]
+fn build_commit_stamp_rejects_oversized_value() {
+    encode_build_commit_stamp(Some("0123456789abcdef0123456789abcdef012345678"));
+}
 
 /// A packaged runtime takes its release identity from its package manifest.
 #[test]

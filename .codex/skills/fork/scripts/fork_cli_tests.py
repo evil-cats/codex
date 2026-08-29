@@ -31,6 +31,7 @@ SPEC.loader.exec_module(fork_cli)
 class RecordingLogSession:
     instances = []
     capture_responses = {}
+    step_responses = {}
 
     def __init__(self, **kwargs) -> None:
         self.mode = kwargs.get("mode")
@@ -56,7 +57,7 @@ class RecordingLogSession:
     ) -> int:
         self.steps.append((label, argv))
         self.env_overrides.append(env_overrides)
-        return 0
+        return RecordingLogSession.step_responses.get(label, 0)
 
     def run_capture(
         self, label: str, argv: list[str]
@@ -71,7 +72,7 @@ class RecordingLogSession:
         if label.endswith(" revision"):
             revision = (
                 fork_cli.DEVELOPMENT_REVISION
-                if self.mode == "build-fast"
+                if self.mode == "build-fast" or " source revision" in label
                 else TEST_GIT_REVISION
             )
             return 0, f"Usage: test\n\nRevision: {revision}\n", ""
@@ -123,6 +124,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         RecordingLogSession.instances.clear()
         RecordingLogSession.capture_responses.clear()
+        RecordingLogSession.step_responses.clear()
 
     def create_executable_pair(self, main_path: Path) -> None:
         """Создаёт минимальную пару файлов для mocked build/install workflow."""
@@ -160,6 +162,17 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             with self.subTest(output=output):
                 with self.assertRaises(ValueError):
                     fork_cli.parse_binary_revision(output)
+
+    def test_revision_section_payload_accepts_only_full_git_sha(self) -> None:
+        """Release payload имеет точный размер ELF-секции и не принимает dev."""
+        self.assertEqual(
+            fork_cli.revision_section_payload(TEST_GIT_REVISION),
+            TEST_GIT_REVISION.encode("ascii"),
+        )
+        for revision in ("dev", "abc123", TEST_GIT_REVISION.upper()):
+            with self.subTest(revision=revision):
+                with self.assertRaises(ValueError):
+                    fork_cli.revision_section_payload(revision)
 
     def test_build_fast_forces_development_revision_without_clean_check(self) -> None:
         """Development build остаётся доступным для dirty checkout и всегда даёт dev."""
@@ -305,12 +318,12 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertNotIn(
-            "stamped release-fast build",
+            "release-fast freshness build",
             [label for label, _argv in RecordingLogSession.instances[0].steps],
         )
 
-    def test_default_install_stamps_clean_head_and_verifies_all_stages(self) -> None:
-        """Clean install встраивает HEAD и сверяет source, staged и installed пары."""
+    def test_default_install_stamps_staging_and_verifies_all_stages(self) -> None:
+        """Clean install сохраняет source=dev и сверяет stamped и installed пары."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             self.create_executable_pair(
@@ -340,11 +353,11 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         self.assertEqual(result, 0)
         session = RecordingLogSession.instances[0]
         build_index = [label for label, _argv in session.steps].index(
-            "stamped release-fast build"
+            "release-fast freshness build"
         )
         self.assertEqual(
             session.env_overrides[build_index],
-            {"V8_TEST": "1", "STABLE_GIT_COMMIT": TEST_GIT_REVISION},
+            {"V8_TEST": "1", "STABLE_GIT_COMMIT": "dev"},
         )
         self.assertEqual(
             [
@@ -361,6 +374,20 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 "Code Mode host installed revision",
             ],
         )
+        stamp_steps = [
+            (label, argv)
+            for label, argv in session.steps
+            if label.endswith("stamp staged binary")
+        ]
+        self.assertEqual(
+            [label for label, _argv in stamp_steps],
+            ["Codex stamp staged binary", "Code Mode host stamp staged binary"],
+        )
+        for _label, argv in stamp_steps:
+            self.assertEqual(argv[1], "--update-section")
+            self.assertTrue(
+                argv[2].startswith(f"{fork_cli.REVISION_ELF_SECTION}=")
+            )
         self.assertIn(f"REVISION: {TEST_GIT_REVISION}", session.ok_extra)
 
     def test_default_install_rejects_head_change_during_build(self) -> None:
@@ -402,8 +429,8 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             [label for label, _argv in RecordingLogSession.instances[0].steps],
         )
 
-    def test_default_install_rejects_candidate_revision_other_than_head(self) -> None:
-        """Stamped candidate обязан соответствовать зафиксированному clean HEAD."""
+    def test_default_install_rejects_source_revision_other_than_dev(self) -> None:
+        """Freshness build обязан оставить оба source-кандидата development-сборками."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             self.create_executable_pair(
@@ -442,8 +469,8 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             [label for label, _argv in RecordingLogSession.instances[0].steps],
         )
 
-    def test_install_rejects_development_candidate_revision(self) -> None:
-        """Stamped install не позволяет опубликовать пару с Revision: dev."""
+    def test_install_rejects_unstamped_staged_revision(self) -> None:
+        """После objcopy staging-пара уже не может оставаться Revision: dev."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             main_source = repo_root / "codex-rs/target/release-fast/codex"
@@ -457,7 +484,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     str(repo_root / "install/codex-hermione"),
                 ]
             )
-            for label in ("Codex source revision", "Code Mode host source revision"):
+            for label in ("Codex staged revision", "Code Mode host staged revision"):
                 RecordingLogSession.capture_responses[label] = (
                     0,
                     "Revision: dev\n",
@@ -482,7 +509,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         )
 
     def test_install_rejects_mismatched_candidate_revisions(self) -> None:
-        """Собранная пара отклоняется до staging при разных ревизиях."""
+        """Development-пара отклоняется до staging при разных ревизиях."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             main_source = repo_root / "codex-rs/target/release-fast/codex"
@@ -498,7 +525,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
             RecordingLogSession.capture_responses["Codex source revision"] = (
                 0,
-                f"Revision: {TEST_GIT_REVISION}\n",
+                "Revision: dev\n",
                 "",
             )
             RecordingLogSession.capture_responses[
@@ -689,8 +716,41 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ["Codex staged revision", "Code Mode host staged revision"],
             )
 
+    def test_install_rejects_objcopy_failure_before_sync(self) -> None:
+        """Ошибка обновления ELF-секции не должна публиковать ни один binary."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.create_release_fast_pair(root)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(root),
+                    "--target",
+                    str(root / "install/codex-hermione"),
+                ]
+            )
+            RecordingLogSession.step_responses["Codex stamp staged binary"] = 1
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "LogSession", RecordingLogSession
+                ),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "sync local binaries",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
+
     def test_install_rejects_revision_changed_after_strip(self) -> None:
-        """Изменение stamp во временной копии блокирует публикацию через rsync."""
+        """Неверный stamp во временной копии блокирует публикацию через rsync."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.create_release_fast_pair(root)

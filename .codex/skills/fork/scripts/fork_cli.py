@@ -33,6 +33,8 @@ FORK_TEST_PLATFORMS = ("linux", "macos", "windows")
 REVISION_PREFIX = "Revision: "
 DEVELOPMENT_REVISION = "dev"
 FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+REVISION_ELF_SECTION = ".hermione_revision"
+REVISION_ELF_SECTION_SIZE = 40
 
 REQUIRED_FILES = (
     "SKILL.md",
@@ -827,6 +829,19 @@ def parse_binary_revision(help_output: str) -> str:
     if revision == DEVELOPMENT_REVISION or FULL_GIT_REVISION_RE.fullmatch(revision):
         return revision
     raise ValueError(f"недопустимая ревизия бинарника: {revision!r}")
+
+
+def revision_section_payload(revision: str) -> bytes:
+    """Кодирует полный Git SHA для фиксированной ELF-секции executable."""
+    if not FULL_GIT_REVISION_RE.fullmatch(revision):
+        raise ValueError(f"для release stamp нужен полный Git SHA: {revision!r}")
+    payload = revision.encode("ascii")
+    if len(payload) != REVISION_ELF_SECTION_SIZE:
+        raise ValueError(
+            "размер release stamp не совпадает с размером ELF-секции: "
+            f"{len(payload)} != {REVISION_ELF_SECTION_SIZE}"
+        )
+    return payload
 
 
 def verify_revision_probes(
@@ -2033,6 +2048,9 @@ def cmd_install(args: argparse.Namespace) -> int:
     strip_cmd = session.check_command("strip")
     if not strip_cmd:
         return session.fail(label="require command: strip")
+    objcopy_cmd = session.check_command("objcopy")
+    if not objcopy_cmd:
+        return session.fail(label="require command: objcopy")
     rsync_cmd = session.check_command("rsync")
     if not rsync_cmd:
         return session.fail(label="require command: rsync")
@@ -2060,11 +2078,11 @@ def cmd_install(args: argparse.Namespace) -> int:
     if result != 0:
         return result
     result = session.run_step(
-        "stamped release-fast build",
+        "release-fast freshness build",
         [just, "build-fast-release"],
         env_overrides={
             **cargo_env,
-            "STABLE_GIT_COMMIT": expected_revision,
+            "STABLE_GIT_COMMIT": DEVELOPMENT_REVISION,
         },
     )
     if result != 0:
@@ -2107,7 +2125,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     result, source_revision = verify_revision_probes(
         session,
         revision_probes_for_artifacts(source_artifacts, "source"),
-        expected_revision=expected_revision,
+        expected_revision=DEVELOPMENT_REVISION,
     )
     if result != 0:
         return result
@@ -2138,7 +2156,11 @@ def cmd_install(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="fork-install-") as temp_dir:
         staging_main = Path(temp_dir) / main_target_name
         staging_artifacts = install_binary_artifacts(source_path, staging_main)
+        revision_payload_path = Path(temp_dir) / "revision.bin"
         try:
+            revision_payload_path.write_bytes(
+                revision_section_payload(expected_revision)
+            )
             for artifact in staging_artifacts:
                 shutil.copy2(artifact.source, artifact.target)
                 artifact.target.chmod(0o755)
@@ -2152,6 +2174,15 @@ def cmd_install(args: argparse.Namespace) -> int:
                 (
                     f"{label} strip staged binary",
                     [strip_cmd, str(artifact.target)],
+                ),
+                (
+                    f"{label} stamp staged binary",
+                    [
+                        objcopy_cmd,
+                        "--update-section",
+                        f"{REVISION_ELF_SECTION}={revision_payload_path}",
+                        str(artifact.target),
+                    ],
                 ),
                 (
                     f"{label} staged binary metadata",
@@ -2173,7 +2204,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         result, _staged_revision = verify_revision_probes(
             session,
             revision_probes_for_artifacts(staged_binary_artifacts, "staged"),
-            expected_revision=source_revision,
+            expected_revision=expected_revision,
         )
         if result != 0:
             return result
@@ -2224,7 +2255,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                 revision_probes_for_artifacts(
                     installed_binary_artifacts, "installed"
                 ),
-                expected_revision=source_revision,
+                expected_revision=expected_revision,
             )
             if result != 0:
                 return result
@@ -2234,7 +2265,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                     f"TARGET: {local_artifacts[0].target}",
                     f"CODE_MODE_HOST_SOURCE: {local_artifacts[1].source}",
                     f"CODE_MODE_HOST_TARGET: {local_artifacts[1].target}",
-                    f"REVISION: {source_revision}",
+                    f"REVISION: {expected_revision}",
                 ]
             )
 
@@ -2315,7 +2346,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             result, _remote_revision = verify_revision_probes(
                 session,
                 remote_revision_probes,
-                expected_revision=source_revision,
+                expected_revision=expected_revision,
             )
             if result != 0:
                 return result
@@ -2328,7 +2359,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             f"REMOTE_TARGET: {remote_target}",
             f"REMOTE_CODE_MODE_HOST_TARGET: "
             f"{remote_target.with_name(RELEASE_FAST_BINARY_CONTRACTS[1].binary_name)}",
-            f"REVISION: {source_revision}",
+            f"REVISION: {expected_revision}",
         ]
     )
 
