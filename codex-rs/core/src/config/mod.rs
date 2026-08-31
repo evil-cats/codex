@@ -236,7 +236,6 @@ pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS: usize = 1000;
 pub(crate) const DEFAULT_READ_FILE_CONTENT_MAX_TOKENS: usize = 10_000;
-const MAX_MODEL_INSTRUCTIONS_TOKENS: usize = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
@@ -3990,22 +3989,7 @@ impl Config {
                             .expect("a provided model instructions path must produce a section");
                     sections.push(section);
                 }
-                // Результат становится одним model-visible элементом. Усечение могло бы
-                // незаметно удалить обязательную секцию, поэтому превышение отклоняется целиком.
-                let instructions = sections.join("\n\n");
-                if instructions.len()
-                    > codex_utils_string::approx_bytes_for_tokens(MAX_MODEL_INSTRUCTIONS_TOKENS)
-                {
-                    let estimated_tokens =
-                        codex_utils_string::approx_tokens_from_byte_count(instructions.len());
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!(
-                            "`model_instructions_files` exceeds the model-context limit of {MAX_MODEL_INSTRUCTIONS_TOKENS} estimated tokens ({estimated_tokens})"
-                        ),
-                    ));
-                }
-                Some(instructions)
+                Some(sections.join("\n\n"))
             }
         } else {
             None

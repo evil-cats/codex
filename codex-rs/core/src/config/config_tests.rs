@@ -567,18 +567,19 @@ async fn model_instructions_files_are_joined_in_order() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Проверяет, что объединённые секции не создают безразмерный `base_instructions`.
+/// Проверяет отсутствие отдельного предела для объединённых базовых инструкций.
 #[tokio::test]
-async fn model_instructions_files_reject_oversized_combined_instructions() -> std::io::Result<()> {
+async fn model_instructions_files_preserve_large_combined_instructions() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let first_path = codex_home.path().join("model-a.md");
     let second_path = codex_home.path().join("model-b.md");
-    let first_section =
-        "x".repeat(codex_utils_string::approx_bytes_for_tokens(/*tokens*/ 10_000) - 1);
-    tokio::fs::write(&first_path, first_section).await?;
+    let first_section = "x".repeat(codex_utils_string::approx_bytes_for_tokens(
+        /*tokens*/ 10_000,
+    ));
+    tokio::fs::write(&first_path, &first_section).await?;
     tokio::fs::write(&second_path, "y").await?;
 
-    let result = Config::load_from_base_config_with_overrides(
+    let config = Config::load_from_base_config_with_overrides(
         ConfigToml {
             model_instructions_files: vec![first_path.abs(), second_path.abs()],
             ..Default::default()
@@ -586,14 +587,10 @@ async fn model_instructions_files_reject_oversized_combined_instructions() -> st
         ConfigOverrides::default(),
         codex_home.abs(),
     )
-    .await;
+    .await?;
 
-    let err = result.expect_err("oversized model instructions files should fail");
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert_eq!(
-        err.to_string(),
-        "`model_instructions_files` exceeds the model-context limit of 10000 estimated tokens (10001)"
-    );
+    let expected = format!("{first_section}\n\ny");
+    assert_eq!(config.base_instructions.as_deref(), Some(expected.as_str()));
 
     Ok(())
 }
