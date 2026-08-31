@@ -2,7 +2,7 @@
 id: fork-exec-command-stdin
 status: active
 created: 2026-08-06
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Начальный `stdin` для `exec_command`
@@ -61,17 +61,18 @@ echo "hello" | wc -c
 | `codex-rs/core/src/tools/handlers/shell_spec.rs` | Добавляет видимое модели опциональное поле `stdin` в схему `exec_command` и описывает семантику UTF-8, EOF и TTY |
 | `codex-rs/core/src/tools/handlers/shell_spec_tests.rs` | Проверяет схему, опциональность поля и точное описание нового аргумента |
 | `codex-rs/core/src/tools/handlers/unified_exec.rs` | Добавляет `stdin: Option<String>` в `ExecCommandArgs` без изменения разбора `cmd` |
-| `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Сохраняет `stdin` после перезаписи команды обработчиком hook, передаёт его в unified exec и не включает в данные проверки разрешения команды |
-| `codex-rs/core/src/tools/handlers/unified_exec_tests.rs` | Проверяет разбор аргументов, перезапись команды обработчиком hook и отсутствие потери или подмены `stdin` |
+| `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Сохраняет `stdin` после перезаписи команды обработчиком hook, передаёт его в unified exec и уточняет non-TTY EOF в видимой модели схеме одноразового режима |
+| `codex-rs/core/src/tools/handlers/unified_exec_tests.rs` | Проверяет разбор аргументов, одноразовую схему, перезапись команды обработчиком hook и отсутствие потери или подмены `stdin` |
 | `codex-rs/core/src/tools/handlers/apply_patch.rs` | Явно отклоняет перехваченный `apply_patch`, если вызов `exec_command` одновременно передал `stdin`, до изменения файлов |
 | `codex-rs/core/src/unified_exec/mod.rs` | Добавляет начальный ввод в `ExecCommandRequest` |
+| `codex-rs/core/src/unified_exec/oneshot.rs` | Проводит тот же `ExecCommandRequest` через управляемый одноразовый режим до завершения, тайм-аута или отмены без потери начального ввода |
 | `codex-rs/core/src/tools/runtimes/unified_exec.rs` | Проводит начальный ввод через исполнитель unified exec и не включает его в `UnifiedExecApprovalKey` |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | Открывает stdin, передаёт начальный ввод, закрывает non-TTY-поток и сохраняет PTY открытым |
 | `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Проверяет передачу начального ввода в удалённый `ExecParams` |
 | `codex-rs/core/src/unified_exec/async_watcher_tests.rs` | Совместимо инициализирует расширенный `ProcessDriver` в существующей тестовой инфраструктуре |
 | `codex-rs/core/src/unified_exec/mod_tests.rs` | Обновляет существующие тестовые вызовы диспетчера процессов для нового опционального аргумента |
 | `codex-rs/core/tests/suite/mod.rs` | Регистрирует отдельный интеграционный модуль доработки |
-| `codex-rs/core/tests/suite/unified_exec_initial_stdin.rs` | Проверяет полный путь вызова инструмента, EOF, точность текста, TTY, объявленную возможность удалённого сервера и отказ `apply_patch` до мутации |
+| `codex-rs/core/tests/suite/unified_exec_initial_stdin.rs` | Проверяет полный путь вызова инструмента, EOF, точность текста, управляемый одноразовый режим, TTY, объявленную возможность удалённого сервера и отказ `apply_patch` до мутации |
 | `codex-rs/utils/pty/src/process.rs` | Предоставляет подтверждаемую запись начального ввода и возвращает фактическую ошибку поддерживающей реализации |
 | `codex-rs/utils/pty/src/lib.rs` | Экспортирует подтверждаемый запрос начального stdin для транспортов с внешним драйвером |
 | `codex-rs/utils/pty/src/pipe.rs` | Подтверждает результат `write_all` и `flush` для начального ввода процесса с pipe |
@@ -79,6 +80,7 @@ echo "hello" | wc -c
 | `codex-rs/utils/pty/src/unix_io.rs` | Объединяет обычные и подтверждаемые начальные записи в неблокирующем Unix PTY-драйвере и возвращает фактическую ошибку записи |
 | `codex-rs/utils/pty/src/tests.rs` | Детерминированно проверяет передачу низкоуровневой ошибки записи вызывающему коду |
 | `codex-rs/exec-server-protocol/src/protocol.rs` | Добавляет возможность `initial_stdin` и опциональное поле начального ввода в `ExecParams` для удалённого окружения |
+| `codex-rs/exec-server/src/client_refresh_tests.rs` | Совместимо инициализирует расширенный `ExecParams` без начального ввода в тесте обновления клиента |
 | `codex-rs/exec-server/src/local_process.rs` | Передаёт начальный ввод в созданный процесс и закрывает канал записи non-TTY после отправки |
 | `codex-rs/exec-server/tests/exec_process.rs` | Проверяет локальный и удалённый транспорт exec-server, EOF и соблюдение ограничений sandbox |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/backends/legacy.rs` | Подтверждает результат прямого Windows `WriteFile` и возвращает ошибку начальной записи |
@@ -99,6 +101,7 @@ echo "hello" | wc -c
 
 - `codex-rs/cli/tests/exec_server.rs`;
 - `codex-rs/exec-server/src/client.rs`;
+- `codex-rs/exec-server/src/client_refresh_tests.rs`;
 - `codex-rs/exec-server/src/client/tests/network_policy_tests.rs`;
 - `codex-rs/exec-server/src/environment.rs`;
 - `codex-rs/exec-server/src/process_sandbox_tests.rs`;
@@ -200,6 +203,12 @@ stdin?: string
 `stdin: ""` пропускает запись байтов, но всё равно открывает и закрывает pipe,
 чтобы процесс получил пустой поток и EOF. Опущенный `stdin` не требует pipe и
 сохраняет текущий путь запуска с закрытым stdin.
+
+Если управляемые требования отключают возобновляемый unified exec, одноразовый
+`exec_command` сохраняет то же поле `stdin` в `ExecCommandRequest`, принудительно
+использует non-TTY-путь и передаёт запрос через `exec_command_to_completion`.
+Его видимая модели схема не предлагает `tty` или `write_stdin` и прямо сообщает,
+что после начального текста процесс получает EOF.
 
 ### Жизненный цикл с TTY
 
@@ -315,8 +324,9 @@ exec-server объявляет `true`; у старого сервера отсу
 
 1. Найти текущие структуры-владельцы спецификации инструмента и десериализации для
    `exec_command`.
-2. Проверить актуальный путь `ExecCommandArgs` до исполнителя unified exec и
-   запуска локального или удалённого процесса.
+2. Проверить актуальный путь `ExecCommandArgs` до интерактивного и управляемого
+   одноразового исполнителей unified exec, а затем до запуска локального или
+   удалённого процесса.
 3. Добавить опциональный `stdin` в схему инструмента и структуры запроса, не
    меняя обязательные поля и поведение по умолчанию.
 4. Сохранить основанную только на команде идентичность разрешения, данные hook
@@ -345,7 +355,7 @@ exec-server объявляет `true`; у старого сервера отсу
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "схема инструмента, обработчик, разрешения и сквозной контракт stdin",
+      "purpose": "схема интерактивного и одноразового режима инструмента, обработчик, разрешения и сквозной контракт stdin",
       "argv": ["just", "test", "-p", "codex-core", "exec_command_stdin"]
     },
     {

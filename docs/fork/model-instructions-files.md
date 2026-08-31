@@ -2,7 +2,7 @@
 id: fork-model-instructions-files
 status: active
 created: 2026-07-24
-updated: 2026-08-23
+updated: 2026-08-30
 ---
 
 # Model instructions files
@@ -30,6 +30,8 @@ wire contract с одним developer item.
 - каждый документ обрабатывается через `trim()` и соединяется с соседним через
   `\n\n`;
 - объединённый текст передаётся как одно значение базовых инструкций;
+- объединённый текст ограничен `10_000` оценочных токенов и при превышении
+  предела отклоняется целиком без усечения;
 - загрузка файлов сама не создаёт дополнительные сообщения `input` или элементы
   с ролью `developer`; стандартный Responses transport использует top-level
   `instructions`, а Responses Lite применяет общий upstream wire adapter;
@@ -47,9 +49,9 @@ wire contract с одним developer item.
 | `codex-rs/config/src/profile_toml.rs` | Содержит новый ключ в profile config |
 | `codex-rs/config/src/loader/mod.rs` | Нормализует каждый относительный путь массива |
 | `codex-rs/core/src/config/mod.rs` | Проверяет конфликт ключей, читает файлы и собирает `base_instructions` |
-| `codex-rs/core/src/config/config_tests.rs` | Покрывает parsing, порядок, ошибки и precedence |
+| `codex-rs/core/src/config/config_tests.rs` | Покрывает разбор, порядок, предел размера, ошибки и приоритет |
 | `codex-rs/core/src/config/config_loader_tests.rs` | Покрывает config layers и CLI config override |
-| `codex-rs/core/tests/suite/client.rs` | Проверяет исходящее поле Responses API `instructions` |
+| `codex-rs/core/tests/suite/client.rs` | Проверяет обычное поле `instructions` и раздельные developer items в Responses Lite |
 | `codex-rs/core/config.schema.json` | Описывает новый config key в сгенерированной schema |
 
 ## Итоговый контракт
@@ -117,13 +119,26 @@ mode это одно верхнеуровневое поле:
 Доработка не создаёт несколько `instructions`, сама не добавляет элементы в
 `input` и не меняет `developer_instructions_files`.
 
-В Responses Lite upstream wire adapter намеренно не сериализует top-level
-`instructions` и добавляет единое `Config.base_instructions` одним developer
-item перед основным input. Это преобразование не зависит от числа исходных
-файлов и не является дополнительной логикой этой fork-доработки. Если
-одновременно заданы `developer_instructions_files`, их итоговое значение
-остаётся отдельной точной content-секцией в обычном агрегированном developer
-message: два слоя не объединяются и не заменяют друг друга.
+Поскольку объединённый текст становится одним model-visible элементом, его
+размер не может превышать `10_000` оценочных токенов. Предел вычисляется по
+байтовой оценке после `trim()` каждой секции и добавления разделителей. При
+превышении загрузка завершается `InvalidInput` с сообщением:
+
+```text
+`model_instructions_files` exceeds the model-context limit of 10000 estimated tokens (<actual>)
+```
+
+Текст не усекается: частичная базовая инструкция могла бы незаметно удалить
+обязательный раздел контракта модели.
+
+В Responses Lite upstream wire-адаптер намеренно не сериализует верхнеуровневое
+`instructions` и преобразует единое `Config.base_instructions` через
+`BaseInstructionsFragment` в отдельный developer item перед основным input. Это
+преобразование не зависит от числа исходных файлов и не является дополнительной
+логикой этой fork-доработки. Если одновременно заданы
+`developer_instructions_files`, их итоговое значение остаётся отдельной точной
+content-секцией в обычном агрегированном developer message: два слоя не
+объединяются и не заменяют друг друга.
 
 ### Совместимость и взаимоисключение
 
@@ -230,8 +245,10 @@ Runtime override сохраняет наивысший приоритет. Эт�
 7. trim'ить и проверять каждый файл, сохраняя порядок;
 8. соединить секции через `\n\n` до вычисления effective
    `base_instructions`;
-9. обновить config schema через skill-owned generator;
-10. восстановить unit, loader и сквозное Responses API покрытие.
+9. отклонить объединённый текст больше `10_000` оценочных токенов без усечения;
+10. обновить config schema через skill-owned generator;
+11. восстановить unit, loader и сквозное покрытие обычного Responses и
+    Responses Lite.
 
 ## Проверки
 
@@ -242,7 +259,7 @@ Runtime override сохраняет наивысший приоритет. Эт�
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "ordered loading, precedence, mutual exclusion, ошибки и отдельная Responses Lite delivery",
+      "purpose": "порядок загрузки, жёсткий предел размера, приоритет, взаимоисключение, ошибки и отдельная доставка Responses Lite",
       "argv": ["just", "test", "-p", "codex-core", "model_instructions_files"]
     }
   ]
@@ -258,8 +275,10 @@ types и schema.
 - Порядок и точный разделитель защищены регрессионными тестами.
 - `trim()` удаляет внешние пустые строки каждого документа.
 - Разделитель всегда равен `\n\n`; содержимое внутри документа сохраняется.
-- Файлы читаются целиком; отдельный предел размера в этой доработке отсутствует.
-- Молчаливое усечение или пропуск файла недопустимы.
+- Файлы читаются целиком, но объединённый model-visible текст ограничен `10_000`
+  оценочных токенов.
+- Молчаливое усечение или пропуск файла недопустимы; превышение предела всегда
+  является ошибкой конфигурации.
 - Новый ключ является fork-specific и должен переноситься при следующих
   upstream migration.
 - Schema обновлена вместе с реализацией. При будущих изменениях она должна

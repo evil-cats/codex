@@ -904,21 +904,32 @@ impl RmcpClient {
         Ok(response)
     }
 
-    /// Starts a Plugin Runtime event stream without waiting for its final response.
+    /// Запускает поток событий Plugin Runtime, не дожидаясь итогового ответа.
+    ///
+    /// При восстановлении каждый повтор заново собирает `CustomRequest`, но
+    /// сохраняет единый `EventNotificationReceiver` исходного вызова.
     pub async fn send_event_stream_request(
         &self,
         params: Option<serde_json::Value>,
     ) -> Result<CancellableEventStreamRequest> {
-        let service = self.service().await?;
         let (sender, notifications) = event_notification_channel();
-        let mut request = CustomRequest::new("events/stream", params);
-        request.extensions.insert(sender);
-        let handle = service
-            .peer()
-            .send_cancellable_request(
-                ClientRequest::CustomRequest(request),
-                rmcp::service::PeerRequestOptions::no_options(),
-            )
+        let handle = self
+            .run_service_operation("events/stream", /*timeout*/ None, move |service| {
+                let params = params.clone();
+                let sender = sender.clone();
+                async move {
+                    let mut request = CustomRequest::new("events/stream", params);
+                    request.extensions.insert(sender);
+                    service
+                        .peer()
+                        .send_cancellable_request(
+                            ClientRequest::CustomRequest(request),
+                            rmcp::service::PeerRequestOptions::no_options(),
+                        )
+                        .await
+                }
+                .boxed()
+            })
             .await?;
 
         Ok(CancellableEventStreamRequest {

@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Spill-файлы для длинного exec output
@@ -77,15 +77,17 @@ inline cap и spill-механику, что прямой `exec_command`.
 | `codex-rs/core/config.schema.json` | Сгенерированный schema artifact для нового key `[tools.exec].inline_output_max_tokens` |
 | `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs` | Преобразовать `ToolCallSource` в явный тип получателя результата, передать его в process manager и оставить `SandboxDenied` вне цепочки spill |
 | `codex-rs/core/src/tools/handlers/unified_exec_tests.rs` | Проверить через настоящий `ExecCommandHandler`, что `DirectPlaintextMessage` выбирает видимый модели spill и сохраняет точные байты spill-файла |
+| `codex-rs/core/src/tools/spec_plan.rs` | Выбрать interactive или completion-only `ExecCommandHandler`; обе формы сохраняют политику вывода, определяемую получателем |
 | `codex-rs/core/src/unified_exec/mod.rs` | Владеть типом получателя, request/result-полями и вспомогательными типами политики exec output, зависящей от источника |
+| `codex-rs/core/src/unified_exec/oneshot.rs` | Завершить completion-only команду через общий `exec_command_inner()`, не обходя выбор spill или ошибки nested Code Mode |
 | `codex-rs/core/src/unified_exec/output_spill.rs` | Владеть spill metadata, рассчитать действующий inline-лимит, выбрать line-prefix excerpt, построить безопасный путь и записать model-visible exec artifact для прямого exec или внешнего Code Mode результата |
-| `codex-rs/core/src/unified_exec/process_manager.rs` | В immediate-finished branch выбрать spill для модели либо полный результат/ошибку Code Mode по типу получателя |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | После завершения команды выбрать spill для модели либо полный результат/ошибку Code Mode по типу получателя; не создавать spill для running process |
 | `codex-rs/core/src/tools/context.rs` | Разделить ответ модели `response_text()` и журналирование `ToolOutput::log_output()`: первый ограничивает вывод или показывает сведения о spill-файле, второй получает весь сохранённый вывод и не дублирует отметку о пропущенных байтах; не превращать неполный результат Code Mode в успешный JSON |
 | `codex-rs/utils/path-utils/src/lib.rs` | При необходимости добавить atomic bytes write helper |
 | `codex-rs/core/src/tools/context_tests.rs` | Проверить `Lines`/`Full output`/`Output excerpt`, oversized first line и отсутствие suffix/marker в model-visible prefix |
 | `codex-rs/core/src/tools/line_utils.rs` | Разбить текст на строки с сохранением завершающего `\n` для общего контракта `read_file` и spill excerpt |
 | `codex-rs/core/src/tools/handlers/read_file.rs` | Использовать общий helper и сохранить прежнюю семантику первых целых строк и line endings |
-| `codex-rs/core/src/unified_exec/*tests.rs` | Проверить immediate-finished branch, выбор политики по источнику, отсутствие spill для Code Mode/running process и запись файла для модели |
+| `codex-rs/core/src/unified_exec/*tests.rs` | Проверить завершённую и running ветви, выбор политики по источнику, отсутствие spill для Code Mode/running process и запись файла для модели |
 | `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
 | `codex-rs/core/tests/suite/unified_exec.rs` | Сквозно проверить spill завершённого `exec_command` для модели, видимую модели ссылку на файл и отсутствие spill при большом `SandboxDenied` |
 | `codex-rs/core/src/tools/code_mode/mod.rs` | В общем `handle_runtime_response()` вызвать spill до усечения и script status; после spill сохранить метаданные целиком, а внешний лимит расходовать только на line prefix и audio |
@@ -134,11 +136,17 @@ API не должен принимать неочевидный boolean; исп�
 одним значением `ToolCallSource`: после выполнения JavaScript это отдельная
 model-visible граница, общая для initial `exec` и последующего `wait`.
 
+Interactive и completion-only lifetime не меняют получателя. Обычный handler и
+`ExecCommandHandler::one_shot()` формируют один `ExecCommandRequest` с тем же
+`output_recipient`; `exec_command_to_completion()` меняет только ожидание и
+возможность продолжить процесс, а результат получает общий
+`UnifiedExecProcessManager::exec_command_inner()`.
+
 ### Короткий прямой exec output
 
-Если захваченный command output укладывается в effective
-`inline_output_max_tokens`, файл не создается, а model-visible формат остается
-как сейчас:
+Для interactive и completion-only прямого вызова, если захваченный command
+output укладывается в effective `inline_output_max_tokens`, файл не создается,
+а model-visible формат остается как сейчас:
 
 ```text
 Chunk ID: <chunk_id>
@@ -151,9 +159,10 @@ HELLO WORLD!
 
 ### Длинный прямой exec output
 
-Если command output для модели больше действующего
-`inline_output_max_tokens`, Codex сохраняет retained output в файл и передает
-модели только первые целые строки, помещающиеся в effective inline limit:
+Если command output interactive или completion-only вызова для модели больше
+действующего `inline_output_max_tokens`, Codex сохраняет retained output в файл
+и передает модели только первые целые строки, помещающиеся в effective inline
+limit:
 
 ```text
 Chunk ID: <chunk_id>
@@ -324,7 +333,7 @@ inline_output_max_tokens = 1000
   должен учитывать меньший лимит: `max_output_tokens` для прямого exec или
   Code Mode `exec`, `max_tokens` для Code Mode `wait`;
 - line-prefix limit не должен превышать
-  `turn.model_info.truncation_policy.into().token_budget()`;
+  `turn.model_info().truncation_policy.into().token_budget()`;
 - существующий top-level `tool_output_token_limit` не переиспользуется и
   остается общим механизмом ограничения tool/function outputs в context manager.
 
@@ -335,7 +344,7 @@ effective_model_visible_exec_inline_limit =
   min(
     config.tools.exec.inline_output_max_tokens.unwrap_or(1000),
     boundary_request_limit,
-    turn.model_info.truncation_policy.into().token_budget()
+    turn.model_info().truncation_policy.into().token_budget()
   )
 ```
 
@@ -566,7 +575,9 @@ Code Mode runtime уже представляет каждый `tools.*()` ка�
 
 ```text
 exec_command(...)
-  -> process завершается до yield_time_ms или остается running
+  -> interactive handler: process завершается до yield_time_ms или остается running
+     либо completion-only handler: oneshot ожидает завершение/timeout
+  -> оба lifetime вызывают общий exec_command_inner()
   -> process_manager собирает retained bytes из OutputBuffer
   -> строит ExecCommandToolOutput
   -> ExecCommandToolOutput::response_text()
@@ -664,7 +675,8 @@ artifact попадет уже усеченный итог ячейки. Общ�
    - `Direct` и `DirectPlaintextMessage` -> `ModelVisible`;
    - `CodeMode { .. }` -> `CodeModeNested`;
    - не использовать boolean или эвристику по `call_id`.
-6. В immediate-finished `exec_command` branch:
+6. В общем результате `exec_command_inner()` после завершения interactive или
+   completion-only команды:
    - получить `raw_output`;
    - посчитать approximate token count;
    - для `ModelVisible`, если count больше effective inline limit, записать
@@ -925,16 +937,13 @@ artifact попадет уже усеченный итог ячейки. Общ�
   `Output:` и отсутствие метаданных spill, spill-файла и каталога
   `exec_outputs`.
 
-Новые тесты приняты статической вычиткой. Их компиляция, форматирование и запуск
-отложены до общего прохода по карточкам.
-
 Дополнительно обязателен `fork generators`, поскольку доработка добавляет
 `[tools.exec].inline_output_max_tokens` в config schema.
 
 ## Риски и ограничения
 
 - Политику усечения нужно брать из
-  `turn.model_info.truncation_policy.into()`; не восстанавливать старое поле
+  `turn.model_info().truncation_policy.into()`; не восстанавливать старое поле
   `turn.truncation_policy`.
 - В ветке `UnifiedExecError::SandboxDenied` сохраняется `output_spill: None`;
   retained output передается через заранее собранный `raw_output`, без повторного
@@ -953,6 +962,9 @@ artifact попадет уже усеченный итог ячейки. Общ�
 - Путь к файлу попадает в conversation history. Поэтому обычный `/tmp` хуже,
   чем `codex_home`: после resume путь из history должен иметь шанс остаться
   читаемым.
+- Текущий MVP не удаляет spill-файлы автоматически. Retention и очистка
+  `codex_home/exec_outputs` требуют отдельного lifecycle-решения; до него artifact
+  сохраняется после завершения команды и может пережить resume.
 - `Full output:` является согласованным model-visible label spill-файла. Для
   прямой команды свыше текущего capture cap `1 MiB` artifact пока содержит
   retained head/marker/tail, поэтому label остается известным несовершенством до

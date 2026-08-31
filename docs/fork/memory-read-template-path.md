@@ -2,7 +2,7 @@
 id: fork-memory-read-template-path
 status: active
 created: 2026-06-08
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Memory read template: встроенная политика обновления памяти
@@ -38,7 +38,7 @@ Hermione-профиль должен получать инструкции чт�
 | `codex-rs/ext/memories/templates/memories/read_path.md` | Содержит канонический read-path prompt и расширенный раздел `Updating memories` |
 | `codex-rs/ext/memories/src/prompts.rs` | Рендерит только встроенный шаблон с `{{ base_path }}` и `{{ memory_summary }}` |
 | `codex-rs/ext/memories/src/prompts_tests.rs` | Проверяет встроенный шаблон, подстановку summary и отсутствие старого запрета на самостоятельные memory updates |
-| `codex-rs/ext/memories/src/extension.rs` | Хранит runtime-флаги и `codex_home`; не принимает и не прокидывает template path |
+| `codex-rs/ext/memories/src/extension.rs` | Вычисляет gate read-path prompt, хранит `enabled`, `dedicated_tools` и `codex_home`; не принимает и не прокидывает template path |
 | `codex-rs/ext/memories/src/tests.rs` | Создает `MemoriesExtensionConfig` без template path |
 | `codex-rs/config/src/types.rs` | Не содержит `read_template_path` в `MemoriesToml` и `MemoriesConfig` |
 | `codex-rs/core/config.schema.json` | Не экспортирует `read_template_path` в memories schema |
@@ -47,13 +47,14 @@ Hermione-профиль должен получать инструкции чт�
 
 ## Итоговый контракт
 
-1. Read-path memory prompt в developer-инструкциях всегда строится из
-   встроенного шаблона
-   `codex-rs/ext/memories/templates/memories/read_path.md`.
+1. При включённых `Feature::MemoryTool` и `MemoriesConfig::use_memories`
+   read-path memory prompt в developer-инструкциях всегда строится из встроенного
+   шаблона `codex-rs/ext/memories/templates/memories/read_path.md`.
 2. `[memories].read_template_path` отсутствует в Rust config types, effective
    `MemoriesConfig`, JSON schema и config tests.
-3. `MemoriesExtensionConfig` не хранит template path и передает в
-   `build_memory_tool_developer_instructions` только `codex_home`.
+3. `MemoriesExtensionConfig` хранит только runtime-поля `enabled`,
+   `dedicated_tools` и `codex_home`. `MemoriesExtension::contribute_thread_context`
+   передает в `build_memory_tool_developer_instructions` только `codex_home`.
 4. `build_memory_tool_developer_instructions` читает
    `${codex_home}/memories/memory_summary.md`, trim'ит summary, обрезает ее по
    `MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT` и рендерит
@@ -87,8 +88,10 @@ Hermione-профиль должен получать инструкции чт�
 ## Архитектурное решение
 
 Канонический read-path prompt является встроенным asset расширения `memories`;
-`prompts.rs` владеет чтением ограниченной summary и рендерингом шаблона. Config
-и extension намеренно не принимают внешний template path, поэтому разные
+`prompts.rs` владеет чтением ограниченной summary и рендерингом шаблона.
+`MemoriesExtension::contribute_thread_context` владеет runtime-gate и добавляет
+prompt только при включённых `Feature::MemoryTool` и `MemoriesConfig::use_memories`.
+Config и extension намеренно не принимают внешний template path, поэтому разные
 установки не могут незаметно получить разный memory contract. Config schema и
 tests закрепляют отсутствие удалённого override-слоя.
 
@@ -114,8 +117,10 @@ Fork-дельта ограничена расширенной политикой
 4. Если config types пришлось менять, обновить
    `codex-rs/core/config.schema.json` через skill-owned владельца
    `fork generators`, чтобы schema не экспортировала удалённый key.
-5. Проверить, что `MemoriesExtensionConfig` не хранит template path, а вызов
-   prompt builder передаёт только `codex_home`.
+5. Проверить, что `MemoriesExtensionConfig` хранит `enabled`, `dedicated_tools`
+   и `codex_home`, но не template path. Runtime-gate должен по-прежнему зависеть
+   от `Feature::MemoryTool` и `MemoriesConfig::use_memories`, а вызов prompt
+   builder — передавать только `codex_home`.
 6. Проверить `build_memory_tool_developer_instructions`: он не должен принимать
    template path или читать configured template и должен рендерить встроенный
    шаблон.

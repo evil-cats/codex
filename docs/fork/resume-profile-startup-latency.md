@@ -2,22 +2,18 @@
 id: fork-resume-profile-startup-latency
 status: active
 created: 2026-08-25
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Ускорение `resume` с расширенной filesystem policy
 
 ## Обзор
 
-Карточка владеет fork-доработкой, которая устраняет повторное разрешение и
-нормализацию filesystem policy в горячем пути начального восстановления истории
-TUI. Доработка переиспользует один `InlineVisualizationContext` в пределах одной
-hydration и один snapshot разрешённых policy entries в пределах одной составной
-проверки.
-
-Исправление не ослабляет защиту inline visualization viewers, не уменьшает
-бюджет восстанавливаемой истории и не отключает свойства выбранного permission
-profile.
+Карточка владеет двумя связанными гарантиями производительности начальной
+hydration истории: один `InlineVisualizationContext` на hydration и один snapshot
+разрешённых `entries` permission profile на составную проверку либо построение
+writable roots. Эти гарантии не ослабляют защиту кэшей viewers, не уменьшают row
+budget и не меняют свойства выбранного permission profile.
 
 ## Зачем это нужно
 
@@ -27,21 +23,21 @@ session не может записать viewer cache или его родите
 несколько candidate paths через действующую `FileSystemSandboxPolicy`.
 
 Restricted policy может содержать несколько writable roots и более узкие
-read-only carveouts. Прежний путь повторно разрешал и нормализовал весь набор
-entries из вложенных access checks, а постраничное восстановление истории могло
-заново создавать тот же visualization context. Стоимость поэтому росла
-сверхлинейно и делала `resume` больших сессий заметно медленнее при profile с
-расширенной filesystem policy.
+read-only carveouts. Без snapshot составные access checks повторно разрешают и
+нормализуют весь набор `entries`, а постраничная hydration истории может заново
+создавать тот же visualization context. Стоимость такого пути растёт
+сверхлинейно и делает `resume` больших сессий заметно медленнее при permission
+profile с расширенной filesystem policy.
 
 ## Карта файлов
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/protocol/src/permissions.rs` | Владеет локальным snapshot restricted policy, batch-проверкой candidate paths, построением effective и preserve-mutable writable roots без повторного разрешения entries и test-only счётчиком полных проходов |
-| `codex-rs/tui/src/inline_visualization.rs` | Проверяет viewer caches и их parents одним batch-запросом, сохраняя fail-closed поведение |
-| `codex-rs/tui/src/app_server_session/history.rs` | Вычисляет visualization context один раз на initial hydration до цикла item pages |
-| `codex-rs/tui/src/thread_transcript.rs` | Даёт transcript conversion готовый context и сохраняет обычный entrypoint для остальных callers |
-| `codex-rs/tui/src/app/tests/session_lifecycle_requests.rs` | Проверяет единственное построение доступного и отсутствующего visualization context при многостраничной initial hydration |
+| `codex-rs/protocol/src/permissions.rs` | Владеет временным snapshot `restricted` policy, пакетной проверкой путей, построением writable roots без повторного разрешения `entries` и test-only счётчиком полных проходов |
+| `codex-rs/tui/src/inline_visualization.rs` | Проверяет кэши viewers и их родительские каталоги одним пакетным запросом, сохраняя fail-closed поведение |
+| `codex-rs/tui/src/app_server_session/history.rs` | Вычисляет visualization context один раз на начальную hydration до цикла страниц items |
+| `codex-rs/tui/src/thread_transcript.rs` | Передаёт готовый context в преобразование transcript и сохраняет обычный entrypoint для остальных callers |
+| `codex-rs/tui/src/app/tests/session_lifecycle_requests.rs` | Проверяет единственное построение доступного и отсутствующего visualization context при многостраничной начальной hydration |
 | `docs/fork/resume-profile-startup-latency.md` | Владеющий документ передачи доработки |
 
 ## Итоговый контракт
@@ -66,7 +62,10 @@ entries из вложенных access checks, а постраничное во�
 - Restricted policy разрешает entries относительно одного `cwd` один раз на
   составную операцию. Snapshot не переживает вызов и не используется после
   изменения policy или `cwd`.
-- Access сохраняет исходный `resolved_entry_precedence`: наиболее специфичный
+- Публичные одиночные `resolve_access_with_cwd`, `can_read_path_with_cwd` и
+  `can_write_path_with_cwd` используют upstream `PathUri` и
+  `FileSystemSandboxPolicyContext` и сохраняют поведение 0.151.0.
+- Snapshot сохраняет исходный `resolved_entry_precedence`: наиболее специфичный
   path имеет приоритет, а access mode сохраняет прежний tie-breaking.
 - `get_writable_roots_with_cwd` использует один snapshot для writable entries,
   non-write carveouts и protected metadata.
@@ -81,8 +80,6 @@ entries из вложенных access checks, а постраничное во�
   не повторяет filesystem probes для всего набора.
 - Защита `.git`, `.agents` и `.codex`, explicit write overrides, missing-path
   behavior и полный disk access сохраняют прежнюю семантику.
-- Публичные одиночные `resolve_access_with_cwd`, `can_read_path_with_cwd` и
-  `can_write_path_with_cwd` сохраняют прежний результат.
 
 ### Batch-проверка viewer caches
 
@@ -101,11 +98,16 @@ entries из вложенных access checks, а постраничное во�
 
 ## Архитектурное решение
 
-`ResolvedRestrictedFileSystemPolicy` является приватным ephemeral view над
-`FileSystemSandboxPolicy`. Он хранит resolved entries, `cwd`, признак full disk
-write и один раз подготовленный порядок entry indices по precedence. Access
-checks после этого не перечитывают исходную policy и не повторяют path URI
-resolution.
+`ResolvedRestrictedFileSystemPolicy` является приватным временным представлением
+`FileSystemSandboxPolicy` для составных операций с путями. Он хранит resolved
+`entries`, `cwd`, признак full disk write и один раз подготовленный порядок
+индексов по precedence. Пакетные проверки и построение writable roots после этого
+не перечитывают исходную policy и не повторяют разрешение путей в filesystem.
+
+Upstream-модель 0.151.0 на `PathUri` и `FileSystemSandboxPolicyContext` остаётся
+источником семантики одиночных access checks, metadata denial и deny-read globs.
+Fork-snapshot не заменяет этот API и не вмешивается в unrelated permission
+semantics.
 
 Оба entrypoint построения writable roots используют тот же snapshot на всём
 пути. Writable aliases группируются по root, полученному через выбранный
@@ -127,29 +129,21 @@ sandbox. Он не является долгоживущим кэшем и не 
 
 ## Порядок повторения при переносе
 
-1. Проверить, как новый upstream строит inline visualization context при initial
-   history hydration и как `FileSystemSandboxPolicy` формирует writable roots.
-2. Если upstream уже переиспользует context на одну hydration и выполняет
-   составные access checks через один resolved policy view, использовать его
-   реализацию вместо восстановления fork-diff.
-3. Сохранить upstream-защиту viewer documents от sandbox writes и paginated
-   history hydration; ускорение не должно удалять ни одну из этих гарантий.
-4. При необходимости перенести ephemeral restricted-policy snapshot, порядок
-   precedence и построение writable roots из предварительно нормализованных
-   групп. Сохранить raw symlink aliases и обе стратегии
+1. Проверить, не реализует ли новый upstream обе гарантии карточки; если
+   реализует, использовать upstream-механизм вместо восстановления fork-diff.
+2. Сохранить upstream `PathUri`-реализацию одиночных access checks, metadata
+   denial и deny-read globs.
+3. Для составных операций с путями перенести временный snapshot `restricted`
+   policy, `resolved_entry_precedence` и обе стратегии
    `WritableRootPathResolution`.
-5. Перенести batch-проверку viewer caches и их parents без раскрытия resolved
-   policy type за границу `codex-protocol`.
-6. Вычислять `InlineVisualizationContext` до page loop и передавать его по ссылке
-   в общий transcript conversion path. Не добавлять кэш с временем жизни дольше
-   одной hydration.
-7. Проверить protected metadata, explicit overrides, symlink carveouts,
-   unrestricted/external policies и неизменность transcript output через
-   card-level tests.
-8. Сравнить baseline и migrated optimized binaries на одной большой сессии,
-   отдельно с profile и без него. Сборка, toolchain, features, row budget и
-   порядок повторений должны совпадать; абсолютный порог, зависящий от host, в
-   контракт не входит.
+4. Сохранить raw symlink aliases, protected metadata, explicit write overrides,
+   missing-path behavior и unrestricted/external policy semantics.
+5. Проверять кэши viewers и их родительские каталоги одним пакетным запросом, не
+   раскрывая resolved policy type за границу `codex-protocol`.
+6. Вычислять `InlineVisualizationContext` до page loop и передавать
+   `Option<&InlineVisualizationContext>` в общий transcript conversion path.
+7. Перенести card-level regression tests для одного policy-resolution pass и
+   одного context build на многостраничную hydration.
 
 ## Проверки
 
@@ -171,41 +165,29 @@ sandbox. Он не является долгоживущим кэшем и не 
 }
 ```
 
-Тест `writable_roots_resolve_policy_entries_once_for_many_nested_checks`
-вызывает настоящие `get_writable_roots_with_cwd` и
-`get_writable_roots_with_cwd_preserving_mutable_paths` для наборов из одной и 32
-пар `writable root + read-only carveout`. Строго test-only thread-local счётчик
-инкрементируется внутри `resolved_entries_with_cwd` и требует ровно один полный
-проход для каждой комбинации entrypoint и размера policy. Дополнительно тест
-сравнивает все материализованные carveouts. При возврате вложенных одиночных
-access checks число полных проходов снова вырастет вместе с набором policy
-entries.
+`writable_roots_resolve_policy_entries_once_for_many_nested_checks` вызывает оба
+entrypoint построения writable roots для наборов из одной и 32 пар `writable
+root + read-only carveout`. Test-only thread-local счётчик требует ровно один
+полный проход `resolved_entries_with_cwd` для каждой комбинации entrypoint и
+размера policy и сравнивает все материализованные carveouts.
 
-Измерение производительности выполняется отдельно от card-level tests и требует
-оптимизированных binaries. Baseline и migrated binary собираются одним
-toolchain и с одинаковыми features; на обоих поочерёдно повторяется `resume`
-одного и того же большого rollout с одинаковым row budget сначала без profile,
-затем с `--profile lora`. Для каждого варианта фиксируются hardware, ОС, тип
-сборки, toolchain, команда, размер rollout, число повторений и распределение
-wall time. Сравнивается не только абсолютное время, но и добавочная стоимость
-profile относительно запуска без него. Одиночный smoke подтверждает лишь
-работоспособность сценария и не доказывает ускорение.
+`initial_history_hydration_builds_visualization_context_once_across_pages` и
+`initial_history_hydration_caches_missing_visualization_context_across_pages`
+проверяют один вызов `InlineVisualizationContext::from_config` для доступного и
+отсутствующего context при нескольких item pages.
 
 ## Риски и ограничения
 
 - Snapshot отражает filesystem и policy только на время текущего вызова. Его
-  нельзя сохранять между hydration operations или изменениями `cwd`.
+  нельзя сохранять между составными операциями или изменениями `cwd`.
 - Нормализация может наблюдать изменение symlink между независимыми вызовами;
   внутри одного вызова намеренно используется единый согласованный результат.
 - Batch API устраняет повторную обработку только внутри переданного набора.
-  Несвязанные одиночные access checks по-прежнему создают собственный snapshot.
+  Несвязанные одиночные access checks по-прежнему самостоятельно разрешают
+  policy entries.
 - Snapshot устраняет повторные path resolution и filesystem probes, но lookup по
   precedence и группировка большого числа уникальных roots всё ещё могут
-  выполнять сверхлинейное число сравнений в памяти. Отдельное измерение должно
-  показать, существенна ли эта остаточная стоимость для реального profile.
-- Автоматические тесты проверяют семантику policy и transcript, но не задают
-  переносимый wall-time threshold. После миграции нужно отдельное сравнимое
-  измерение baseline и migrated optimized binaries на большой сессии.
+  выполнять сверхлинейное число сравнений в памяти.
 - Новые viewer cache paths должны добавляться в существующий batch. Возврат к
   отдельным `can_write_path_with_cwd` внутри цикла способен восстановить
   сверхлинейную задержку.

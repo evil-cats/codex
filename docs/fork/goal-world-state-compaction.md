@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -107,6 +107,7 @@ Fragment содержит:
 - текущее значение `token_budget` либо значение отсутствующего бюджета;
 - правила сохранения полного scope;
 - требования работать от текущих доказательств;
+- проверку отсутствия прогресса и подтверждённого ожидания;
 - completion audit;
 - blocked audit;
 - разрешённые вызовы `update_goal`.
@@ -286,7 +287,10 @@ attached notice не отделяется от удалённого source item.
    в общий `codex-core`.
 5. Сохранить role `user`, XML escaping и ограничение размера objective.
 6. Разделить устойчивый active-goal context и динамический continuation
-   steering, не допуская двойного objective.
+   steering, не допуская двойного objective. При конфликте с upstream-расширением
+   `continuation.md` переносить новые постоянные инварианты, включая проверку
+   отсутствия прогресса, в `active_context.md`, а в continuation оставлять только
+   turn trigger и динамический бюджет.
 7. Проверить local summary compaction и context-window reset, при которых
    compaction output не содержит objective.
 8. Проверить terminal transition в model step, который сам запускает
@@ -324,9 +328,11 @@ attached notice не отделяется от удалённого source item.
 создаёт active goal через установленный tool, получает active snapshot, затем
 закрывает настоящий `StateRuntime`. Ошибка чтения persisted goal из закрытого
 pool должна дать snapshot `{"state":"unavailable"}` и сохраняемый
-model-visible fragment, а не одноразовый clearing fragment. Тест принят
-статической вычиткой; его компиляция, форматирование и запуск отложены до общего
-прохода по карточкам.
+model-visible fragment, а не одноразовый clearing fragment.
+
+Общий сценарий terminal transition также проверяет, что перенесённая в
+`active_context.md` проверка отсутствия прогресса присутствует в model context
+ровно один раз и не дублируется коротким continuation prompt.
 
 ## Риски и ограничения
 

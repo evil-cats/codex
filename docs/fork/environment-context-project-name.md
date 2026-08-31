@@ -2,7 +2,7 @@
 id: fork-environment-context-project-name
 status: active
 created: 2026-06-08
-updated: 2026-08-27
+updated: 2026-08-30
 ---
 
 # Environment context: `project_name`
@@ -38,6 +38,7 @@ TUI уже умеет показывать `project-name` в поверхнос�
 | `codex-rs/core/src/context/world_state/environment.rs` | Добавляет поле `project_name`, вычисление из workspace roots, рендеринг, snapshot и поведение при `diff`/replay в текущей upstream-модели `EnvironmentsState` |
 | `codex-rs/core/src/context/environment_context.rs` | Сохраняет общие helper-типы `FileSystemContext`, `NetworkContext` и XML escaping, которые использует `world_state::environment` |
 | `codex-rs/core/src/context/world_state/environment_render_tests.rs` | Проверяет XML escaping, выбор рабочего корня, восстановление старого `TurnContextItem` через резервный `cwd` и diff при смене проекта |
+| `codex-rs/core/tests/suite/model_visible_layout.rs` | Проверяет, что имя последнего компонента выбранного `workspace_root` действительно попадает в отправленный модели `<environment_context>` как `project_name` |
 | `docs/fork/environment-context-project-name.md` | Описывает fork-доработку, контракт и порядок повторения |
 
 Файлы, которые намеренно не меняются:
@@ -293,7 +294,7 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "project name в полном environment context, replay, snapshot и diff",
+      "purpose": "`project_name` в отправленном модели `<environment_context>`, replay, snapshot и diff",
       "argv": ["just", "test", "-p", "codex-core", "environment_context"]
     }
   ]
@@ -301,20 +302,23 @@ push_optional_element(&mut rendered, "project_name", self.project_name.as_deref(
 ```
 
 Фильтр `environment_context` включает сценарий
+`model_visible_environment_context_preserves_foreign_workspace_roots`. Он
+проверяет полный путь выполнения от выбранного `workspace_root` до отправленного
+модели `<project_name>workspace</project_name>`, а также согласованность с
+видимым модели корнем файловой системы.
+
+Тот же фильтр включает сценарий
 `turn_context_item_without_workspace_roots_uses_cwd_for_environment_context`.
 Он сравнивает полный видимый модели результат рендеринга старого
 `TurnContextItem` без `workspace_roots`: последний компонент резервного `cwd`
 становится `project_name`, а сам путь — единственным рабочим корнем файлового
 контекста.
 
-Новый тест принят статической вычиткой. Его компиляция, форматирование и запуск
-отложены до общего прохода по карточкам.
-
 Тестовые экземпляры `TurnContextItem` в
 `codex-rs/core/src/context/world_state/environment_render_tests.rs` должны явно
-задавать `active_permission_profile: None`. Так сценарии `project_name` не
-включают именованный профиль разрешений и проверяют только принадлежащий
-карточке контракт.
+задавать `active_permission_profile: None` и `cyber_access_program: None`. Так
+эти сценарии не включают именованный профиль разрешений или Cyber Access Program
+и проверяют только принадлежащий карточке контракт.
 
 ## Риски и ограничения
 

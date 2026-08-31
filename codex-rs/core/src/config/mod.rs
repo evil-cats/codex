@@ -85,6 +85,7 @@ use codex_http_client::OutboundProxyPolicy;
 use codex_install_context::InstallContext;
 use codex_login::AuthManagerConfig;
 use codex_login::AuthRouteConfig;
+use codex_mcp::DEFAULT_OPTIONAL_MCP_STARTUP_GRACE;
 use codex_mcp::McpConfig;
 use codex_mcp::McpPluginAttribution;
 use codex_mcp::McpProtocolMode;
@@ -146,6 +147,7 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::config::permissions::BUILT_IN_READ_ONLY_PROFILE;
 use crate::config::permissions::BUILT_IN_WORKSPACE_PROFILE;
@@ -195,7 +197,9 @@ use permission_profile_catalog::permission_profile_is_allowed;
 use permission_profile_catalog::validate_permission_profile_for_deny_read;
 pub use permission_profile_selection::ResolvedPermissionProfileSelection;
 pub use permission_profile_selection::resolve_permission_profile_selection;
+pub use permissions::compile_permission_profile;
 pub(crate) use permissions::is_builtin_permission_profile_name;
+pub use permissions::resolve_permission_profile;
 pub(crate) use resolved_permission_profile::PermissionProfileState;
 
 const DEFAULT_IGNORE_LARGE_UNTRACKED_DIRS: i64 = 200;
@@ -232,6 +236,7 @@ pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_EXEC_INLINE_OUTPUT_MAX_TOKENS: usize = 1000;
 pub(crate) const DEFAULT_READ_FILE_CONTENT_MAX_TOKENS: usize = 10_000;
+const MAX_MODEL_INSTRUCTIONS_TOKENS: usize = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
@@ -859,6 +864,9 @@ pub struct Config {
     /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
     pub mcp_oauth_callback_url: Option<String>,
 
+    /// How long to wait for optional MCP servers while building the initial tool catalog.
+    pub mcp_optional_startup_grace: Duration,
+
     /// Combined provider map (defaults plus user-defined providers).
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
@@ -1030,6 +1038,12 @@ pub struct Config {
 
     /// Whether to register the experimental request_user_input tool.
     pub experimental_request_user_input_enabled: bool,
+
+    /// Регистрировать ли tool `get_system_time`.
+    pub get_system_time_enabled: bool,
+
+    /// Регистрировать ли tool `get_thread_info`.
+    pub get_thread_info_enabled: bool,
 
     /// Whether to register the update_plan tool.
     pub update_plan_enabled: bool,
@@ -1537,6 +1551,17 @@ impl Config {
         &self.sqlite
     }
 
+    /// Whether Guardian may use the unmetered Codex inference endpoints.
+    pub fn free_guardian_enabled(&self) -> bool {
+        self.config_layer_stack
+            .effective_config()
+            .get("features")
+            .and_then(|features| features.get("guardianv2"))
+            .and_then(|guardian| guardian.get("free_guardian"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// Resolves the configured, reviewer-catalog, or bundled Guardian policy.
     pub fn resolve_guardian_policy<'a>(
         &'a self,
@@ -1736,7 +1761,8 @@ impl Config {
                     plugin.config_name.clone(),
                     plugin.display_name().to_string(),
                 )
-            };
+            }
+            .with_host_root(PathUri::from_abs_path(&plugin.root));
             for (name, plugin_server) in plugin_mcp_servers {
                 catalog.register(McpServerRegistration::from_plugin(
                     name,
@@ -1764,6 +1790,7 @@ impl Config {
             auth_keyring_backend_kind: self.auth_keyring_backend_kind(),
             mcp_oauth_callback_port: self.mcp_oauth_callback_port,
             mcp_oauth_callback_url: self.mcp_oauth_callback_url.clone(),
+            optional_mcp_startup_grace: self.mcp_optional_startup_grace,
             skill_mcp_dependency_install_enabled: self
                 .features
                 .enabled(Feature::SkillMcpDependencyInstall),
@@ -1772,6 +1799,7 @@ impl Config {
             config_layer_stack: self.config_layer_stack.clone(),
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
+            server_permission_profiles: HashMap::new(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
@@ -2656,6 +2684,22 @@ fn resolve_experimental_request_user_input_enabled(config_toml: &ConfigToml) -> 
         .tools
         .as_ref()
         .and_then(|tools| tools.experimental_request_user_input.as_ref())
+        .is_none_or(|config| config.enabled)
+}
+
+fn resolve_get_system_time_enabled(config_toml: &ConfigToml) -> bool {
+    config_toml
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.get_system_time.as_ref())
+        .is_none_or(|config| config.enabled)
+}
+
+fn resolve_get_thread_info_enabled(config_toml: &ConfigToml) -> bool {
+    config_toml
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.get_thread_info.as_ref())
         .is_none_or(|config| config.enabled)
 }
 
@@ -3722,6 +3766,8 @@ impl Config {
         let web_search_config = resolve_web_search_config(&cfg);
         let experimental_request_user_input_enabled =
             resolve_experimental_request_user_input_enabled(&cfg);
+        let get_system_time_enabled = resolve_get_system_time_enabled(&cfg);
+        let get_thread_info_enabled = resolve_get_thread_info_enabled(&cfg);
         let exec_inline_output_max_tokens = resolve_exec_inline_output_max_tokens(&cfg);
         let read_file_content_max_tokens = resolve_read_file_content_max_tokens(&cfg);
         let update_plan_enabled = resolve_update_plan_enabled(&cfg);
@@ -3944,7 +3990,22 @@ impl Config {
                             .expect("a provided model instructions path must produce a section");
                     sections.push(section);
                 }
-                Some(sections.join("\n\n"))
+                // Результат становится одним model-visible элементом. Усечение могло бы
+                // незаметно удалить обязательную секцию, поэтому превышение отклоняется целиком.
+                let instructions = sections.join("\n\n");
+                if instructions.len()
+                    > codex_utils_string::approx_bytes_for_tokens(MAX_MODEL_INSTRUCTIONS_TOKENS)
+                {
+                    let estimated_tokens =
+                        codex_utils_string::approx_tokens_from_byte_count(instructions.len());
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "`model_instructions_files` exceeds the model-context limit of {MAX_MODEL_INSTRUCTIONS_TOKENS} estimated tokens ({estimated_tokens})"
+                        ),
+                    ));
+                }
+                Some(instructions)
             }
         } else {
             None
@@ -4291,6 +4352,10 @@ impl Config {
             ),
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
+            mcp_optional_startup_grace: cfg
+                .mcp_optional_startup_grace_ms
+                .map(Duration::from_millis)
+                .unwrap_or(DEFAULT_OPTIONAL_MCP_STARTUP_GRACE),
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
             project_doc_fallback_filenames: cfg
@@ -4390,6 +4455,8 @@ impl Config {
             web_search_mode: constrained_web_search_mode.value,
             web_search_config,
             experimental_request_user_input_enabled,
+            get_system_time_enabled,
+            get_thread_info_enabled,
             read_file_content_max_tokens,
             update_plan_enabled,
             tool_registry,

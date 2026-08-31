@@ -1,6 +1,7 @@
 //! Patch summaries and image-tool transcript helpers.
 
 use super::*;
+use crate::diff_render::create_diff_preview;
 use crate::diff_render::display_path_for;
 use codex_utils_path_uri::LegacyAppPathString;
 
@@ -12,6 +13,10 @@ pub(crate) struct PatchHistoryCell {
 
 impl HistoryCell for PatchHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        create_diff_preview(&self.changes, &self.cwd, width as usize)
+    }
+
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
         create_diff_summary(&self.changes, &self.cwd, width as usize)
     }
 

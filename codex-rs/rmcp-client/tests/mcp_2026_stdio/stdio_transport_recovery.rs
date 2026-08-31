@@ -36,6 +36,7 @@ const RECOVERY_INITIALIZE_FAIL_AT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAIL
 const RECOVERY_INITIALIZE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_STATE_FILE";
 const RECOVERY_LAUNCH_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_LAUNCH_LOG_FILE";
 const RECOVERY_REMOVE_CWD_ON_CLOSE_ENV: &str = "MCP_TEST_RECOVERY_REMOVE_CWD_ON_CLOSE";
+const TEST_EXIT_FILE_ENV: &str = "MCP_TEST_EXIT_FILE";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Наблюдаемые события полного цикла восстановления.
@@ -55,6 +56,7 @@ struct RecoveryPaths {
     call_log: PathBuf,
     close_state: PathBuf,
     broken_pipe_state: PathBuf,
+    exit_file: PathBuf,
 }
 
 impl RecoveryPaths {
@@ -69,6 +71,7 @@ impl RecoveryPaths {
             call_log: temp_dir.path().join("calls.log"),
             close_state: temp_dir.path().join("close.state"),
             broken_pipe_state: temp_dir.path().join("broken-pipe.state"),
+            exit_file: temp_dir.path().join("exit.marker"),
             _temp_dir: temp_dir,
             server_cwd,
         })
@@ -244,6 +247,39 @@ async fn transport_send_broken_pipe_reinitializes_and_retries_once() -> anyhow::
             launches: 2,
             initialize_attempts: 2,
             tool_calls: 2,
+        }
+    );
+
+    client.shutdown().await;
+    Ok(())
+}
+
+/// Отправка `events/stream` после смерти stdio в простое использует общую
+/// границу ленивого восстановления. Ровно два запуска и две инициализации
+/// отличают восстановленный транспорт от ошибки старого сервиса и лишнего цикла.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_stream_dispatch_recovers_idle_stdio_process() -> anyhow::Result<()> {
+    let paths = RecoveryPaths::new()?;
+    let mut env = paths.environment(/*close_count*/ 0);
+    env.insert(
+        OsString::from(TEST_EXIT_FILE_ENV),
+        paths.exit_file.as_os_str().to_owned(),
+    );
+    let client = initialized_recovery_client(&paths, env).await?;
+
+    std::fs::write(&paths.exit_file, "exit")?;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let request = client
+        .send_event_stream_request(Some(json!({"name": "recovery.idle"})))
+        .await?;
+    drop(request);
+    assert_eq!(
+        paths.observed_state()?,
+        ObservedRecoveryState {
+            launches: 2,
+            initialize_attempts: 2,
+            tool_calls: 0,
         }
     );
 

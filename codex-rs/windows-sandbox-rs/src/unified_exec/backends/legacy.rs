@@ -12,7 +12,9 @@ use crate::process::StderrMode;
 use crate::process::StdinMode;
 use crate::process::read_handle_loop;
 use crate::process::spawn_process_with_pipes;
+use crate::resolved_permissions::ResolvedWindowsSandboxPermissions;
 use crate::spawn_prep::LegacyAclSids;
+use crate::spawn_prep::LegacySessionSecurity;
 use crate::spawn_prep::SpawnPrepOptions;
 use crate::spawn_prep::allow_null_device_for_workspace_write;
 use crate::spawn_prep::apply_legacy_session_acl_rules;
@@ -65,7 +67,9 @@ struct LegacyProcessHandles {
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_legacy_process(
-    h_token: HANDLE,
+    security: &LegacySessionSecurity,
+    permissions: &ResolvedWindowsSandboxPermissions,
+    additional_deny_write_paths: &[std::path::PathBuf],
     command: &[String],
     cwd: &Path,
     env_map: &HashMap<String, String>,
@@ -77,15 +81,19 @@ fn spawn_legacy_process(
     writer_rx: mpsc::Receiver<DriverStdinWrite>,
     logs_base_dir: Option<&Path>,
 ) -> Result<LegacyProcessHandles> {
+    let h_token = security.h_token;
+    let launch_desktop = LaunchDesktop::prepare_legacy(
+        use_private_desktop,
+        permissions,
+        cwd,
+        env_map,
+        security,
+        additional_deny_write_paths,
+        logs_base_dir,
+    )?;
     let (pi, job, output_join, writer_handle, hpc, conpty_owner, desktop) = if tty {
-        let (pi, mut conpty) = spawn_conpty_process_as_user(
-            h_token,
-            command,
-            cwd,
-            env_map,
-            use_private_desktop,
-            logs_base_dir,
-        )?;
+        let (pi, mut conpty) =
+            spawn_conpty_process_as_user(h_token, command, cwd, env_map, launch_desktop)?;
         let job = conpty
             .job()
             .ok_or_else(|| anyhow::anyhow!("spawned ConPTY is missing its process job"))?;
@@ -110,7 +118,7 @@ fn spawn_legacy_process(
             },
             StderrMode::Separate,
             ConsoleMode::Inherit,
-            use_private_desktop,
+            launch_desktop,
             logs_base_dir,
         )?;
         let stdout_join = spawn_output_reader(pipe_handles.stdout_read, stdout_tx);
@@ -417,7 +425,9 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
         token_handle,
         desktop,
     } = match spawn_legacy_process(
-        security.h_token,
+        &security,
+        &common.permissions,
+        &additional_deny_write_paths,
         &command,
         cwd,
         &env_map,

@@ -296,6 +296,12 @@ pub struct ConfigToml {
     /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
     pub mcp_oauth_callback_url: Option<String>,
 
+    /// Milliseconds to wait for optional MCP servers while building the initial tool catalog.
+    ///
+    /// Defaults to 1000. Set to 0 to disable the shared grace and wait for each
+    /// server's configured `startup_timeout_sec` instead.
+    pub mcp_optional_startup_grace_ms: Option<u64>,
+
     /// User-defined provider entries that extend the built-in list. Built-in
     /// IDs cannot be overridden.
     #[serde(default, deserialize_with = "deserialize_model_providers")]
@@ -624,6 +630,8 @@ pub struct ToolsToml {
     pub exec: Option<ExecToolToml>,
     pub read_file: Option<ReadFileToolToml>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
+    pub get_system_time: Option<GetSystemTimeToolConfig>,
+    pub get_thread_info: Option<GetThreadInfoToolConfig>,
     pub update_plan: Option<UpdatePlanToolConfig>,
 }
 
@@ -649,6 +657,20 @@ pub struct ReadFileToolToml {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ExperimentalRequestUserInput {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct GetSystemTimeToolConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct GetThreadInfoToolConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 }

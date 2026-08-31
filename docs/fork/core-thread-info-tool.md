@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-08-26
+updated: 2026-08-31
 ---
 
 # Утилитарный core tool `get_thread_info`
@@ -36,17 +36,25 @@ updated: 2026-08-26
 | `codex-rs/core/src/agent/agent_name.rs` | Общий helper для вычисления `agent_name`: текущий root через config/profile, текущий subagent через `SessionSource`, persisted thread через сохраненные поля |
 | `codex-rs/core/src/agent/agent_name_tests.rs` | Unit tests для fallback-контракта `agent_name`: root config/profile, metadata текущего subagent и поля persisted thread |
 | `codex-rs/core/src/agent/mod.rs` | Подключает общий модуль `agent_name` |
+| `codex-rs/config/src/config_toml.rs` | Задаёт секцию `[tools.get_thread_info].enabled`, включённую по умолчанию |
+| `codex-rs/core/src/config/mod.rs` | Разрешает итоговое значение настройки в `Config::get_thread_info_enabled` |
+| `codex-rs/core/src/config/config_tests.rs` | Проверяет значение `true` по умолчанию и явное отключение `get_thread_info` через конфигурацию |
+| `codex-rs/core/config.schema.json` | Содержит сгенерированную схему конфигурации для секции `[tools.get_thread_info]` |
 | `codex-rs/core/src/tools/handlers/thread_info.rs` | Runtime-обработчик: разбор `thread_id`, чтение текущей или persisted thread metadata, materialize текущего rollout, использование общего helper-а `agent_name`, model-facing ошибки |
 | `codex-rs/core/src/tools/handlers/thread_info_spec.rs` | Описание Responses API tool: имя, описание, input schema, output schema |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Unit tests для parsing `thread_id` |
 | `codex-rs/core/src/tools/handlers/thread_info_spec_tests.rs` | Unit tests для spec-контракта: optional `thread_id` и nullable output fields |
 | `codex-rs/core/tests/suite/thread_info.rs` | Интеграционные тесты настоящего runtime-обработчика: текущий root, реально созданный subagent, архивный сохранённый thread, сериализация metadata и ограничение обхода parent chain при цикле, превышении глубины и нечитаемом родителе |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `thread_info` и `thread_info_spec`, экспортирует `ThreadInfoHandler` |
-| `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` рядом с `get_system_time` |
+| `codex-rs/core/src/tools/spec_plan.rs` | Условно добавляет `ThreadInfoHandler` в `add_core_utility_tools(...)` по итоговому значению настройки |
+| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет регистрацию по умолчанию и полное удаление `get_thread_info` из registry и model-visible spec при отключённой настройке |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Отображает вызов `get_thread_info` в core tool activity как `kind = ThreadInfo` с кратким полем `detail` по текущему или указанному `thread_id` |
 | `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет, что `get_thread_info` остаётся видимым core tool activity с `kind = ThreadInfo` |
 | `codex-rs/protocol/src/items.rs` | Содержит `CoreToolActivityKind::ThreadInfo` для `CoreToolActivityItem` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
+| `codex-rs/core/tests/suite/mod.rs` | Подключает integration suite `thread_info` |
+| `codex-rs/tui/src/temporary_structured_request.rs` | Явно отключает `get_thread_info` во временном structured thread, которому нужен пустой набор tools |
+| `codex-rs/thread-manager-sample/src/main.rs` | Сохраняет включённое по умолчанию значение в полном литерале `Config` |
 | `docs/fork/core-thread-info-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 | `docs/fork/codex-agent-env-var.md` | Связанная fork-карточка runtime env: `CODEX_AGENT` использует тот же helper и тот же контракт `agent_name`; `CODEX_ROLLOUT` использует тот же live rollout path как best-effort env-подсказку |
 
@@ -55,7 +63,6 @@ updated: 2026-08-26
 | Зона | Почему не меняется |
 | --- | --- |
 | `Cargo.toml` и `Cargo.lock` | Новые зависимости не нужны |
-| Config schema | Tool не добавляет config key и не требует пользовательской настройки |
 | App-server protocol | Внешний app-server API не меняется |
 | TUI | Отдельная UI-поверхность не нужна: tool доступен через core tool planning |
 | Rollout filename format | Уже использует `ThreadId`; tool только раскрывает путь и id |
@@ -63,6 +70,25 @@ updated: 2026-08-26
 | `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` и `CODEX_SANDBOX_ENV_VAR` | Эти зоны запрещены локальным `AGENTS.md` и не относятся к metadata thread |
 
 ## Итоговый контракт
+
+### Настройка регистрации
+
+`get_thread_info` управляется штатной секцией:
+
+```toml
+[tools.get_thread_info]
+enabled = false
+```
+
+Если секция или поле `enabled` отсутствуют, итоговое значение равно `true`:
+обычные Responses requests и чувствительный к кэшированию набор tools сохраняют
+`get_thread_info`. При `enabled = false` handler не регистрируется и tool
+отсутствует как в registry, так и в model-visible spec.
+
+Временный structured thread с закрытым набором возможностей явно передаёт
+`tools.get_thread_info.enabled = false` вместе с остальными настройками
+статических tools. Поэтому служебный structured request получает пустой список
+`tools`, не меняя значение по умолчанию для обычных threads.
 
 ### Tool spec
 
@@ -244,6 +270,9 @@ tool текущего runtime, а не app-server API и не extension tool.
 - держать вычисление имени агента в общем helper-е
   `codex-rs/core/src/agent/agent_name.rs`, потому что `get_thread_info` и
   runtime-переменная `CODEX_AGENT` должны отвечать одинаково для текущего turn;
+- управлять регистрацией через отдельную настройку, включённую по умолчанию,
+  чтобы обычный набор tools сохранял introspection tool, а ограниченные
+  временные threads могли явно исключить его без специальной ветки в registry;
 - оставить строгий контракт ошибок rollout path в `get_thread_info`, но
   разрешить связанной runtime env переменной `CODEX_ROLLOUT` быть best-effort,
   чтобы отсутствие диагностического path не блокировало запуск CLI-команды.
@@ -253,20 +282,29 @@ tool текущего runtime, а не app-server API и не extension tool.
 При переносе на новый upstream:
 
 1. Проверить, как в новом upstream устроены `ToolExecutor`, `ToolInvocation`,
-   `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`.
+   `Session`, `TurnContext`, `ThreadStore`, `StoredThread`, `SessionSource`, и
+   привести `ThreadInfoHandler::handle` к точной сигнатуре текущего
+   `ToolExecutor`, явно повторив lifetime-параметр и ограничение
+   `ToolInvocation: 'a`.
 2. Перенести `thread_info.rs` и `thread_info_spec.rs` в owner-зону core tools.
 3. Перенести общий helper `codex-rs/core/src/agent/agent_name.rs`, если он уже
    используется связанной runtime env доработкой.
 4. Подключить modules/exports в `codex-rs/core/src/tools/handlers/mod.rs`.
-5. Зарегистрировать `ThreadInfoHandler` через `registry.add(...)` в
+5. Перенести `[tools.get_thread_info].enabled` со значением `true` по умолчанию,
+   итоговое поле `Config::get_thread_info_enabled` и сгенерированную схему
+   конфигурации.
+6. Условно зарегистрировать `ThreadInfoHandler` по итоговому значению настройки в
    `add_core_utility_tools(...)` рядом с `SystemTimeHandler` или ближайшим
    актуальным core utility block.
-6. Перенести unit tests схемы и разбора аргументов, а также интеграционные тесты
+7. Явно отключить настройку во временном structured thread с закрытым набором
+   возможностей; не менять значение по умолчанию для обычных threads.
+8. Перенести unit tests схемы и разбора аргументов, разрешения настройки и
+   условной регистрации в registry, а также интеграционные тесты
    текущих root и subagent sessions, архивного сохранённого thread и повреждённых
    цепочек родителей.
-7. Если upstream поменял model-visible prompt tool list tests, обновить
+9. Если upstream поменял model-visible prompt tool list tests, обновить
    соответствующие ожидаемые списки.
-8. Сверить итоговый diff с контрактом: все описанные поля, ошибки, fallbacks и
+10. Сверить итоговый diff с контрактом: все описанные поля, ошибки, fallbacks и
    bounded parent-chain logic должны остаться на месте.
 
 ## Проверки
@@ -282,7 +320,7 @@ tool текущего runtime, а не app-server API и не extension tool.
       "argv": ["just", "test", "-p", "codex-core", "agent_name"]
     },
     {
-      "purpose": "runtime-обработчик текущих и сохранённых threads, строгие аргументы, схемы и ограниченный обход parent chain",
+      "purpose": "включённая по умолчанию настройка, условная регистрация, runtime-обработчик threads, строгие аргументы, схемы и ограниченный обход parent chain",
       "argv": ["just", "test", "-p", "codex-core", "thread_info"]
     },
     {
@@ -304,6 +342,16 @@ tool текущего runtime, а не app-server API и не extension tool.
         "codex-core",
         "prompt_tools_are_consistent_across_requests"
       ]
+    },
+    {
+      "purpose": "временный recap request с закрытым набором возможностей не получает статические tools",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "recap_generation_uses_bounded_structured_request_and_inserts_result"
+      ]
     }
   ]
 }
@@ -319,6 +367,9 @@ tool текущего runtime, а не app-server API и не extension tool.
   `StoredThread` не хранит top-level profile `name`.
 - Для текущего root thread `agent_name` зависит от effective config на момент
   вызова tool.
+- Явное `[tools.get_thread_info].enabled = false` полностью убирает tool из
+  model-visible и runtime registry; это намеренно используется только там, где
+  вызывающий workflow требует закрытого набора tools.
 - Tool не является API для чтения истории, transcript или contents rollout.
 - Tool не должен расширяться до unbounded scan/search без отдельного design
   review.

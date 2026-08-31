@@ -38,7 +38,7 @@ pub(super) async fn maybe_spill_runtime_output(
     let inline_limit = effective_inline_output_max_tokens(
         exec.turn.config.exec_inline_output_max_tokens,
         Some(resolve_max_tokens(max_output_tokens)),
-        exec.turn.model_info.truncation_policy.into(),
+        exec.turn.model_info().truncation_policy.into(),
     );
     let thread_id = exec.session.thread_id().to_string();
     let Some(spill) = maybe_spill_exec_command_output(

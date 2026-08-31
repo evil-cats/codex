@@ -82,13 +82,13 @@ pub async fn build_prompt_input(
     output
 }
 
-/// Строит standalone prompt и включает одноразовые items того же sampling-step.
+/// Строит отдельный model prompt и включает одноразовые items текущего sampling-step.
 pub(crate) async fn build_prompt_input_from_session(
     sess: &Arc<Session>,
     input: Vec<UserInput>,
 ) -> CodexResult<Vec<ResponseItem>> {
     let turn_context = sess.new_default_turn().await;
-    // Prompt debugging builds a standalone request without entering run_turn.
+    // Отладочный prompt строит отдельный запрос, не входя в `run_turn`.
     let step_context = sess
         .capture_step_context(Arc::clone(&turn_context), &CancellationToken::new())
         .await?;
@@ -105,7 +105,7 @@ pub(crate) async fn build_prompt_input_from_session(
     let mut prompt_input = sess
         .clone_history()
         .await
-        .for_prompt(&step_context.model_info.input_modalities);
+        .for_prompt(&step_context.settings.model_info.input_modalities);
     prompt_input.extend(world_state_delivery.next_sampling_items);
     let base_instructions = sess.get_base_instructions().await;
     let prompt = build_prompt(prompt_input, step_context.as_ref(), base_instructions);

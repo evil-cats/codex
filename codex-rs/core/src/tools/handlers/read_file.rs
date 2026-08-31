@@ -112,7 +112,10 @@ impl ToolExecutor<ToolInvocation> for ReadFileHandler {
         true
     }
 
-    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+    fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+    where
+        ToolInvocation: 'a,
+    {
         Box::pin(self.handle_call(invocation))
     }
 }
@@ -207,7 +210,7 @@ impl ReadFileHandler {
         let history = session
             .clone_history()
             .await
-            .for_prompt(&turn.model_info.input_modalities);
+            .for_prompt(&turn.model_info().input_modalities);
         context_index.synchronize(&window_id, &history);
         let contextual_output = if let Some(requested_range) = requested_range {
             let request = ReadFileContextRequest {

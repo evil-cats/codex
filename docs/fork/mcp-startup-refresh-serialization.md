@@ -2,7 +2,7 @@
 id: fork-mcp-startup-refresh-serialization
 status: active
 created: 2026-08-14
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Согласование MCP при незавершённом запуске
@@ -50,7 +50,7 @@ refresh и замене после его первого отказа. Восс�
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/codex-mcp/src/connection_manager.rs` | Переиспользует совместимый pending startup с новым фильтром и сохраняет отмену при последующем удалении сервера |
+| `codex-rs/codex-mcp/src/connection_manager.rs` | Переиспользует совместимый pending startup с тем же `startup_timeout` и новым фильтром, сохраняя отмену при последующем удалении сервера |
 | `codex-rs/codex-mcp/src/connection_manager_tests.rs` | Проверяет переиспользование pending startup, фильтр и последующую отмену |
 | `codex-rs/core/src/session/mcp.rs` | Выполняет немедленное согласование без ожидания startup перед `claim` |
 | `codex-rs/core/tests/suite/mcp_tool_exposure.rs` | Проверяет согласование capability root без ожидания и второго запуска |
@@ -70,13 +70,16 @@ refresh и замене после его первого отказа. Восс�
 
 Базовый `McpConnectionSet::new` переиспользует только активный, неотменённый
 клиент с незавершённым startup; fork не поддерживает отдельную реализацию этого
-предиката.
-Для этого должны совпасть полная `McpServerConnectionIdentity`,
-`catalog_item_limit` и эффективный режим протокола; отложенный или уже отменённый
-startup не переиспользуется. Идентичность включает конфигурацию транспорта,
-`environment_id`, значения указанных переменных окружения, идентичность
-авторизации и кэша, `client_elicitation_capability`, клиентские расширения и
-режим `agent_plugin`.
+предиката. Для этого должны совпасть полная `McpServerConnectionIdentity`,
+`startup_timeout`, `catalog_item_limit` и эффективный режим протокола; отложенный
+или уже отменённый startup не переиспользуется. Изменение `startup_timeout` после
+готовности соединения не заменяет готовый клиент.
+
+Идентичность включает `auth`, `transport`, `environment_id`, `host_plugin_root`,
+`oauth_store`, `oauth_credentials`, `resolved_environment`,
+`local_stdio_fallback_cwd`, `referenced_environment_variables`, `runtime_auth`,
+`runtime_auth_token`, `codex_apps_cache_identity`,
+`client_elicitation_capability`, `client_mcp_extensions` и `agent_plugin`.
 
 Фильтр инструментов и `tool_timeout` принадлежат новому `McpServerView`, поэтому
 совместимое согласование может изменить видимый модели набор инструментов без
@@ -134,10 +137,15 @@ coalesced refresh и не скрывают свои настоящие `Cancelle
 повторно проверяет указатель текущего опубликованного snapshot перед возвратом
 результата.
 
+Строго тестовый `publish_connections_for_test` публикует только переданные соединения и
+авторизацию для проверки смены snapshot. У такого представления нет конфигурации,
+выбранных окружений, доступных плагинов или готовых capability roots.
+
 ## Порядок повторения при переносе
 
 1. Подтвердить базовый предикат переиспользования pending startup: полное
-   сравнение идентичности соединения, `catalog_item_limit` и режима протокола.
+   сравнение идентичности соединения, `startup_timeout`, `catalog_item_limit` и
+   режима протокола.
 2. Не переносить отдельную fork-реализацию переиспользования; сохранить базовое
    немедленное согласование без ожидания startup до
    `McpRefresh::claim`.
@@ -256,8 +264,8 @@ observer дожидается захвата старого runtime snapshot д�
 ## Риски и ограничения
 
 - Переиспользование pending startup требует точной идентичности,
-  ограничения каталога и режима протокола; несовместимое изменение намеренно
-  создаёт новый процесс сервера.
+  `startup_timeout`, ограничения каталога и режима протокола; несовместимое
+  изменение намеренно создаёт новый процесс сервера.
 - Наблюдатель отказа не считает `Cancelled` основанием для замены: удалённый или
   остановленный MCP-сервер не должен самовосстанавливаться.
 - Новый запрос или изменение авторизации может заменить snapshot, пока worker

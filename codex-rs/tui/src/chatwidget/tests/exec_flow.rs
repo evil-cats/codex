@@ -525,6 +525,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
 
     // Trigger an exec approval request with a short, single-line command
     let ev = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-short".into(),
         approval_id: Some("call-short".into()),
         turn_id: "turn-short".into(),
@@ -617,6 +618,7 @@ async fn exec_approval_uses_approval_id_when_present() {
         &mut chat,
         "sub-short",
         ExecApprovalRequestEvent {
+            kind: Default::default(),
             call_id: "call-parent".into(),
             approval_id: Some("approval-subcommand".into()),
             turn_id: "turn-short".into(),
@@ -661,6 +663,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
 
     // Multiline command: modal should show full command, history records decision only
     let ev_multi = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-multi".into(),
         approval_id: Some("call-multi".into()),
         turn_id: "turn-multi".into(),
@@ -715,6 +718,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
     // Very long single-line command: decision snippet should be truncated <= 80 chars with trailing ...
     let long = format!("echo {}", "a".repeat(200));
     let ev_long = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-long".into(),
         approval_id: Some("call-long".into()),
         turn_id: "turn-long".into(),
@@ -1836,6 +1840,48 @@ async fn core_tool_activity_file_group_survives_exec_completion_between_parallel
     assert_eq!(active_blob(&chat), "• Explored\n  └ File HANDOFF.md\n");
 }
 
+/// Завершение turn переводит отдельную `CoreToolActivity` без `ItemCompleted` в завершённую ячейку истории.
+#[tokio::test]
+async fn turn_completion_finalizes_core_tool_activity_without_terminal_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+    start_core_file_activity(&mut chat, "call-read", "src/main.rs");
+
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ true,
+    );
+
+    assert!(chat.transcript.active_cell.is_none());
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(
+        lines_to_single_string(&cells[0]),
+        "• Explored\n  └ File main.rs\n"
+    );
+}
+
+/// Завершение turn также очищает `CoreToolActivity`, принятую смешанной exploration-ячейкой.
+#[tokio::test]
+async fn turn_completion_finalizes_core_tool_activity_adopted_by_exec_cell() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+    start_core_file_activity(&mut chat, "call-read", "src/main.rs");
+    let search = begin_exec(&mut chat, "call-search", "rg main src");
+    end_exec(&mut chat, search, "src/main.rs:fn main() {}\n", "", 0);
+
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ true,
+    );
+
+    assert!(chat.transcript.active_cell.is_none());
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1);
+    assert_eq!(
+        lines_to_single_string(&cells[0]),
+        "• Explored\n  └ Search main in src\n  └ File main.rs\n"
+    );
+}
+
 #[tokio::test]
 async fn user_shell_command_renders_output_not_exploring() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -1990,6 +2036,7 @@ async fn approval_modal_exec_snapshot() -> anyhow::Result<()> {
         .set(AskForApproval::OnRequest.to_core())?;
     // Inject an exec approval request to display the approval modal.
     let ev = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-approve-cmd".into(),
         approval_id: Some("call-approve-cmd".into()),
         turn_id: "turn-approve-cmd".into(),
@@ -2048,6 +2095,7 @@ async fn approval_modal_exec_without_reason_snapshot() -> anyhow::Result<()> {
         .set(AskForApproval::OnRequest.to_core())?;
 
     let ev = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-approve-cmd-noreason".into(),
         approval_id: Some("call-approve-cmd-noreason".into()),
         turn_id: "turn-approve-cmd-noreason".into(),
@@ -2094,6 +2142,7 @@ async fn approval_modal_exec_multiline_prefix_hides_execpolicy_option_snapshot()
     let script = "python - <<'PY'\nprint('hello')\nPY".to_string();
     let command = vec!["bash".into(), "-lc".into(), script];
     let ev = ExecApprovalRequestEvent {
+        kind: Default::default(),
         call_id: "call-approve-cmd-multiline-trunc".into(),
         approval_id: Some("call-approve-cmd-multiline-trunc".into()),
         turn_id: "turn-approve-cmd-multiline-trunc".into(),

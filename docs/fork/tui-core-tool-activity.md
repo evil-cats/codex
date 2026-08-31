@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Видимость core tools в TUI
@@ -50,7 +50,7 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
-| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, исключение одноимённого extension tool и выбор `environment_id`/path convention для `read_file detail` |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, исключение одноимённого extension tool и выбор `environment_id`/path convention для `read_file detail`; тестовые данные оставляют разрешённые `workspace_roots` пустыми, чтобы изолировать разрешение пути через выбранный `cwd` |
 | `codex-rs/core/tests/suite/core_tool_activity.rs` | Через настоящий function call Responses API проверяет согласованную пару `ItemStarted`/`ItemCompleted` для успешного `read_file` и итоговый `CoreToolActivityStatus::Completed` |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный тест core tool activity к общему core test binary |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает текущий путь выполнения, возвращающий `AnyToolResult`, событиями `emit_turn_item_started` и `emit_turn_item_completed` для подходящих core function tools без отдельной ячейки передачи результата и без изменения model-visible `FunctionCallOutput` |
@@ -63,20 +63,22 @@ thread и чтение текущего времени host. Но если эт�
 | `codex-rs/rollout/src/persistence_metrics_tests.rs` | Проверяет тип вложенного completed item и сохранение действующего решения о фильтрации |
 | `codex-rs/thread-store/src/local/thread_history.rs` | Не использует UI-only activity для вычисления заголовка thread history |
 | `codex-rs/thread-store/src/local/thread_history/search.rs` | Не добавляет UI-only activity в searchable text thread history |
-| `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time`; для `File` показывает короткие имена, убирает диапазоны строк и дедуплицирует повторы |
+| `codex-rs/tui/src/history_cell/core_tool_activity.rs` | Рисует человекочитаемые строки `Exploring/Explored -> File` и `Inspecting/Inspected -> Thread info/System time`; для `File` показывает короткие имена, убирает диапазоны строк и дедуплицирует повторы; при очистке переводит незавершённые записи в `Failed` |
 | `codex-rs/tui/src/exec_cell/model.rs` | Хранит core `File` как отдельную запись внутри существующего exploration cell, не маскируя `read_file` под shell command |
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
 | `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
-| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, явный `Search -> direct File -> Search`, перенос pending `File`, completed-only replay и interleaving с завершением `exec` |
+| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, явный `Search -> direct File -> Search`, перенос pending `File`, completed-only replay, interleaving с завершением `exec` и очистку без `ItemCompleted` |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |
 | `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | При старте shell exploration-команды переносит уже активный core `File` в новый `ExecCell`, а при несвязанном завершении `exec` не сбрасывает активный in-progress `File` |
 | `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | Управляет active cell, completion и резервным путем для completed activity, пришедшей не по порядку; коалесит последовательные `File` activity, completed-only replay и смешанные `Search`/`File` exploration-блоки в одну ячейку |
+| `codex-rs/tui/src/chatwidget.rs` | При общей очистке turn переводит оставшиеся `InProgress` записи `CoreToolActivityCell` в `Failed` до переноса ячейки в историю |
+| `codex-rs/tui/src/chatwidget/turn_runtime.rs` | На обычном завершении turn финализирует оставшуюся активную `CoreToolActivity`, даже если соответствующий `ItemCompleted` не дошёл до TUI |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит persisted `CoreToolActivity` в transcript/history view |
 | `codex-rs/tui/src/app/agent_status_feed.rs` | Показывает bounded summary `File`, `Thread info` или `System time` в `/agent` preview |
-| `codex-rs/tui/src/dynamic_tools.rs` | Сохраняет structured `CoreToolActivity` в thread summary и распознаёт его как latest tool marker |
-| `codex-rs/tui/src/dynamic_tools_tests.rs` | Проверяет structured thread summary для core tool activity вместе с остальными activity metadata |
+| `codex-rs/tui/src/dynamic_tools.rs` | Сохраняет ограниченный structured `CoreToolActivity` в thread summary, распознаёт его как latest tool marker и не подменяет им Responses `FunctionCallOutput` |
+| `codex-rs/tui/src/dynamic_tools_tests.rs` | Проверяет structured thread summary для `CoreToolActivity` вместе с независимыми метаданными upstream и Responses `FunctionCallOutput` |
 
 Намеренно не входит в эту карточку:
 
@@ -256,6 +258,30 @@ get_system_time
 Но эти имена не должны становиться основной человекочитаемой подписью в compact
 history.
 
+### Lifecycle, Responses и ограниченный preview
+
+Lifecycle одной activity состоит из трёх наблюдаемых переходов:
+
+- `start`: `ItemStarted` с `CoreToolActivityStatus::InProgress` создаёт или
+  расширяет active TUI cell;
+- `update`: соответствующий `ItemCompleted` по `id` обновляет существующую
+  запись до `Completed` или `Failed`, не создавая дубликат;
+- `finish`: завершённая activity остаётся доступной в истории, а завершение turn
+  переводит потерявшие `ItemCompleted` записи из `InProgress` в `Failed` и
+  прекращает их анимацию.
+
+Responses integration остаётся раздельной: самостоятельный `FunctionCallOutput`
+может находиться рядом с `CoreToolActivity` в `Turn`, сохраняется в structured
+thread summary и остаётся model-visible output. TUI replay не превращает такой
+output во вторую activity cell.
+
+Dynamic-tools preview обязан оставаться ограниченным: `thread_summary`
+ограничивает поле `summary` 300 символами, `turn_summary` сохраняет не больше 20
+последних `ThreadItem`, а сериализованный ответ проходит общий предел
+`MAX_RESPONSE_BYTES`.
+`CoreToolActivity` участвует в `latestToolMarker` с исходными `id`, `tool_name`
+и текущим `status`.
+
 ## Архитектурное решение
 
 Доработка добавляет отдельную поверхность UI activity для выбранных core
@@ -281,6 +307,10 @@ function tools и не притворяется shell execution.
   файлов, группировка соседних чтений и дедупликация повторов;
 - сохранять grouping при replay completed-only `CoreToolActivity` и при
   interleaving с завершением несвязанной `exec`-команды;
+- при завершении turn финализировать оставшиеся `InProgress` activity как
+  `Failed`, чтобы history cell не сохраняла бесконечную анимацию;
+- сохранять `CoreToolActivity` и самостоятельный Responses `FunctionCallOutput`
+  как разные structured items в ограниченном dynamic-tools summary;
 - оставить старую shell-модель `Exploring/Explored -> Read/List/Search` как
   самостоятельный renderer для exploration через exec.
 
@@ -345,7 +375,13 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
     `File` activity и смешанного `Search`/`File` exploration-блока.
 11. Поддержать app-server v2 conversion и thread history replay, если переносимый
     upstream еще не знает `CoreToolActivity`.
-12. Синхронизировать блок `fork-tests.v1` и schema artifacts через skill-owned
+12. Проверить exhaustive matches после upstream-изменений `ThreadItem`: Responses
+    `FunctionCallOutput` должен сохраняться в structured summary и обрабатываться
+    собственным replay path без изменения lifecycle `CoreToolActivity`.
+13. Проверить очистку turn без соответствующего `ItemCompleted`: незавершённая
+    activity становится `Failed`, переносится в историю и больше не запрашивает
+    `animation tick`.
+14. Синхронизировать блок `fork-tests.v1` и schema artifacts через skill-owned
     workflow.
 
 ## Проверки
@@ -361,7 +397,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
       "argv": ["just", "test", "-p", "codex-core", "core_tool_activity"]
     },
     {
-      "purpose": "TUI grouping, lifecycle, dynamic thread summary и snapshots core tool activity",
+      "purpose": "группировка TUI, очистка lifecycle, ограниченная сводка dynamic tools и snapshots core tool activity",
       "argv": ["just", "test", "-p", "codex-tui", "core_tool_activity"]
     },
     {
@@ -426,6 +462,9 @@ app-server v2 schema и wire enums.
   не только live lifecycle.
 - Завершения `exec` могут приходить рядом с active core `File`; TUI не должен
   выводить из такого завершения, что текущий `File` поток уже можно flush-ить.
+- `ItemCompleted` может не дойти до TUI при отмене future или завершении turn;
+  общая очистка обязана завершить такую activity как `Failed`, иначе уже
+  перенесённая в историю ячейка продолжит считаться активной и анимироваться.
 - Выбран item уровня protocol, поэтому нужно поддерживать app-server v2 schema,
   replay/history и обратную совместимость.
 - Динамическое значение времени может сделать snapshots нестабильными. Базовый

@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-08-22
+updated: 2026-08-30
 ---
 
 # Developer instructions files
@@ -41,7 +41,9 @@ Inline `developer_instructions` неудобен для больших profile-d
 | `codex-rs/core/config.schema.json` | Экспортирует config key в schema |
 | `codex-rs/core/src/session/turn_context.rs` | Передаёт итоговые инструкции из конфигурации сессии в `TurnContext` |
 | `codex-rs/core/src/session/mod.rs` | Добавляет итоговое значение в агрегированное сообщение с ролью `developer` |
+| `codex-rs/core/src/context/developer_instructions.rs` | Представляет итоговый текст как `ContextualUserFragment` с ролью `developer` |
 | `codex-rs/core/src/context_manager/updates.rs` | Преобразует developer sections в model-visible `ResponseItem` |
+| `codex-rs/core/src/client.rs` | В Responses Lite добавляет базовые инструкции отдельным элементом с ролью `developer` перед обычным `input` |
 | `codex-rs/core/tests/suite/client.rs` | Проверяет наличие `Config.developer_instructions` в developer message запроса |
 | `codex-rs/file-system/src/lib.rs` | Предоставляет чтение UTF-8 файла; жёсткий предел для fork сейчас отсутствует |
 
@@ -94,10 +96,13 @@ Inline `developer_instructions` неудобен для больших profile-d
 ## Архитектурное решение
 
 Config loader владеет нормализацией путей, а сборка `Config` — последовательным
-чтением и объединением секций. Готовая строка попадает в модель через
-существующий путь developer message, поэтому downstream runtime не знает,
-сколько файлов было источником. Runtime override останавливает чтение файлов до
-I/O: явно переданные инструкции нельзя неожиданно дополнять конфигурацией.
+чтением и объединением секций. Готовая строка оборачивается в
+`DeveloperInstructions`, рендерится как фрагмент с ролью `developer` и через
+общий `build_rendered_message` попадает в доступный модели `ResponseItem`, поэтому
+последующие runtime-слои не знают, сколько файлов было источником. В Responses
+Lite базовые инструкции добавляются перед основным `input` отдельным элементом с
+ролью `developer`. Runtime override останавливает чтение файлов до I/O: явно
+переданные инструкции нельзя неожиданно дополнять конфигурацией.
 
 ## Порядок повторения при переносе
 

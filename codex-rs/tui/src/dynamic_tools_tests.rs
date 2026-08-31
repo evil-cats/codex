@@ -260,6 +260,17 @@ fn oversized_read_pages_preserve_turns_and_pagination() {
 
 #[test]
 fn delegated_prompts_match_desktop_xml_contract() {
+    let output = FunctionCallOutputBody::Text(delegated_prompt("thread-1", "Check status"));
+    for namespace in ["codex_tui", "codex_app"] {
+        assert_eq!(
+            parse_delegated_tool_output("send_message_to_thread", Some(namespace), &output),
+            Some(("thread-1".to_string(), "Check status".to_string()))
+        );
+    }
+    assert_eq!(
+        parse_delegated_tool_output("send_message_to_thread", Some("untrusted"), &output),
+        None
+    );
     assert_eq!(
         delegated_prompt("thread-1", "Check <main> & report > status"),
         "<codex_delegation>\n  <source_thread_id>thread-1</source_thread_id>\n  <input>Check &lt;main&gt; &amp; report &gt; status</input>\n</codex_delegation>"
@@ -273,6 +284,7 @@ fn delegated_prompts_match_desktop_xml_contract() {
     );
 }
 
+/// Сводка сохраняет `CoreToolActivity` и независимые элементы turn, не раскрывая outputs.
 #[test]
 fn core_tool_activity_and_other_metadata_are_retained_without_outputs() -> color_eyre::Result<()> {
     let turn: Turn = serde_json::from_value(json!({
@@ -301,7 +313,9 @@ fn core_tool_activity_and_other_metadata_are_retained_without_outputs() -> color
                 "revisedPrompt": "a cat", "result": "image bytes"},
             {"type": "imageView", "id": "image-view-1", "path": "/tmp/cat.png",
                 "previewSize": "small"},
-            {"type": "enteredReviewMode", "id": "review-1", "review": "review changes"}
+            {"type": "enteredReviewMode", "id": "review-1", "review": "review changes"},
+            {"type": "functionCallOutput", "id": "delegation-1", "name": "send_message_to_thread",
+                "namespace": "codex_tui", "output": delegated_prompt("source-2", "Follow <up> & report")}
         ]
     }))?;
 
@@ -330,7 +344,11 @@ fn core_tool_activity_and_other_metadata_are_retained_without_outputs() -> color
                 "revisedPrompt": "a cat", "savedPath": null},
             {"type": "imageView", "id": "image-view-1", "path": "/tmp/cat.png",
                 "previewSize": "small"},
-            {"type": "enteredReviewMode", "id": "review-1", "review": "review changes"}
+            {"type": "enteredReviewMode", "id": "review-1", "review": "review changes"},
+            {"type": "functionCallOutput", "id": "delegation-1", "name": "send_message_to_thread",
+                "namespace": "codex_tui", "codexDelegation": {
+                    "sourceThreadId": "source-2", "input": "Follow <up> & report"
+                }}
         ])
     );
 

@@ -15,6 +15,7 @@ use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::RawResponseCompletedNotification;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ResponseUsageMetadata;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadGoalClearedNotification;
@@ -757,9 +758,11 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
+    let mut completed = responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200);
+    completed["response"]["usage_metadata"] = serde_json::json!({ "amount": "0.125" });
     let sse = responses::sse(vec![
         responses::ev_assistant_message("m1", "MANUAL_COMPACT_SUMMARY"),
-        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200),
+        completed,
     ]);
     responses::mount_sse_sequence(&server, vec![sse]).await;
 
@@ -813,6 +816,9 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
             thread_id,
             turn_id: started.turn_id,
             response_id: "r1".to_string(),
+            usage_metadata: Some(ResponseUsageMetadata {
+                amount: Some("0.125".to_string()),
+            }),
             usage: Some(TokenUsageBreakdown {
                 total_tokens: 200,
                 input_tokens: 200,
@@ -887,6 +893,8 @@ async fn thread_compact_start_rejects_unknown_thread_id() -> Result<()> {
     Ok(())
 }
 
+/// Переводит thread goal выбранным действием в финальное состояние и проверяет
+/// одноразовую очистку model context.
 async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -976,6 +984,11 @@ async fn assert_terminal_goal_context_is_one_shot(action: TerminalGoalAction) ->
     assert!(terminal_body.contains(ESCAPED_ACTIVE_GOAL_OBJECTIVE));
     assert!(
         terminal_body.contains("Cancellation is immediate and does not require the blocked audit.")
+    );
+    assert_eq!(
+        terminal_body.matches("No-progress check:").count(),
+        1,
+        "persistent goal invariants should come from active WorldState without continuation duplication"
     );
 
     let clearing_body = clearing.single_request().body_json().to_string();

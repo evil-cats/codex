@@ -233,6 +233,25 @@ async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn load_config_applies_optional_mcp_startup_grace() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config_toml: ConfigToml = toml::from_str("mcp_optional_startup_grace_ms = 2500")
+        .expect("optional MCP startup grace should parse from config.toml");
+    let config = Config::load_from_base_config_with_overrides(
+        config_toml,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.mcp_optional_startup_grace,
+        Duration::from_millis(2500)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_toml_parsing() {
     let history_with_persistence = r#"
 [history]
@@ -548,6 +567,37 @@ async fn model_instructions_files_are_joined_in_order() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Проверяет, что объединённые секции не создают безразмерный `base_instructions`.
+#[tokio::test]
+async fn model_instructions_files_reject_oversized_combined_instructions() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let first_path = codex_home.path().join("model-a.md");
+    let second_path = codex_home.path().join("model-b.md");
+    let first_section =
+        "x".repeat(codex_utils_string::approx_bytes_for_tokens(/*tokens*/ 10_000) - 1);
+    tokio::fs::write(&first_path, first_section).await?;
+    tokio::fs::write(&second_path, "y").await?;
+
+    let result = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            model_instructions_files: vec![first_path.abs(), second_path.abs()],
+            ..Default::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await;
+
+    let err = result.expect_err("oversized model instructions files should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(
+        err.to_string(),
+        "`model_instructions_files` exceeds the model-context limit of 10000 estimated tokens (10001)"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn empty_model_instructions_files_preserve_inline_instructions() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -721,6 +771,8 @@ web_search = true
             exec: None,
             read_file: None,
             experimental_request_user_input: None,
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -743,6 +795,8 @@ web_search = false
             exec: None,
             read_file: None,
             experimental_request_user_input: None,
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -767,6 +821,8 @@ inline_output_max_tokens = 1234
             }),
             read_file: None,
             experimental_request_user_input: None,
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -807,6 +863,8 @@ content_max_tokens = 4321
                 content_max_tokens: Some(4321),
             }),
             experimental_request_user_input: None,
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -844,6 +902,8 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
             exec: None,
             read_file: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -866,6 +926,8 @@ enabled = false
             exec: None,
             read_file: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
+            get_system_time: None,
+            get_thread_info: None,
             update_plan: None,
         })
     );
@@ -883,6 +945,8 @@ async fn load_config_resolves_exec_inline_output_max_tokens() -> std::io::Result
                 }),
                 read_file: None,
                 experimental_request_user_input: None,
+                get_system_time: None,
+                get_thread_info: None,
                 update_plan: None,
             }),
             ..ConfigToml::default()
@@ -908,6 +972,8 @@ async fn load_config_resolves_read_file_content_max_tokens() -> std::io::Result<
                     content_max_tokens: Some(4321),
                 }),
                 experimental_request_user_input: None,
+                get_system_time: None,
+                get_thread_info: None,
                 update_plan: None,
             }),
             ..ConfigToml::default()
@@ -967,6 +1033,8 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
                 experimental_request_user_input: Some(ExperimentalRequestUserInput {
                     enabled: false,
                 }),
+                get_system_time: None,
+                get_thread_info: None,
                 update_plan: None,
             }),
             ..ConfigToml::default()
@@ -1058,6 +1126,58 @@ enabled = false
     .await?;
 
     assert!(!config.update_plan_enabled);
+    Ok(())
+}
+
+/// Переопределение конфигурации отключает статический tool, не меняя обычный default.
+#[tokio::test]
+async fn load_config_resolves_get_system_time_enabled() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let config_toml = toml::from_str(
+        r#"
+[tools.get_system_time]
+enabled = false
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+    let config = Config::load_from_base_config_with_overrides(
+        config_toml,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(!config.get_system_time_enabled);
+    Ok(())
+}
+
+/// `get_thread_info` включён по умолчанию, а явная настройка отключает его.
+#[tokio::test]
+async fn load_config_resolves_get_thread_info_enabled() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let default_config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    assert!(default_config.get_thread_info_enabled);
+
+    let config_toml = toml::from_str(
+        r#"
+[tools.get_thread_info]
+enabled = false
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+    let disabled_config = Config::load_from_base_config_with_overrides(
+        config_toml,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(!disabled_config.get_thread_info_enabled);
     Ok(())
 }
 
@@ -6129,7 +6249,8 @@ async fn rebuild_preserving_session_layers_refreshes_plugin_derived_mcp_config()
             .plugin_attributions_by_server_name(),
         HashMap::from([(
             "sample".to_string(),
-            McpPluginAttribution::new("sample@test".to_string(), "sample".to_string()),
+            McpPluginAttribution::new("sample@test".to_string(), "sample".to_string())
+                .with_host_root(PathUri::from_host_native_path(&plugin_root)?),
         )])
     );
 
@@ -8426,6 +8547,7 @@ async fn replace_mcp_servers_streamable_http_serializes_oauth_resource() -> anyh
             scopes: None,
             oauth: Some(McpServerOAuthConfig {
                 client_id: Some("eci-prd-pub-codex-123".to_string()),
+                callback_url: None,
                 callback_port: None,
             }),
             oauth_resource: Some("https://resource.example.com".to_string()),

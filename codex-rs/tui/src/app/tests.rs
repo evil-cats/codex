@@ -17,11 +17,15 @@ mod patch_approval_tests;
 mod permission_shortcuts_tests;
 mod plugin_catalog;
 mod rate_limits;
+#[path = "tests/recap_generation_tests.rs"]
+mod recap_generation;
 mod safety_buffering;
 #[path = "tests/session_lifecycle_requests.rs"]
 mod session_lifecycle_requests;
 mod session_summary;
 mod startup;
+#[path = "tests/stream_animation_tests.rs"]
+mod stream_animation_tests;
 #[path = "tests/thread_usage.rs"]
 mod thread_usage;
 #[path = "tests/turn_submission.rs"]
@@ -5463,7 +5467,7 @@ async fn make_test_app() -> App {
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
         key_chord_matcher: crate::keymap::KeyChordMatcher::default(),
-        commit_anim_running: Arc::new(AtomicBool::new(false)),
+        commit_animation: None,
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         skill_load_warnings: SkillLoadWarningState::default(),
@@ -5498,6 +5502,7 @@ async fn make_test_app() -> App {
         rate_limit_hard_stop_generation: 0,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        recap: recap::RecapState::default(),
     }
 }
 
@@ -5543,7 +5548,7 @@ async fn make_test_app_with_channels() -> (
             enhanced_keys_supported: false,
             keymap: crate::keymap::RuntimeKeymap::defaults(),
             key_chord_matcher: crate::keymap::KeyChordMatcher::default(),
-            commit_anim_running: Arc::new(AtomicBool::new(false)),
+            commit_animation: None,
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             skill_load_warnings: SkillLoadWarningState::default(),
@@ -5578,6 +5583,7 @@ async fn make_test_app_with_channels() -> (
             rate_limit_hard_stop_generation: 0,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            recap: recap::RecapState::default(),
         },
         rx,
         op_rx,
@@ -6524,6 +6530,7 @@ fn test_session_telemetry(config: &Config, model: &str) -> SessionTelemetry {
 #[test]
 fn active_turn_not_steerable_turn_error_extracts_structured_server_error() {
     let turn_error = AppServerTurnError {
+        misalignment: None,
         message: "cannot steer a review turn".to_string(),
         codex_error_info: Some(AppServerCodexErrorInfo::ActiveTurnNotSteerable {
             turn_kind: AppServerNonSteerableTurnKind::Review,
@@ -8024,6 +8031,13 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
     let store_snapshot = store.snapshot();
     assert_eq!(store_snapshot.session, Some(resumed_session));
     assert_eq!(store_snapshot.turns, snapshot.turns);
+    assert_eq!(
+        store.recap_progress(),
+        recap::RecapProgress {
+            completed_turns: 1,
+            last_recapped_turn_count: None,
+        }
+    );
 }
 
 #[tokio::test]
@@ -8414,53 +8428,41 @@ async fn fork_attach_failure_keeps_source_runtime_loaded_and_active() -> Result<
     .await
 }
 
+/// Проверяет реальный `AppEvent::NewSession`: после подключения нового thread старый runtime
+/// исчезает из loaded map, а replacement остается единственным loaded runtime.
 #[tokio::test]
-async fn new_session_requests_unload_for_previous_conversation() {
+async fn new_session_requests_unload_for_previous_conversation() -> Result<()> {
     Box::pin(async {
-        let (mut app, mut app_event_rx, mut op_rx) = Box::pin(make_test_app_with_channels()).await;
-
-        let thread_id = ThreadId::new();
-        let event = crate::session_state::ThreadSessionState {
-            thread_id,
-            forked_from_id: None,
-            fork_parent_title: None,
-            thread_name: None,
-            model: "gpt-test".to_string(),
-            model_provider_id: "test-provider".to_string(),
-            service_tier: None,
-            approval_policy: AskForApproval::Never,
-            approvals_reviewer: ApprovalsReviewer::User,
-            permission_profile: PermissionProfile::read_only(),
-            active_permission_profile: None,
-            cwd: test_path_buf("/home/user/project").abs(),
-            runtime_workspace_roots: Vec::new(),
-            instruction_source_paths: Vec::new(),
-            reasoning_effort: None,
-            collaboration_mode: None,
-            personality: None,
-            message_history: None,
-            network_proxy: None,
-            rollout_path: Some(PathBuf::new()),
-        };
-
-        app.chat_widget.handle_thread_session(event);
-
-        while app_event_rx.try_recv().is_ok() {}
-        while op_rx.try_recv().is_ok() {}
-
+        let mut app = make_test_app().await;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
         let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
             app.chat_widget.config_ref(),
         ))
-        .await
-        .expect("embedded app server");
-        Box::pin(app.unload_current_thread_runtime(&mut app_server)).await;
+        .await?;
+        let previous_thread_id =
+            Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
 
-        assert!(
-            op_rx.try_recv().is_err(),
-            "runtime unload should not submit Op::Shutdown"
+        let control = Box::pin(app.handle_event(
+            &mut tui,
+            &mut app_server,
+            AppEvent::NewSession { name: None },
+        ))
+        .await?;
+
+        assert!(matches!(control, AppRunControl::Continue));
+        let new_thread_id = app
+            .chat_widget
+            .thread_id()
+            .expect("new session should attach a replacement thread");
+        assert_ne!(new_thread_id, previous_thread_id);
+        assert_eq!(
+            app_server_loaded_thread_ids(&mut app_server).await?,
+            vec![new_thread_id.to_string()]
         );
+        app_server.shutdown().await?;
+        Ok(())
     })
-    .await;
+    .await
 }
 
 #[tokio::test]
@@ -8483,19 +8485,16 @@ async fn shutdown_first_exit_returns_immediate_exit_when_shutdown_submit_fails()
     ));
 }
 
-/// Проверяет, что shutdown-first отправляет именно `thread/unload`: текущий thread исчезает
-/// из `thread/loaded/list`, а прежний `Op::Shutdown` не поступает в TUI-канал.
+/// Проверяет, что shutdown-first выгружает текущий runtime через `thread/unload`: thread
+/// исчезает из `thread/loaded/list` до завершения TUI.
 #[tokio::test]
-async fn shutdown_first_exit_unloads_current_runtime_without_submitting_op() -> Result<()> {
-    let (mut app, _app_event_rx, mut op_rx) = Box::pin(make_test_app_with_channels()).await;
+async fn shutdown_first_exit_unloads_current_runtime() -> Result<()> {
+    let mut app = make_test_app().await;
     let mut app_server = Box::pin(crate::start_embedded_app_server_for_picker(
         app.chat_widget.config_ref(),
     ))
     .await?;
     let thread_id = Box::pin(start_loaded_primary_thread(&mut app, &mut app_server)).await?;
-    // Подключение session обновляет skills и оставляет setup-команду в direct
-    // TUI-канале; отделяем её от проверяемого shutdown-first перехода.
-    while op_rx.try_recv().is_ok() {}
 
     let control = Box::pin(app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
 
@@ -8508,10 +8507,6 @@ async fn shutdown_first_exit_unloads_current_runtime_without_submitting_op() -> 
         app_server_loaded_thread_ids(&mut app_server).await?,
         Vec::<String>::new(),
         "shutdown-first should unload {thread_id}"
-    );
-    assert!(
-        op_rx.try_recv().is_err(),
-        "shutdown should not submit Op::Shutdown"
     );
     app_server.shutdown().await?;
     Ok(())

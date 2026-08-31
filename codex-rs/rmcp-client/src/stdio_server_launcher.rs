@@ -119,9 +119,9 @@ impl Transport<RoleClient> for StdioServerTransport {
         &mut self,
         item: TxJsonRpcMessage<RoleClient>,
     ) -> impl Future<Output = std::result::Result<(), Self::Error>> + Send + 'static {
-        // Both variants already implement rmcp's transport contract. This
-        // wrapper keeps process placement private while leaving rmcp's send
-        // semantics unchanged.
+        // Все варианты сохраняют исходный результат `send`, но `BrokenPipe`
+        // дополнительно помечает общий дескриптор запуска мёртвым. Эта отметка
+        // позволяет следующей операции восстановить транспорт до отправки.
         let send = match &mut self.inner {
             StdioServerTransportInner::LocalLegacy(transport) => transport.send(item).boxed(),
             StdioServerTransportInner::LocalModern(transport) => transport.send(item).boxed(),
@@ -141,9 +141,9 @@ impl Transport<RoleClient> for StdioServerTransport {
     }
 
     fn receive(&mut self) -> impl Future<Output = Option<RxJsonRpcMessage<RoleClient>>> + Send {
-        // rmcp reads from the same transport shape for both placements. The
-        // executor variant turns pushed process-output events back into the
-        // line-delimited JSON stream expected by rmcp.
+        // Все варианты сохраняют исходный результат `receive`, а EOF помечает
+        // общий дескриптор запуска мёртвым. Для запуска через executor поток
+        // `process-output` предварительно преобразуется в ожидаемый `rmcp` JSONL.
         let receive = match &mut self.inner {
             StdioServerTransportInner::LocalLegacy(transport) => transport.receive().boxed(),
             StdioServerTransportInner::LocalModern(transport) => transport.receive().boxed(),

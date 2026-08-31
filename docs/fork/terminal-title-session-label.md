@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Terminal title: `session-label`
@@ -44,7 +44,8 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
 | `codex-rs/tui/src/app/tests.rs` | Проверяет upstream fallback и реальные пути новой, возобновлённой и ответвлённой сессии, а также однократную очистку отключённого заголовка |
 | `codex-rs/tui/src/app.rs` | Перемещает текущий кэш в параметры замены до конструктора |
-| TUI snapshots | Обновляют основной selector и пять popup-вариантов строкой `session-label` |
+| `codex-rs/tui/src/app/session_lifecycle.rs` | Сохраняет upstream-резервный перенос кэша в `App::replace_chat_widget` |
+| TUI snapshots в `bottom_pane/snapshots/` и `chatwidget/snapshots/` | Обновляют основной selector и пять popup-вариантов строкой `session-label` |
 
 ## Итоговый контракт
 
@@ -106,8 +107,9 @@ items вроде project name, current dir или run state не всегда п
     `last_terminal_title` в `ChatWidgetInit`. Конструктор заполняет кэш до
     первого `refresh_status_surfaces`, поэтому неизменившийся OSC-заголовок не
     записывается повторно, а отключённый заголовок очищается ровно один раз.
-    Существующий upstream-метод `App::replace_chat_widget` сохраняет поздний перенос для
-    путей, которые создают замену без унаследованного состояния.
+    Существующий upstream-метод `App::replace_chat_widget` в
+    `codex-rs/tui/src/app/session_lifecycle.rs` сохраняет поздний перенос для путей,
+    которые создают замену без унаследованного состояния.
 17. Ручная инициализация `Config` в `codex-thread-manager-sample` задаёт
     `tui_terminal_title_label: None`, поскольку sample не получает значение
     через общий config loading.
@@ -200,12 +202,12 @@ TerminalTitleItem::SessionLabel => {
 
 После изменения selector UI обновить affected insta snapshots:
 
-- `codex_tui__bottom_pane__title_setup__tests__terminal_title_setup_basic.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_hardcoded_only.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_live_only.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_mixed.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`;
-- `codex_tui__chatwidget__tests__terminal_title_setup_popup_thread_usage.snap`.
+- `codex-rs/tui/src/bottom_pane/snapshots/codex_tui__bottom_pane__title_setup__tests__terminal_title_setup_basic.snap`;
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__terminal_title_setup_popup_hardcoded_only.snap`;
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__terminal_title_setup_popup_live_only.snap`;
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__terminal_title_setup_popup_mixed.snap`;
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__terminal_title_setup_popup_rate_limits.snap`;
+- `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__terminal_title_setup_popup_thread_usage.snap`.
 
 ### 7. Сохранить общий lifecycle и escaping terminal title
 
@@ -233,7 +235,8 @@ TerminalTitleItem::SessionLabel => {
 `last_terminal_title` до первого `refresh_status_surfaces`: только так
 неизменившийся заголовок пропускает повторную OSC-запись, а удалённый новой
 конфигурацией заголовок очищается немедленно. Поздний upstream-перенос в
-`App::replace_chat_widget` остаётся резервным путём для остальных мест создания.
+`App::replace_chat_widget` из `codex-rs/tui/src/app/session_lifecycle.rs` остаётся
+резервным путём для остальных мест создания.
 
 Пути нового, возобновлённого и ответвлённого потока структурно сходятся в
 `replace_chat_widget_with_app_server_thread`. Тест

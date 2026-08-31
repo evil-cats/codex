@@ -289,6 +289,7 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
         multi_agent_version: None,
         multi_agent_mode: None,
         realtime_active: None,
+        cyber_access_program: None,
         effort: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     };
@@ -340,6 +341,7 @@ fn turn_context_item_project_name_uses_workspace_root_name() {
         multi_agent_version: None,
         multi_agent_mode: None,
         realtime_active: None,
+        cyber_access_program: None,
         effort: None,
         comp_hash: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
@@ -379,6 +381,7 @@ fn turn_context_item_without_workspace_roots_uses_cwd_for_environment_context() 
         multi_agent_version: None,
         multi_agent_mode: None,
         realtime_active: None,
+        cyber_access_program: None,
         effort: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
     };
@@ -417,6 +420,7 @@ fn diff_environment_context_includes_changed_project_name() {
         multi_agent_version: None,
         multi_agent_mode: None,
         realtime_active: None,
+        cyber_access_program: None,
         effort: None,
         comp_hash: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,

@@ -143,6 +143,15 @@ impl CoreToolActivityCell {
         true
     }
 
+    /// Переводит записи без завершающего события в `Failed` перед очисткой turn.
+    pub(crate) fn mark_failed(&mut self) {
+        for entry in &mut self.entries {
+            if entry.status == CoreToolActivityStatus::InProgress {
+                entry.status = CoreToolActivityStatus::Failed;
+            }
+        }
+    }
+
     pub(crate) fn should_flush_on_complete(&self) -> bool {
         self.kind != CoreToolActivityKind::File
     }

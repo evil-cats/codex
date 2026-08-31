@@ -2,7 +2,7 @@
 id: fork-core-system-time-tool
 status: active
 created: 2026-06-09
-updated: 2026-08-27
+updated: 2026-08-31
 ---
 
 # Утилитарный core tool `get_system_time`
@@ -39,9 +39,16 @@ updated: 2026-08-27
 | `codex-rs/core/tests/suite/system_time.rs` | Интеграционные тесты Responses API: успешный вызов настоящего `SystemTimeHandler` и ошибка неизвестного поля для модели |
 | `codex-rs/core/src/tools/handlers/system_time_spec_tests.rs` | Unit tests для spec-контракта: описанные defaults и short/full output schema |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `system_time` и `system_time_spec`, экспортирует `SystemTimeHandler` |
-| `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `SystemTimeHandler` в `add_core_utility_tools(...)` рядом с `update_plan` |
+| `codex-rs/config/src/config_toml.rs` | Объявляет включённый по умолчанию config gate `[tools.get_system_time].enabled` по форме соседнего статического `update_plan` |
+| `codex-rs/core/src/config/mod.rs` | Преобразует config gate в `Config::get_system_time_enabled`, сохраняя обычное значение `true` |
+| `codex-rs/core/config.schema.json` | Содержит сгенерированную схему конфигурации для `[tools.get_system_time]` |
+| `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `SystemTimeHandler` в `add_core_utility_tools(...)`, только если разрешён `get_system_time_enabled` |
+| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет, что config gate одновременно управляет видимой модели и зарегистрированной поверхностями tool |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный модуль `system_time` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
+| `codex-rs/tui/src/temporary_structured_request.rs` | Явно отключает `get_system_time` в fail-closed temporary structured thread |
+| `codex-rs/tui/src/app/tests/recap_generation_tests.rs` | Upstream-регрессия подтверждает, что structured recap отправляет `tools: []` |
+| `codex-rs/thread-manager-sample/src/main.rs` | Сохраняет обычный default `true` в ручной конструкции `Config` |
 | `docs/fork/core-system-time-tool.md` | Владеющий handoff-артефакт: контракт, перенос, проверки и ограничения fork-доработки |
 
 Намеренно не менялись:
@@ -49,13 +56,26 @@ updated: 2026-08-27
 | Зона | Почему не меняется |
 | --- | --- |
 | `Cargo.toml` и `Cargo.lock` | Новые зависимости не нужны: `codex-core` уже использует `chrono` |
-| Config schema | Tool не добавляет config key и не требует пользовательской настройки |
 | App-server protocol | Внешний app-server API не меняется |
-| TUI | Отдельная TUI-поверхность не нужна: tool доступен через core tool planning |
+| Пользовательская TUI | Отдельная видимая поверхность не нужна: меняется только изоляция внутреннего temporary thread |
 | Prompt text | Новые prompt fragments не добавляются; меняется только список доступных tools |
 | `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` и `CODEX_SANDBOX_ENV_VAR` | Эти зоны запрещены локальным `AGENTS.md` и не относятся к времени |
 
 ## Итоговый контракт
+
+### Доступность tool
+
+В обычной сессии `get_system_time` включён по умолчанию. Config gate
+`[tools.get_system_time].enabled` повторяет актуальный upstream-механизм для
+статического `update_plan`: отсутствие секции или поля означает `true`, а
+`enabled = false` запрещает и model-visible spec, и runtime-регистрацию handler.
+
+Пустой `dynamic_tools` отключает только динамически переданные tools и не влияет
+на регистрацию статических core tools. Поэтому fail-closed temporary structured
+thread обязан дополнительно передать
+`tools.get_system_time.enabled = false`. Это сохраняет `get_system_time` в
+обычных Responses-запросах и cached tool set, но не даёт structured recap
+получить инструментальную поверхность.
 
 ### Tool spec
 
@@ -80,6 +100,19 @@ Output schema задается через `oneOf`:
   `rfc3339`, `utc_rfc3339`.
 
 ### Runtime-разбор аргументов
+
+Реализация `ToolExecutor<ToolInvocation>::handle` должна повторять явную
+сигнатуру времени жизни из trait:
+
+```rust
+fn handle<'a>(&'a self, invocation: ToolInvocation) -> ToolExecutorFuture<'a>
+where
+    ToolInvocation: 'a,
+```
+
+Сокращённая сигнатура с `ToolExecutorFuture<'_>` больше не совпадает с trait и
+не проходит проверку компиляции, хотя само runtime-поведение обработчика не
+меняется.
 
 `SystemTimeArgs` имеет `#[serde(deny_unknown_fields)]`. Это важно для будущего
 переноса: не добавляй молчаливое игнорирование неизвестных ключей без
@@ -256,8 +289,20 @@ Responses API tool spec уже живут в core. Вынос в отдельн�
 больше связующего кода ради маленького обработчика и не уменьшил бы реальную
 область влияния.
 
-Изменение поэтому ограничено приватными handler/spec modules и одной точкой
-регистрации в `add_core_utility_tools(...)`.
+Основная реализация поэтому ограничена приватными модулями handler/spec и одной
+условной точкой регистрации в `add_core_utility_tools(...)`. Небольшой config
+gate нужен не как пользовательская настройка времени, а как upstream-совместимый
+механизм изоляции внутренних temporary threads.
+
+### Почему затронут upstream temporary thread
+
+`codex-rs/tui/src/temporary_structured_request.rs` владеет fail-closed
+конфигурацией structured recap и других внутренних краткоживущих запросов. Это
+чужая относительно runtime tool реализация, но именно она обязана перечислить
+каждый default-enabled статический core tool, который нужно отключить. Изменение
+в ней ограничено одним config override для `get_system_time`; prompt, сбор
+recap, permissions, MCP shutdown и обработка результата не меняются.
+Другие статические core tools остаются областью их собственных fork-карточек.
 
 ### Почему `local` по умолчанию
 
@@ -311,21 +356,27 @@ Tool будет часто вызываться ради одной строки
 5. Экспортировать `SystemTimeHandler` из `handlers/mod.rs`.
 6. Добавить `use crate::tools::handlers::SystemTimeHandler;` в
    `codex-rs/core/src/tools/spec_plan.rs`.
-7. Добавить `registry.add(SystemTimeHandler);` в
+7. Добавить `[tools.get_system_time].enabled` со значением `true` по умолчанию в `ToolsToml`,
+   разрешить его в `Config::get_system_time_enabled` и перегенерировать config
+   schema через skill-owned generator gate.
+8. Добавить условный `registry.add(SystemTimeHandler);` в
    `add_core_utility_tools(...)` сразу после `PlanHandler`, чтобы tool входил в
-   базовый набор core utility tools.
-8. Обновить `codex-rs/core/tests/suite/prompt_caching.rs`: добавить
-   `"get_system_time"` в `expected_tools_names`.
-9. Добавить соседние test files с `#[path = "..._tests.rs"]`, а не inline tests:
+   обычный набор core utility tools, но уважал config gate.
+9. Добавить `tools.get_system_time.enabled = false` в config overrides
+   `start_temporary_thread(...)`; не заменять этим пустые `dynamic_tools` и не
+   ослаблять upstream assertion `tools: []`.
+10. Обновить `codex-rs/core/tests/suite/prompt_caching.rs`: добавить
+    `"get_system_time"` в `expected_tools_names`.
+11. Добавить соседние test files с `#[path = "..._tests.rs"]`, а не inline tests:
    `system_time_tests.rs` и `system_time_spec_tests.rs`.
-10. Добавить `codex-rs/core/tests/suite/system_time.rs` и подключить его через
+12. Добавить `codex-rs/core/tests/suite/system_time.rs` и подключить его через
     `mod system_time;` в `codex-rs/core/tests/suite/mod.rs`.
-11. Покрыть тестами следующие контракты: встроенный короткий ответ, `full: true`,
+13. Покрыть тестами следующие контракты: встроенный короткий ответ, `full: true`,
     форматирование strftime, регистронезависимый разбор `utc`, пробельный
     `offset` после `trim()`, допустимые границы и ошибочные формы fixed offset,
     отклонение `Europe/Moscow`, неизвестные JSON-поля, ошибочный формат strftime,
-    схемы short/full и сквозной Responses API вызов настоящего
-    `SystemTimeHandler`.
+    схемы short/full, config gate, сквозной вызов Responses API настоящего
+    `SystemTimeHandler` и отсутствие tools в structured recap.
 
 ## Проверки
 
@@ -336,7 +387,7 @@ Tool будет часто вызываться ради одной строки
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "формат, границы offset, полный ответ, ошибки и Responses-вызов get_system_time",
+      "purpose": "формат, границы offset, полный ответ, ошибки, config gate и Responses-вызов get_system_time",
       "argv": ["just", "test", "-p", "codex-core", "system_time"]
     },
     {
@@ -348,13 +399,20 @@ Tool будет часто вызываться ради одной строки
         "codex-core",
         "prompt_tools_are_consistent_across_requests"
       ]
+    },
+    {
+      "purpose": "fail-closed structured recap отправляет Responses-запрос без get_system_time и других tools",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "recap_generation_uses_bounded_structured_request_and_inserts_result"
+      ]
     }
   ]
 }
 ```
-
-Новые модульные и интеграционные тесты приняты статической вычиткой. Их компиляция,
-форматирование и запуск отложены до общего прохода по карточкам.
 
 ## Риски и ограничения
 
@@ -367,6 +425,9 @@ Tool будет часто вызываться ради одной строки
   считать пустую строку ошибкой, это будет breaking change runtime-контракта.
 - `full: true` добавляет timestamps и не должен использоваться для обычного
   вопроса времени без причины.
+- Каждый новый default-enabled статический core tool обязан иметь собственный
+  config gate и явное отключение в fail-closed temporary structured thread;
+  пустой `dynamic_tools` этого не обеспечивает.
 - Если будущий Responses API schema validator перестанет принимать `oneOf` в
   output schema, нужно заменить schema shape, сохранив runtime default:
   `{"formatted":"..."}`.

@@ -126,6 +126,24 @@ impl ChatWidget {
             })
             .unwrap_or_default();
         self.transcript.saw_copy_source_this_turn = false;
+        // Если завершающее событие `CoreToolActivity` потерялось при завершении turn,
+        // не оставляем перенесённую в историю запись `InProgress` с вечной анимацией.
+        let active_cell_has_core_tool_activity =
+            self.transcript.active_cell.as_ref().is_some_and(|cell| {
+                cell.as_any()
+                    .downcast_ref::<history_cell::CoreToolActivityCell>()
+                    .is_some()
+                    || cell
+                        .as_any()
+                        .downcast_ref::<ExecCell>()
+                        .is_some_and(|exec| {
+                            exec.iter_calls()
+                                .any(|call| call.core_file_activity.is_some())
+                        })
+            });
+        if active_cell_has_core_tool_activity {
+            self.finalize_active_cell_as_failed();
+        }
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
@@ -308,7 +326,7 @@ impl ChatWidget {
         ) && self.enqueue_rejected_steer()
     }
 
-    /// Finalize any active exec as failed and stop/clear agent-turn UI state.
+    /// Переводит незавершённые записи инструментов активной ячейки в `Failed` и очищает UI turn.
     ///
     /// This does not clear MCP startup tracking, because MCP startup can overlap with turn cleanup
     /// and should continue to drive the bottom-pane running indicator while it is in progress.
@@ -317,7 +335,7 @@ impl ChatWidget {
         // Drop preview-only stream tail content on any termination path before
         // failed-cell finalization, so transient tail cells are never persisted.
         self.clear_active_stream_tail();
-        // Ensure any spinner is replaced by a red ✗ and flushed into history.
+        // Заменяем оставшийся индикатор выполнения красным ✗ и переносим ячейку в историю.
         self.finalize_active_cell_as_failed();
         // Turn-scoped hook rows are transient live state; once the turn is over,
         // do not leave an orphaned running row behind if no matching completion

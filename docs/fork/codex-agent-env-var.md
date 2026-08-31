@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Runtime-переменные окружения Codex
@@ -353,7 +353,10 @@ rollout не удалось получить.
     snapshot и env.
 10. Для unified exec строить `local_policy_env` из выбранного
     `TurnEnvironment`, не класть туда runtime-переменные и добавлять их только в
-    runtime env вместе с upstream session/apply-patch env.
+    runtime env вместе с upstream session/apply-patch env. При разрешении
+    конфликтов в импортах сохранять upstream-тип `super::oneshot::Completion`:
+    переменные runtime-идентичности не заменяют путь завершения одноразовой
+    команды.
 11. Использовать `Session::hook_transcript_path()` для `CODEX_ROLLOUT`, чтобы
     отсутствие path не блокировало запуск команды.
 12. Обновить обертку shell snapshot, чтобы она восстанавливала fork-набор и

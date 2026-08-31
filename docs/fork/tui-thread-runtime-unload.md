@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Выгрузка live-runtime при переключении TUI thread
@@ -62,17 +62,20 @@ TUI переключается на другой primary thread
 | `codex-rs/app-server-protocol/src/protocol/v2/thread.rs` | Добавлены `ThreadUnloadParams`, `ThreadUnloadResponse` и `ThreadUnloadStatus` |
 | `codex-rs/app-server-protocol/schema/` | Сгенерированы JSON Schema и TypeScript artifacts для `thread/unload` |
 | `codex-rs/app-server/README.md` | Документирован публичный non-destructive lifecycle метод `thread/unload` |
-| `codex-rs/app-server/src/request_processors/thread_processor.rs` | Реализован обработчик unload через существующий teardown/shutdown path без archive/delete |
-| `codex-rs/app-server/src/request_processors/thread_lifecycle.rs` | Существующий `wait_for_thread_shutdown` переиспользован из `thread_processor.rs`; прямых правок не потребовалось |
+| `codex-rs/app-server/src/message_processor.rs` | `thread/unload` направлен в thread processor; после успешной выгрузки останавливаются MCP event streams текущего подключения |
+| `codex-rs/app-server/src/request_processors.rs` | Импортированы protocol types ответа `thread/unload` в общий модуль request processors |
+| `codex-rs/app-server/src/request_processors/thread_processor.rs` | Реализован ограниченный по времени unload без archive/delete; проверка экземпляра сохраняет новый runtime с тем же `thread_id` |
+| `codex-rs/app-server/src/request_processors/thread_lifecycle.rs` | Переиспользован `wait_for_thread_shutdown`; upstream `unload_thread_without_subscribers` остается отдельным асинхронным путем idle unload |
 | `codex-rs/tui/src/app_server_session.rs` | Добавлена TUI-обертка для `thread/unload` |
 | `codex-rs/tui/src/app/thread_routing.rs` | Разделены helpers для event subscription cleanup и runtime unload вместо обманчивого `shutdown_current_thread` |
 | `codex-rs/tui/src/app/session_lifecycle.rs` | `/resume`, `/clear`, новая сессия и cleanup устаревшего startup-thread переведены на правильный lifecycle; строго `#[cfg(test)]` hook воспроизводит ошибку attach после создания replacement runtime |
 | `codex-rs/tui/src/app/event_dispatch.rs` | `/fork` и shutdown-first exit переведены на runtime unload там, где live-runtime больше не нужен |
 | `codex-rs/tui/src/app/safety_buffering.rs` | Safety-buffering retry сначала прикрепляет forked thread, затем выгружает прежние tracked runtimes |
 | `codex-rs/tui/src/app/side.rs` | Синхронная очистка сохраняет side UI при ошибке interrupt или unload; фоновая очистка после переключения сразу закрывает локальные источники событий и `dynamic_tool_tasks`, затем выполняет interrupt и runtime unload |
-| `codex-rs/core/src/agent/control/legacy.rs` | Не менять без новой причины; `close_agent` уже является настоящим shutdown path |
+| `codex-rs/app-server/tests/common/test_app_server.rs` | Добавлен вспомогательный метод тестового клиента для `thread/unload` |
+| `codex-rs/app-server/tests/suite/v2/mod.rs` | Зарегистрирован app-server regression module `thread_unload` |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
-| `codex-rs/tui/src/app/tests.rs` | Добавлено TUI-регрессионное покрытие для `/resume`, `/clear`, новой сессии, `/fork`, prompt backtrack, attach failure, shutdown-first, синхронного side close и фоновой очистки после переключения |
+| `codex-rs/tui/src/app/tests.rs` | Добавлено наблюдаемое TUI-покрытие для `/resume`, `/clear`, реального `NewSession`, `/fork`, prompt backtrack, attach failure, shutdown-first, синхронного side close и фоновой очистки после переключения |
 | `codex-rs/tui/src/app/tests/safety_buffering.rs` | Проверяет успешный safety-buffering retry и сохранение старого runtime с черновиком при ранней ошибке fork |
 | `docs/fork/tui-thread-runtime-unload.md` | Владеющий handoff-артефакт этой fork-доработки |
 
@@ -95,8 +98,11 @@ TUI переключается на другой primary thread
 ```text
 thread/unload({ threadId })
   -> если thread loaded: отправить shutdown, дождаться завершения в bounded path,
-     снять pending requests/subscriptions/listener state, удалить из loaded map
+     проверка экземпляра удаляет именно остановленный runtime из loaded map,
+     затем снимаются pending requests/subscriptions/listener state
   -> если thread already not loaded: вернуть status: "notLoaded"
+  -> если runtime под тем же id был заменён во время shutdown: сохранить новый runtime
+     и вернуть ошибку запроса вместо удаления чужого экземпляра
   -> не вызывать archive/delete
   -> не менять rollout/history/thread metadata как пользовательское действие
 ```
@@ -113,10 +119,12 @@ ThreadUnloadResponse {
 ```
 
 `status: "unloaded"` возвращается только после успешного
-`CodexThread::shutdown_and_wait()` и удаления thread из loaded map. Ошибки
-submit shutdown и timeout возвращаются как request error. Переходы primary
-thread и синхронная очистка side conversation сохраняют прежнее локальное state
-при такой ошибке; фоновая очистка после уже состоявшегося переключения описана
+`CodexThread::shutdown_and_wait()`, удаления того же экземпляра runtime из loaded
+map и очистки app-server state. Ошибки отправки shutdown, timeout и проверки
+экземпляра возвращаются как ошибки запроса. При успешной выгрузке обработчик
+останавливает MCP event streams текущего подключения до отправки ответа. Переходы
+primary thread и синхронная очистка side conversation сохраняют прежнее локальное
+state при ошибке; фоновая очистка после уже состоявшегося переключения описана
 отдельно ниже.
 
 ### TUI primary transitions
@@ -190,6 +198,14 @@ loaded до idle unload, что может быть полезно для reatta
 использует `thread/unload` в lifecycle paths, где runtime больше не нужен, не
 меняя семантику общей операции unsubscribe.
 
+### Почему idle unload не заменяет публичный `thread/unload`
+
+Upstream `unload_thread_without_subscribers` запускает фоновую выгрузку по
+политике idle unload и не возвращает клиенту итог shutdown. Публичный
+`thread/unload` должен завершать JSON-RPC-запрос только после ограниченного по
+времени shutdown и удаления проверенного экземпляра runtime. Оба пути используют
+общий `wait_for_thread_shutdown`, но не подменяют друг друга.
+
 ### Почему не delete/archive
 
 Пользовательская цель прямо запрещает удалять сохраненную сессию. `/resume`,
@@ -230,8 +246,10 @@ subscription.
    `thread/unload`.
 2. Добавить protocol types и mapping метода для `thread/unload`, если такого API
    нет.
-3. Реализовать app-server handler через существующий `wait_for_thread_shutdown` и
-   teardown helpers, не вызывая archive/delete store mutations.
+3. Реализовать app-server handler через существующий `wait_for_thread_shutdown`,
+   удаление проверенного экземпляра runtime и teardown helpers, не вызывая
+   archive/delete store mutations. При успешной выгрузке остановить MCP event
+   streams текущего подключения до отправки ответа.
 4. Добавить TUI-обертку в `AppServerSession`.
 5. Разделить TUI helpers: plain unsubscribe для event subscription cleanup и
    runtime unload для переходов active primary thread.
@@ -359,13 +377,13 @@ subscription.
       ]
     },
     {
-      "purpose": "tui shutdown-first выгружает current runtime без legacy Op::Shutdown",
+      "purpose": "tui shutdown-first выгружает current runtime",
       "argv": [
         "just",
         "test",
         "-p",
         "codex-tui",
-        "shutdown_first_exit_unloads_current_runtime_without_submitting_op"
+        "shutdown_first_exit_unloads_current_runtime"
       ]
     },
     {
@@ -409,6 +427,9 @@ runtime, но до замены `ChatWidget`: при этой ошибке sourc
 - `thread/unload` должен быть bounded и не должен зависнуть навсегда на
   shutdown: существующий app-server path уже использует timeout для thread
   shutdown.
+- Удаление из loaded map должно сопоставлять экземпляр runtime, а не только
+  `thread_id`: `thread/revert` может заменить runtime под тем же id, и старый
+  shutdown не должен удалить новый экземпляр.
 - Синхронная очистка side conversation должна сохранить текущий UX после
   ошибки: если server-side close завершился ошибкой, локальное UI state нельзя
   молча удалить. Фоновая очистка после переключения уже удаляет локальное state и

@@ -56,6 +56,7 @@ async fn read_file_detail_uses_selected_environment_path_convention() {
     let environment = Arc::new(Environment::default_for_tests());
     let environment_config = EnvironmentConfig {
         allow_login_shell: true,
+        workspace_roots: Vec::new(),
         permission_profile: PermissionProfileSnapshot::legacy(PermissionProfile::read_only()),
         shell_environment_policy: Default::default(),
         windows_sandbox_level: WindowsSandboxLevel::Disabled,

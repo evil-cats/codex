@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Preview локальных изображений в истории TUI
@@ -328,11 +328,18 @@ fork-поля и типизированные маркеры:
 - путь `ImageView` остаётся в актуальной upstream-модели
   `PathUri`/`LegacyAppPathString`; fork добавляет `preview_size`, но не возвращает
   устаревшие ветки реализации;
+- `TurnItem` и app-server v2 `ThreadItem` сохраняют все актуальные
+  upstream-варианты, включая `FunctionCallOutput`; `TurnItem::id`,
+  `ThreadItem::id`, `From<CoreTurnItem>` и replay TUI остаются исчерпывающими
+  после добавления `ImageView`, не теряя соседние варианты;
 - `TurnItem::ImageView`, устаревающее событие, app-server v2, сгенерированный
   TypeScript и повторное воспроизведение TUI передают один `ImagePreviewSize` без
   числового `preview_rows`;
 - сгенерированный `ThreadItem.ts` сохраняет все варианты upstream, а вариант
   `imageView` дополнительно содержит `previewSize`;
+- `HyperlinkLine` сохраняет актуальную upstream-семантику графемно-корректного
+  переноса и безопасной обработки `destination`; fork-доработка переносит
+  метаданные ссылок как есть и не подменяет upstream-реализацию разбора ссылок;
 - `InitialHistoryReplayBuffer`, `ReflowRenderResult` и вставка в историю терминала
   хранят `items`, а не пониженные `lines`; обычные строки остаются
   `HyperlinkLine`, изображения — отдельным `HistoryInsertItem::Image`;

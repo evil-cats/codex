@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 # Утилитарный core tool `read_file`
@@ -73,7 +73,7 @@ Owner-файлы реализации:
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
 | `codex-rs/core/tests/suite/tools.rs` | Интеграционное покрытие: tool доступен при local environment, отсутствует без environment, следует environment выбранного шага и возвращает line metadata для UTF-8 fixture |
 | `codex-rs/core/tests/suite/code_mode.rs` | Интеграционно проверяет фактический Responses request: `read_file` остается отдельным tool в code-mode-only surface и отсутствует в описании `exec` |
-| `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконные сведения о происхождении после replay rollout; UUID текущего окна остаётся отдельной частью возвращаемого upstream-кортежа |
+| `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконные сведения о происхождении после replay rollout; номер окна и UUID текущего окна остаются отдельными частями возвращаемого upstream-кортежа |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history последней сохранившейся compaction от вызовов в хвосте текущего окна и последовательно восстанавливает typed items через тот же `ContextManager`, что используется live path |
 | `codex-rs/core/src/session/rollout_reconstruction_tests.rs` | Проверяет маркировку вызовов, принесённых replacement-history, и replay-stable history policy при resume-реконструкции |
 | `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy`: сохраняет уже ограниченный результат `read_file` и использует `ToolOutputHistoryPolicy::ModelDefault` для остальных результатов, не изменяя upstream-поля `name`, `namespace` и внутренние метаданные history |
@@ -361,11 +361,12 @@ call/output пару в replacement-history. Первое чтение в нов
 возвращает обычный полный результат и создаёт новое coverage только для этого
 окна.
 
-`Session::current_window()` возвращает этот логический ключ вместе с отдельным
-UUID текущего окна, который используют upstream-метаданные запроса.
-Дедупликация `read_file` намеренно использует только строковый ключ: UUID не
-подменяет `<thread_id>:<window_number>` и не меняет формат восстановленных
-сведений о происхождении.
+`Session::current_window()` возвращает этот логический ключ вместе с отдельными
+числовым номером окна и UUID текущего окна, которые используют
+upstream-метаданные запроса. Дедупликация `read_file` намеренно использует только
+строковый ключ: числовой номер и UUID не подменяют
+`<thread_id>:<window_number>` и не меняют формат восстановленных сведений о
+происхождении.
 
 Один прежний вызов подходит для ссылки, только если одновременно выполнены все
 условия:
@@ -443,6 +444,12 @@ host-side подтверждение доступности точного те�
 `ToolExposure::DirectModelOnly`: Responses API получает обычный
 `FunctionCall(read_file)`, но code-mode namespace `tools.*` этот tool не
 содержит.
+
+`ReadFileHandler` должен следовать текущей upstream-сигнатуре
+`ToolExecutor::handle<'a>` с `ToolInvocation: 'a`. Метаданные модели для
+prompt-equivalent history обработчик получает через `TurnContext::model_info()`.
+При следующем переносе оба API-якоря нужно сверять с текущим upstream, не
+возвращаясь к прежнему полевому доступу или сигнатуре со скрытым lifetime.
 
 Причины:
 

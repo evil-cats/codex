@@ -1,11 +1,13 @@
 //! Интеграционные проверки начального `stdin` инструмента `exec_command`.
 //!
-//! Сценарии проверяют передачу многострочного UTF-8-текста, отсутствие неявного
-//! перевода строки и отказ перехваченного `apply_patch` до изменения файлов.
+//! Сценарии проверяют точность UTF-8-текста и EOF в интерактивном и управляемом
+//! одноразовом путях, продолжение TTY, удалённую возможность и отказ
+//! перехваченного `apply_patch` до изменения файлов.
 
 use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_config::test_support::CloudConfigBundleFixture;
 use codex_protocol::models::PermissionProfile;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -34,7 +36,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Создаёт тестовую конфигурацию с обязательным unified exec для всех сценариев модуля.
+/// Создаёт базовую конфигурацию с unified exec, которую одноразовый сценарий сужает управляемым требованием.
 fn unified_exec_builder() -> core_test_support::test_codex::TestCodexBuilder {
     test_codex()
 }
@@ -316,6 +318,44 @@ async fn exec_command_stdin_preserves_an_explicit_newline() -> Result<()> {
 
     let output = harness.function_call_stdout(call_id).await;
     assert!(output.lines().any(|line| line.trim() == "6"));
+    Ok(())
+}
+
+/// Проверяет, что управляемый одноразовый запуск передаёт начальный текст и завершает поток EOF.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_command_stdin_reaches_managed_one_shot_and_eof() -> Result<()> {
+    skip_if_target_windows!(Ok(()), "uses POSIX wc");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let builder = unified_exec_builder().with_cloud_config_bundle(
+        CloudConfigBundleFixture::loader_with_enterprise_requirement(
+            r#"
+[features]
+unified_exec = false
+shell_tool = true
+"#,
+        ),
+    );
+    let harness = TestCodexHarness::with_auto_env_builder(builder).await?;
+    let call_id = "exec-command-stdin-one-shot";
+    mount_exec_command(
+        &harness,
+        call_id,
+        json!({
+            "cmd": "wc -c",
+            "stdin": "hello",
+            "timeout_ms": 1_000,
+        }),
+    )
+    .await?;
+
+    harness
+        .submit_with_permission_profile("count one-shot stdin bytes", PermissionProfile::Disabled)
+        .await?;
+
+    let output = harness.function_call_stdout(call_id).await;
+    assert!(output.lines().any(|line| line.trim() == "5"));
     Ok(())
 }
 

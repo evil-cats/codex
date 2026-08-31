@@ -453,6 +453,27 @@ async fn exec_command_stdin_is_excluded_from_hook_payload_and_survives_rewrite()
     assert_eq!(args.stdin.as_deref(), Some("first\nsecond\n"));
 }
 
+/// Проверяет, что одноразовая схема сохраняет `stdin` без интерактивных параметров.
+#[test]
+fn one_shot_exec_command_spec_preserves_stdin_without_interactive_controls() {
+    let tool = ExecCommandHandler::one_shot(ExecCommandHandlerOptions {
+        allow_login_shell: false,
+        exec_permission_approvals_enabled: false,
+        include_environment_id: false,
+        include_shell_parameter: true,
+    })
+    .spec();
+    let tool = serde_json::to_value(tool).expect("one-shot tool spec should serialize");
+
+    assert_eq!(
+        ["stdin", "tty", "yield_time_ms", "timeout_ms"].map(|name| {
+            tool.pointer(&format!("/parameters/properties/{name}"))
+                .is_some()
+        }),
+        [true, false, false, true]
+    );
+}
+
 #[tokio::test]
 async fn exec_command_pre_tool_use_payload_uses_raw_command() {
     let payload = ToolPayload::Function {
