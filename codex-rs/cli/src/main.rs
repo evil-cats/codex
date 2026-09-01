@@ -1044,12 +1044,17 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
-/// Строит корневую команду с единственной стабильной строкой ревизии.
+/// Строит корневую команду с двухстрочным выводом `--version`.
 ///
-/// Формат строки является интерфейсом `fork install`, поэтому ревизия остаётся
-/// отдельной от SemVer и не добавляется к `--version`.
+/// Формат является интерфейсом `fork install`: ревизия остаётся отдельной от
+/// SemVer и выводится второй строкой.
 fn multitool_command(build_commit: &str) -> clap::Command {
-    MultitoolCli::command().after_help(format!("Revision: {build_commit}"))
+    // Без возможности `string` Clap требует `&'static str` для текста версии;
+    // в рабочем процессе команда строится один раз, поэтому строка живёт до его конца.
+    let version: &'static str = Box::leak(
+        format!("{}\nrevision {build_commit}", env!("CARGO_PKG_VERSION")).into_boxed_str(),
+    );
+    MultitoolCli::command().version(version)
 }
 
 /// Разбирает CLI после инициализации сведений конечного бинарника.
@@ -3511,32 +3516,31 @@ mod tests {
         help_from_args_with_revision(args, "dev")
     }
 
-    /// Ревизия должна появляться ровно один раз только в корневом help.
+    /// Корневая справка и справка подкоманды не содержат сведения о ревизии.
     #[test]
-    fn root_help_displays_build_revision() {
+    fn help_does_not_display_build_revision() {
         const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
         let root_help = help_from_args_with_revision(&["codex", "--help"], REVISION);
         let exec_help = help_from_args_with_revision(&["codex", "exec", "--help"], REVISION);
         fn revision_lines(help: &str) -> Vec<&str> {
             help.lines()
-                .filter(|line| line.starts_with("Revision:"))
+                .filter(|line| line.starts_with("revision "))
                 .collect::<Vec<_>>()
         }
 
         assert_eq!(
             (revision_lines(&root_help), revision_lines(&exec_help)),
-            (
-                vec!["Revision: 0123456789abcdef0123456789abcdef01234567"],
-                vec![],
-            )
+            (vec![], vec![])
         );
     }
 
-    /// `--version` сохраняет имя `codex` и версию пакета с меткой Hermione.
+    /// `--version` показывает имя, версию пакета и ревизию конкретной сборки.
     #[test]
-    fn version_flag_uses_command_name_and_package_version() {
-        let error = multitool_command("dev")
+    fn version_flag_displays_command_package_version_and_build_revision() {
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+        let error = multitool_command(REVISION)
             .try_get_matches_from(["codex", "--version"])
             .expect_err("version should short-circuit");
 
@@ -3544,7 +3548,7 @@ mod tests {
             (error.kind(), error.to_string()),
             (
                 clap::error::ErrorKind::DisplayVersion,
-                format!("codex {}\n", env!("CARGO_PKG_VERSION")),
+                format!("codex {}\nrevision {REVISION}\n", env!("CARGO_PKG_VERSION")),
             ),
         );
     }

@@ -30,7 +30,7 @@ SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
 FORK_TESTS_SCHEMA = "fork-tests.v1"
 FORK_TEST_PLATFORMS = ("linux", "macos", "windows")
-REVISION_PREFIX = "Revision: "
+REVISION_PREFIX = "revision "
 DEVELOPMENT_REVISION = "dev"
 FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 REVISION_ELF_SECTION = ".hermione_revision"
@@ -251,7 +251,10 @@ class InstallArtifact:
 
 @dataclass(frozen=True)
 class RevisionProbe:
+    """Описывает проверку `--version` и ожидаемое имя бинарника в первой строке."""
+
     label: str
+    command_name: str
     argv: tuple[str, ...]
 
 
@@ -264,7 +267,7 @@ RELEASE_FAST_BINARY_CONTRACTS = (
     BinaryArtifactContract(
         label="Code Mode host",
         binary_name="codex-code-mode-host",
-        probe_args=("--help",),
+        probe_args=("--version",),
     ),
 )
 
@@ -812,20 +815,29 @@ class LogSession:
         return self.fail(label=label, exit_code=status, argv=argv)
 
 
-def parse_binary_revision(help_output: str) -> str:
-    """Извлекает единственную допустимую ревизию из корневого CLI help."""
-    revisions = [
-        line.removeprefix(REVISION_PREFIX)
-        for line in help_output.splitlines()
-        if line.startswith(REVISION_PREFIX)
-    ]
-    if len(revisions) != 1:
+def parse_binary_revision(version_output: str, command_name: str) -> str:
+    """Проверяет двухстрочный вывод `--version` и возвращает ревизию."""
+    lines = version_output.splitlines()
+    if len(lines) != 2:
         raise ValueError(
-            "help должен содержать ровно одну отдельную строку "
-            f"{REVISION_PREFIX}<value>"
+            "вывод версии должен содержать ровно две строки: "
+            f"{command_name} <version> и {REVISION_PREFIX}<value>"
         )
 
-    revision = revisions[0]
+    version_prefix = f"{command_name} "
+    version = lines[0].removeprefix(version_prefix)
+    if not lines[0].startswith(version_prefix) or not version or any(
+        character.isspace() for character in version
+    ):
+        raise ValueError(
+            f"первая строка версии должна иметь формат {command_name} <version>"
+        )
+
+    revision = lines[1].removeprefix(REVISION_PREFIX)
+    if not lines[1].startswith(REVISION_PREFIX):
+        raise ValueError(
+            f"вторая строка версии должна иметь формат {REVISION_PREFIX}<value>"
+        )
     if revision == DEVELOPMENT_REVISION or FULL_GIT_REVISION_RE.fullmatch(revision):
         return revision
     raise ValueError(f"недопустимая ревизия бинарника: {revision!r}")
@@ -871,7 +883,7 @@ def verify_revision_probes(
                 None,
             )
         try:
-            revision = parse_binary_revision(stdout)
+            revision = parse_binary_revision(stdout, probe.command_name)
         except ValueError as exc:
             session.write(f"{exc}\n")
             return session.fail(label=probe.label, argv=probe.argv), None
@@ -897,11 +909,12 @@ def verify_revision_probes(
 def revision_probes_for_artifacts(
     artifacts: tuple[BinaryArtifact, ...], stage: str
 ) -> tuple[RevisionProbe, ...]:
-    """Строит локальные ``--help`` probes для указанной стадии артефактов."""
+    """Строит локальные ``--version`` probes для стадии артефактов."""
     return tuple(
         RevisionProbe(
             label=f"{artifact.contract.label} {stage} revision",
-            argv=(str(artifact.path), "--help"),
+            command_name=artifact.contract.binary_name,
+            argv=(str(artifact.path), "--version"),
         )
         for artifact in artifacts
     )
@@ -1783,7 +1796,7 @@ def cmd_build_code_mode_host(args: argparse.Namespace) -> int:
     """Собирает отладочный Code Mode host для тестов карточек.
 
     Команда передаёт Cargo канонические артефакты V8, проверяет ожидаемый файл
-    в `target/debug` и запускает его с `--help`. Любой отказ возвращает
+    в `target/debug` и запускает его с `--version`. Любой отказ возвращает
     ненулевой код и сохраняется в журнале сборки fork-skill.
     """
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
@@ -1825,7 +1838,7 @@ def cmd_build_code_mode_host(args: argparse.Namespace) -> int:
 
     result = session.run_step(
         "проверка исполняемого файла Code Mode host",
-        [str(binary_path), "--help"],
+        [str(binary_path), "--version"],
     )
     if result != 0:
         return result
@@ -2333,10 +2346,11 @@ def cmd_install(args: argparse.Namespace) -> int:
                     label=(
                         f"{host} {artifact.contract.label} installed revision"
                     ),
+                    command_name=artifact.contract.binary_name,
                     argv=(
                         ssh_cmd,
                         host,
-                        shlex.join([str(target), "--help"]),
+                        shlex.join([str(target), "--version"]),
                     ),
                 )
                 for artifact, target in zip(

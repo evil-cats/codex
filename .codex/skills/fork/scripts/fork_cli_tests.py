@@ -28,7 +28,15 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(fork_cli)
 
 
+def binary_version_output(label: str, revision: str) -> str:
+    """Формирует точный вывод версии для бинарника из метки проверки."""
+    command_name = "codex-code-mode-host" if "Code Mode host" in label else "codex"
+    return f"{command_name} 0.0.0\nrevision {revision}\n"
+
+
 class RecordingLogSession:
+    """Записывает workflow-шаги и возвращает детерминированные ответы проверок."""
+
     instances = []
     capture_responses = {}
     step_responses = {}
@@ -62,6 +70,7 @@ class RecordingLogSession:
     def run_capture(
         self, label: str, argv: list[str]
     ) -> tuple[int, str, str]:
+        """Записывает вызов и имитирует ответы Git либо проверки версии."""
         self.capture_steps.append((label, argv))
         if label in RecordingLogSession.capture_responses:
             return RecordingLogSession.capture_responses[label]
@@ -75,7 +84,7 @@ class RecordingLogSession:
                 if self.mode == "build-fast" or " source revision" in label
                 else TEST_GIT_REVISION
             )
-            return 0, f"Usage: test\n\nRevision: {revision}\n", ""
+            return 0, binary_version_output(label, revision), ""
         return 0, "", ""
 
     def fail(
@@ -142,26 +151,32 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         self.create_executable_pair(main_path)
         return main_path
 
-    def test_parse_binary_revision_accepts_only_dev_or_full_git_sha(self) -> None:
-        """Парсер принимает два контрактных формата и отклоняет неоднозначный help."""
+    def test_parse_binary_revision_requires_two_line_version_contract(self) -> None:
+        """Парсер принимает точный двухстрочный формат и допустимую ревизию."""
         self.assertEqual(
             (
-                fork_cli.parse_binary_revision("Revision: dev\n"),
                 fork_cli.parse_binary_revision(
-                    f"Usage: codex\n\nRevision: {TEST_GIT_REVISION}\n"
+                    "codex 0.0.0\nrevision dev\n", "codex"
+                ),
+                fork_cli.parse_binary_revision(
+                    "codex-code-mode-host 0.0.0\n"
+                    f"revision {TEST_GIT_REVISION}\n",
+                    "codex-code-mode-host",
                 ),
             ),
             ("dev", TEST_GIT_REVISION),
         )
         for output in (
-            "Usage: codex\n",
-            "Revision: unknown\n",
-            "Revision: abc123\n",
-            "Revision: dev\nRevision: dev\n",
+            "codex 0.0.0\n",
+            "codex-cli 0.0.0\nrevision dev\n",
+            "codex \nrevision dev\n",
+            "codex 0.0.0\nrevision unknown\n",
+            "codex 0.0.0\nrevision abc123\n",
+            "codex 0.0.0\nrevision dev\nrevision dev\n",
         ):
             with self.subTest(output=output):
                 with self.assertRaises(ValueError):
-                    fork_cli.parse_binary_revision(output)
+                    fork_cli.parse_binary_revision(output, "codex")
 
     def test_revision_section_payload_accepts_only_full_git_sha(self) -> None:
         """Release payload имеет точный размер ELF-секции и не принимает dev."""
@@ -216,8 +231,26 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             {"V8_TEST": "1", "STABLE_GIT_COMMIT": "dev"},
         )
         self.assertEqual(
-            [label for label, _argv in session.capture_steps],
-            ["Codex build revision", "Code Mode host build revision"],
+            session.capture_steps,
+            [
+                (
+                    "Codex build revision",
+                    [
+                        str(repo_root / "codex-rs/target/release-fast/codex"),
+                        "--version",
+                    ],
+                ),
+                (
+                    "Code Mode host build revision",
+                    [
+                        str(
+                            repo_root
+                            / "codex-rs/target/release-fast/codex-code-mode-host"
+                        ),
+                        "--version",
+                    ],
+                ),
+            ],
         )
 
     def test_default_install_target_uses_home_local_bin(self) -> None:
@@ -448,7 +481,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             for label in ("Codex source revision", "Code Mode host source revision"):
                 RecordingLogSession.capture_responses[label] = (
                     0,
-                    f"Revision: {OTHER_GIT_REVISION}\n",
+                    binary_version_output(label, OTHER_GIT_REVISION),
                     "",
                 )
             with (
@@ -470,7 +503,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         )
 
     def test_install_rejects_unstamped_staged_revision(self) -> None:
-        """После objcopy staging-пара уже не может оставаться Revision: dev."""
+        """После objcopy staging-пара уже не может оставаться `revision dev`."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             main_source = repo_root / "codex-rs/target/release-fast/codex"
@@ -487,7 +520,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             for label in ("Codex staged revision", "Code Mode host staged revision"):
                 RecordingLogSession.capture_responses[label] = (
                     0,
-                    "Revision: dev\n",
+                    binary_version_output(label, "dev"),
                     "",
                 )
             with (
@@ -525,12 +558,18 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
             RecordingLogSession.capture_responses["Codex source revision"] = (
                 0,
-                "Revision: dev\n",
+                binary_version_output("Codex source revision", "dev"),
                 "",
             )
             RecordingLogSession.capture_responses[
                 "Code Mode host source revision"
-            ] = (0, f"Revision: {OTHER_GIT_REVISION}\n", "")
+            ] = (
+                0,
+                binary_version_output(
+                    "Code Mode host source revision", OTHER_GIT_REVISION
+                ),
+                "",
+            )
             with (
                 unittest.mock.patch.object(
                     fork_cli, "LogSession", RecordingLogSession
@@ -653,7 +692,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             self.assertIn(
                 (
                     "Code Mode host source binary probe",
-                    [str(host_source), "--help"],
+                    [str(host_source), "--version"],
                 ),
                 session.steps,
             )
@@ -766,7 +805,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             for label in ("Codex staged revision", "Code Mode host staged revision"):
                 RecordingLogSession.capture_responses[label] = (
                     0,
-                    f"Revision: {OTHER_GIT_REVISION}\n",
+                    binary_version_output(label, OTHER_GIT_REVISION),
                     "",
                 )
             with (
@@ -1021,7 +1060,7 @@ class CodeModeHostBuildTests(unittest.TestCase):
                 ),
                 (
                     "проверка исполняемого файла Code Mode host",
-                    [str(binary_path), "--help"],
+                    [str(binary_path), "--version"],
                 ),
             ],
         )

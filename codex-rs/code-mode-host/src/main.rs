@@ -43,9 +43,14 @@ struct Cli {
     otel_trace_exporter: Option<String>,
 }
 
-/// Строит CLI с машинно-читаемой строкой ревизии для установщика.
+/// Строит CLI с версией пакета и машинно-читаемой ревизией сборки.
 fn cli_command(build_commit: &str) -> clap::Command {
-    Cli::command().after_help(format!("Revision: {build_commit}"))
+    // Без возможности `string` Clap требует `&'static str` для текста версии;
+    // в рабочем процессе команда строится один раз, поэтому строка живёт до его конца.
+    let version: &'static str = Box::leak(
+        format!("{}\nrevision {build_commit}", env!("CARGO_PKG_VERSION")).into_boxed_str(),
+    );
+    Cli::command().version(version)
 }
 
 /// Разбирает аргументы после чтения встроенной ревизии конечного бинарника.

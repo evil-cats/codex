@@ -48,7 +48,7 @@ commands.
 
 `fork install` является release boundary: требует чистую рабочую копию, получает
 полный SHA текущего `HEAD` и запускает ту же release-fast сборку с
-`Revision: dev`, что и `fork build-fast`. Cargo тем самым подтверждает freshness
+`revision dev`, что и `fork build-fast`. Cargo тем самым подтверждает freshness
 артефактов, но не перелинковывает уже актуальную пару ради смены ревизии. После
 сборки команда повторно проверяет чистоту и неизменность `HEAD`. Установка пары
 из произвольного каталога не входит в контракт команды.
@@ -61,7 +61,7 @@ keys принадлежат пользовательской SSH-конфигу�
 равен `.local/bin/codex-hermione` относительно login home. `--target PATH`
 переопределяет основной target, а путь Code Mode host выводится автоматически.
 
-Собранные артефакты остаются unstripped и сохраняют `Revision: dev`. Команда
+Собранные артефакты остаются unstripped и сохраняют `revision dev`. Команда
 выполняет `strip` только над staged copies, затем штатно заменяет содержимое
 фиксированной ELF-секции `.hermione_revision` через
 `objcopy --update-section`. Source-пара должна остаться `dev`, а временные и
@@ -71,16 +71,21 @@ keys принадлежат пользовательской SSH-конфигу�
 probes и проверку ревизии по SSH. Это остаётся skill-owned установкой, а не
 ручным копированием файлов.
 
+Проверка ревизии принимает только двухстрочный `--version`: каноническое имя
+бинарника и непустую версию в первой строке, `revision <value>` — во второй.
+Лишние строки, другое имя команды и неверная ревизия останавливают workflow до
+публикации.
+
 `fork build-fast` перед внутренней Cargo-сборкой определяет native rustc target
 и через upstream `scripts/codex_package/v8.py` получает согласованные
 `RUSTY_V8_ARCHIVE` и `RUSTY_V8_SRC_BINDING_PATH`. Fork skill не дублирует URL,
 checksums и cache policy V8 artifacts. Команда разрешена в dirty checkout и
-всегда собирает оба development-артефакта с `Revision: dev`.
+всегда собирает оба development-артефакта с `revision dev`.
 
 `fork build-code-mode-host` использует тот же механизм разрешения артефактов V8,
 но собирает только отладочный `codex-code-mode-host` для тестов карточек Cargo. Команда
 проверяет `codex-rs/target/debug/codex-code-mode-host` и запускает его с
-`--help`; она не заменяет релизную сборку `fork build-fast`.
+`--version`; она не заменяет релизную сборку `fork build-fast`.
 
 `fork fix` запускает repo lint/fix recipe для всего workspace. Повторяемый
 `--package CRATE` ограничивает запуск выбранными crates и передает каждую из них
