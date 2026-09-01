@@ -376,8 +376,9 @@ pub(crate) fn create_diff_preview(
     changes: &HashMap<PathBuf, FileChange>,
     cwd: &Path,
     wrap_cols: usize,
+    max_rows_per_file: usize,
 ) -> Vec<RtLine<'static>> {
-    render_changes_block(collect_rows(changes), wrap_cols, cwd, preview::PREVIEW_ROWS)
+    render_changes_block(collect_rows(changes), wrap_cols, cwd, max_rows_per_file)
 }
 
 // Shared row for per-file presentation
@@ -434,7 +435,7 @@ fn render_changes_block(
     rows: Vec<Row<'_>>,
     wrap_cols: usize,
     cwd: &Path,
-    mut remaining_rows: usize,
+    max_rows_per_file: usize,
 ) -> Vec<RtLine<'static>> {
     let mut out: Vec<RtLine<'static>> = Vec::new();
 
@@ -488,7 +489,8 @@ fn render_changes_block(
             out.push(RtLine::from(header));
         }
 
-        if remaining_rows == 0 && (omitted || r.added > 0 || r.removed > 0) {
+        let mut remaining_rows = max_rows_per_file;
+        if remaining_rows == 0 && (r.added > 0 || r.removed > 0) {
             omitted = true;
             continue;
         }
@@ -500,7 +502,7 @@ fn render_changes_block(
         let mut lines = vec![];
         let prefix = "    ";
         let content_width = wrap_cols.saturating_sub(prefix.len());
-        omitted |= render_change(
+        let mut file_omitted = render_change(
             r.change,
             &mut lines,
             content_width,
@@ -518,17 +520,14 @@ fn render_changes_block(
                         wrap_cols as u16,
                         remaining_rows as u16,
                     ));
-                    remaining_rows = 0;
-                    omitted = true;
+                    file_omitted = true;
                     break;
                 }
                 remaining_rows -= rows;
             }
             out.push(line);
         }
-        if omitted {
-            remaining_rows = 0;
-        }
+        omitted |= file_omitted;
     }
 
     if omitted {

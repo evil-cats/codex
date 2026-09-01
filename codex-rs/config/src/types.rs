@@ -23,6 +23,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
+use std::num::NonZeroUsize;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -694,6 +695,7 @@ pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS: u16 = 8;
 pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS: u16 = 12;
 pub const DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS: u16 = 20;
+pub const DEFAULT_TUI_DIFF_PREVIEW_MAX_ROWS_PER_FILE: usize = 300;
 
 const fn default_tui_history_image_preview_small_rows() -> u16 {
     DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS
@@ -842,6 +844,11 @@ pub struct Tui {
     /// Row counts used by TUI history image previews for `small`, `normal`, and `large`.
     #[serde(default)]
     pub history_image_preview: TuiHistoryImagePreview,
+
+    /// Maximum rendered content rows shown for each file in an inline diff preview.
+    /// Defaults to `300` when unset.
+    #[serde(default)]
+    pub diff_preview_max_rows_per_file: Option<NonZeroUsize>,
 
     /// Trim terminal resize-reflow replay to the most recent rendered terminal rows when the
     /// transcript exceeds this cap. Omit to use Codex's terminal-specific default. Set to `0` to

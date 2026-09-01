@@ -34,6 +34,8 @@ use codex_protocol::mcp::Tool;
 use rmcp::model::ContentBlock;
 
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+const TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE: usize = 12;
+
 async fn test_config() -> Config {
     let codex_home = std::env::temp_dir();
     ConfigBuilder::default()
@@ -58,7 +60,7 @@ fn patch_preview_shows_minified_prefix_but_preserves_full_views() {
         },
     )]);
     let cwd = test_cwd();
-    let cell = new_patch_event(changes.clone(), &cwd);
+    let cell = new_patch_event(changes.clone(), &cwd, TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE);
 
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @"
     • Added metrics.json (+1 -0)
@@ -117,7 +119,7 @@ fn patch_preview_limits_add_delete_and_update_content() {
         ] {
             let changes = HashMap::from([(PathBuf::from("values.txt"), change)]);
             let cwd = test_cwd();
-            let cell = new_patch_event(changes.clone(), &cwd);
+            let cell = new_patch_event(changes.clone(), &cwd, TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE);
             let full = create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80);
             let mut expected = full[..13].to_vec();
             expected.push(
@@ -132,49 +134,38 @@ fn patch_preview_limits_add_delete_and_update_content() {
 }
 
 #[test]
-fn patch_preview_shares_content_budget_and_keeps_file_summaries() {
+fn patch_preview_limits_each_file_and_preserves_full_transcript() {
     let changes = HashMap::from([
         (
             PathBuf::from("a.txt"),
             FileChange::Add {
-                content: "a\n".repeat(/*n*/ 11) + &"©️ ".repeat(/*n*/ 36),
+                content: "a\n".repeat(/*n*/ 4),
             },
         ),
         (
             PathBuf::from("b.txt"),
             FileChange::Add {
-                content: "b\n".repeat(/*n*/ 10),
-            },
-        ),
-        (
-            PathBuf::from("c.txt"),
-            FileChange::Add {
-                content: "c\n".into(),
+                content: "b\n".repeat(/*n*/ 4),
             },
         ),
     ]);
-    let cell = new_patch_event(changes, &test_cwd());
+    let cwd = test_cwd();
+    let cell = new_patch_event(changes.clone(), &cwd, /*max_rows_per_file*/ 2);
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 80)).join("\n"), @"
-    • Edited 3 files (+23 -0)
-      └ a.txt (+12 -0)
-         1 +a
-         2 +a
-         3 +a
-         4 +a
-         5 +a
-         6 +a
-         7 +a
-         8 +a
-         9 +a
-        10 +a
-        11 +a
-        12 +©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️ ©️
+    • Edited 2 files (+8 -0)
+      └ a.txt (+4 -0)
+        1 +a
+        2 +a
 
-      └ b.txt (+10 -0)
-
-      └ c.txt (+1 -0)
+      └ b.txt (+4 -0)
+        1 +b
+        2 +b
       … Diff preview limited (ctrl + t to view transcript).
     ");
+    assert_eq!(
+        cell.transcript_lines(/*width*/ 80),
+        create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80),
+    );
 }
 
 #[test]
@@ -187,7 +178,7 @@ fn patch_preview_budgets_wrapped_rows_at_narrow_widths() {
         format!("{}\n", "\u{a9}\u{fe0f}".repeat(/*n*/ 50)).repeat(/*n*/ 20),
     ] {
         let changes = HashMap::from([(PathBuf::from("values.txt"), FileChange::Add { content })]);
-        let cell = new_patch_event(changes, &test_cwd());
+        let cell = new_patch_event(changes, &test_cwd(), TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE);
         for width in [8, 16, 40, 80] {
             let lines = cell.display_lines(width);
             let body = lines[1..lines.len() - 1].to_vec();
@@ -224,7 +215,7 @@ fn patch_preview_preserves_small_diffs_and_exact_budget() {
             ),
         ]);
         let cwd = test_cwd();
-        let cell = new_patch_event(changes.clone(), &cwd);
+        let cell = new_patch_event(changes.clone(), &cwd, TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE);
         assert_eq!(
             cell.display_lines(/*width*/ 80),
             create_diff_summary(&changes, &cwd, /*wrap_cols*/ 80),
@@ -250,7 +241,7 @@ fn patch_preview_caps_zero_width_source_before_later_content() {
             (PathBuf::from("a.txt"), make_change(content.clone())),
             (PathBuf::from("b.txt"), make_change("later\n".into())),
         ]);
-        let cell = new_patch_event(changes.clone(), &cwd);
+        let cell = new_patch_event(changes.clone(), &cwd, TEST_DIFF_PREVIEW_MAX_ROWS_PER_FILE);
         let preview = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
         // The next two-byte combining mark straddles the 64 KiB boundary.
         assert_eq!(preview.matches('\u{301}').count(), 32_764);
@@ -267,6 +258,7 @@ fn patch_preview_caps_zero_width_source_before_later_content() {
         2 +xy
 
       └ b.txt (+1 -0)
+        1 +later
       … Diff preview limited (ctrl + t to view transcript).
 
     • Edited 2 files (+0 -4)
@@ -275,6 +267,7 @@ fn patch_preview_caps_zero_width_source_before_later_content() {
         2 -xy
 
       └ b.txt (+0 -1)
+        1 -later
       … Diff preview limited (ctrl + t to view transcript).
 
     • Edited 2 files (+4 -0)
@@ -283,6 +276,7 @@ fn patch_preview_caps_zero_width_source_before_later_content() {
         2 +xy
 
       └ b.txt (+1 -0)
+        1 +later
       … Diff preview limited (ctrl + t to view transcript).
     ");
 }

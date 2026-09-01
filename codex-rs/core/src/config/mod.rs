@@ -41,6 +41,7 @@ use codex_config::sandbox_mode_requirement_for_permission_profile;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::AuthKeyringBackendKind;
+use codex_config::types::DEFAULT_TUI_DIFF_PREVIEW_MAX_ROWS_PER_FILE;
 use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_LARGE_ROWS;
 use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_NORMAL_ROWS;
 use codex_config::types::DEFAULT_TUI_HISTORY_IMAGE_PREVIEW_SMALL_ROWS;
@@ -806,6 +807,9 @@ pub struct Config {
 
     /// TUI history image preview row counts.
     pub history_image_preview: HistoryImagePreviewConfig,
+
+    /// Maximum rendered content rows shown for each file in an inline diff preview.
+    pub tui_diff_preview_max_rows_per_file: usize,
 
     /// Keybinding overrides for the TUI.
     ///
@@ -4519,6 +4523,12 @@ impl Config {
             tui_resume_cwd: cfg.tui.as_ref().and_then(|t| t.resume_cwd),
             terminal_resize_reflow,
             history_image_preview,
+            tui_diff_preview_max_rows_per_file: cfg
+                .tui
+                .as_ref()
+                .and_then(|t| t.diff_preview_max_rows_per_file)
+                .map(NonZeroUsize::get)
+                .unwrap_or(DEFAULT_TUI_DIFF_PREVIEW_MAX_ROWS_PER_FILE),
             tui_keymap: cfg
                 .tui
                 .as_ref()

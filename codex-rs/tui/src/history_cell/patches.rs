@@ -9,11 +9,17 @@ use codex_utils_path_uri::LegacyAppPathString;
 pub(crate) struct PatchHistoryCell {
     changes: HashMap<PathBuf, FileChange>,
     cwd: PathBuf,
+    max_rows_per_file: usize,
 }
 
 impl HistoryCell for PatchHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        create_diff_preview(&self.changes, &self.cwd, width as usize)
+        create_diff_preview(
+            &self.changes,
+            &self.cwd,
+            width as usize,
+            self.max_rows_per_file,
+        )
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -34,10 +40,12 @@ impl HistoryCell for PatchHistoryCell {
 pub(crate) fn new_patch_event(
     changes: HashMap<PathBuf, FileChange>,
     cwd: &Path,
+    max_rows_per_file: usize,
 ) -> PatchHistoryCell {
     PatchHistoryCell {
         changes,
         cwd: cwd.to_path_buf(),
+        max_rows_per_file,
     }
 }
 

@@ -3779,6 +3779,13 @@
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
         },
+        "diff_preview_max_rows_per_file": {
+          "default": null,
+          "description": "Maximum rendered content rows shown for each file in an inline diff preview. Defaults to `300` when unset.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        },
         "history_image_preview": {
           "allOf": [
             {

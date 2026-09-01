@@ -22,6 +22,7 @@ use codex_core_api::CodexThread;
 use codex_core_api::Config;
 use codex_core_api::ConfigLayerStack;
 use codex_core_api::Constrained;
+use codex_core_api::DEFAULT_TUI_DIFF_PREVIEW_MAX_ROWS_PER_FILE;
 use codex_core_api::EnvironmentManager;
 use codex_core_api::EventMsg;
 use codex_core_api::ExecServerRuntimePaths;
@@ -237,6 +238,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         tui_pet_anchor: TuiPetAnchor::Composer,
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         history_image_preview: HistoryImagePreviewConfig::default(),
+        tui_diff_preview_max_rows_per_file: DEFAULT_TUI_DIFF_PREVIEW_MAX_ROWS_PER_FILE,
         tui_keymap: TuiKeymap::default(),
         tui_session_picker_view: SessionPickerViewMode::Dense,
         tui_resume_cwd: None,

@@ -11,7 +11,6 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::Wrap;
 use unicode_width::UnicodeWidthChar;
 
-pub(super) const PREVIEW_ROWS: usize = 12;
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 
 /// Counts a UTF-8 source prefix within a pre-render character-width budget.

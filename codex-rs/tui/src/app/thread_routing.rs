@@ -420,6 +420,7 @@ impl App {
             .add_to_history(history_cell::new_patch_event(
                 request.changes.clone(),
                 &request.cwd,
+                self.config.tui_diff_preview_max_rows_per_file,
             ));
     }
 

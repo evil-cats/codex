@@ -1822,6 +1822,7 @@ fn config_toml_deserializes_model_availability_nux() {
                 ]),
             },
             history_image_preview: TuiHistoryImagePreview::default(),
+            diff_preview_max_rows_per_file: None,
             terminal_resize_reflow_max_rows: None,
         }
     );
@@ -4921,8 +4922,49 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             keymap: TuiKeymap::default(),
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
             history_image_preview: TuiHistoryImagePreview::default(),
+            diff_preview_max_rows_per_file: None,
             terminal_resize_reflow_max_rows: None,
         }
+    );
+}
+
+#[tokio::test]
+async fn tui_diff_preview_max_rows_per_file_defaults_overrides_and_rejects_zero() {
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load default config");
+    assert_eq!(config.tui_diff_preview_max_rows_per_file, 300);
+
+    let cfg = toml::from_str::<ConfigToml>(
+        r#"
+[tui]
+diff_preview_max_rows_per_file = 27
+"#,
+    )
+    .expect("positive diff preview budget should deserialize");
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load overridden config");
+    assert_eq!(config.tui_diff_preview_max_rows_per_file, 27);
+
+    let error = toml::from_str::<ConfigToml>(
+        r#"
+[tui]
+diff_preview_max_rows_per_file = 0
+"#,
+    )
+    .expect_err("zero diff preview budget should be rejected");
+    assert!(
+        error.to_string().contains("nonzero"),
+        "unexpected error: {error}"
     );
 }
 
