@@ -2,7 +2,7 @@
 id: fork-tui-core-tool-activity
 status: active
 created: 2026-07-04
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Видимость core tools в TUI
@@ -17,7 +17,8 @@ core function tools в TUI как понятные пользовательск�
 
 После добавления core function tools у агента появляется более точный путь для
 простых операций без shell-команд: чтение файла, получение metadata текущего
-thread и чтение текущего времени host. Но если эти вызовы не видны в TUI,
+thread и чтение текущего времени host через fork-инструмент `get_system_time`
+либо upstream-инструмент `clock/curr_time`. Но если эти вызовы не видны в TUI,
 пользователь теряет наблюдаемость работы агента.
 
 Старое shell-чтение уже имеет понятную визуальную модель:
@@ -35,8 +36,8 @@ thread и чтение текущего времени host. Но если эт�
 
 - `read_file` возвращает результат модели как `FunctionCallOutput`, но не
   создает отдельное видимое действие TUI;
-- `get_thread_info` и `get_system_time` также являются core function tools и
-  могут оставаться невидимыми для пользователя;
+- `get_thread_info`, `get_system_time` и upstream-инструмент `clock/curr_time`
+  из namespace `clock` также могут оставаться невидимыми для пользователя;
 - сырые подписи вроде `Tool read_file` или `Function get_system_time` раскрывают
   внутренний API вместо пользовательского действия;
 - отсутствие snapshot-контракта делает будущую регрессию UI незаметной.
@@ -49,8 +50,8 @@ thread и чтение текущего времени host. Но если эт�
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
-| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
-| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, исключение одноимённого extension tool и выбор `environment_id`/path convention для `read_file detail`; тестовые данные оставляют разрешённые `workspace_roots` пустыми, чтобы изолировать разрешение пути через выбранный `cwd` |
+| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace и точного upstream-инструмента `clock/curr_time` с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, включение точной пары `clock/curr_time`, исключение остальных инструментов из других namespaces, `clock/curr_time -> System time utc` и выбор `environment_id`/path convention для `read_file detail`; тестовые данные оставляют разрешённые `workspace_roots` пустыми, чтобы изолировать разрешение пути через выбранный `cwd` |
 | `codex-rs/core/tests/suite/core_tool_activity.rs` | Через настоящий function call Responses API проверяет согласованную пару `ItemStarted`/`ItemCompleted` для успешного `read_file` и итоговый `CoreToolActivityStatus::Completed` |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный тест core tool activity к общему core test binary |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает текущий путь выполнения, возвращающий `AnyToolResult`, событиями `emit_turn_item_started` и `emit_turn_item_completed` для подходящих core function tools без отдельной ячейки передачи результата и без изменения model-visible `FunctionCallOutput` |
@@ -83,12 +84,14 @@ thread и чтение текущего времени host. Но если эт�
 Намеренно не входит в эту карточку:
 
 - изменение runtime-контрактов `read_file`, `get_thread_info` или
-  `get_system_time`;
+  `get_system_time`, а также upstream `clock/curr_time` и `clock/sleep`;
 - переименование самих tools;
 - изменение model-visible descriptions этих tools;
 - изменение telemetry contract или добавление отдельного analytics event для
   core tool activity;
 - принудительный перевод всех function tools в видимые TUI items;
+- отображение `clock/sleep` как `System time`: согласованное исключение
+  относится только к чтению времени через `clock/curr_time`;
 - переименование старого shell-based `Read` для `cat`, `sed -n`, `nl`, `head`
   или `tail`.
 
@@ -104,6 +107,7 @@ TUI должен показывать выбранные core tool calls чер�
 | `read_file` | `Exploring` | `Explored` | `File` | Короткие имена прочитанных файлов без диапазонов строк |
 | `get_thread_info` | `Inspecting` | `Inspected` | `Thread info` | `current` без аргумента или компактный явный `thread_id` |
 | `get_system_time` | `Inspecting` | `Inspected` | `System time` | `local`, `utc`, фиксированный offset или другой краткий detail из аргументов |
+| `clock/curr_time` | `Inspecting` | `Inspected` | `System time` | Всегда `utc` |
 
 `read_file` намеренно получает подпись действия `File`, а не `Read`. Старый
 shell-read renderer может продолжать писать `Read`, потому что эта карточка
@@ -208,7 +212,7 @@ detail должен сохранять полный `thread_id`:
   └ Thread info 019f2d70
 ```
 
-### `get_system_time`
+### Системное время
 
 Минимальный вид вызова во время выполнения:
 
@@ -242,6 +246,19 @@ detail должен сохранять полный `thread_id`:
 контракт требует видимости вызова, а не обязательного вывода текущего времени в
 краткой строке.
 
+Вызов upstream-инструмента `clock/curr_time` использует ту же подпись действия,
+но всегда получает детерминированный detail `utc`:
+
+```text
+• Inspected
+  └ System time utc
+```
+
+Сопоставление применяется только к точной паре namespace/name
+`clock/curr_time`. `clock/sleep`, одноимённый `curr_time` из другого namespace и
+инструмент `curr_time` из default namespace не должны превращаться в
+`System time`.
+
 ### Raw и диагностика
 
 Обычная история TUI использует labels `File`, `Thread info` и `System time`.
@@ -252,6 +269,7 @@ debug/raw transcript или раскрываемых details:
 read_file
 get_thread_info
 get_system_time
+clock/curr_time
 ```
 
 Это важно для диагностики, проверок, потребителей app-server и будущей отладки.
@@ -301,6 +319,10 @@ function tools и не притворяется shell execution.
 - считать отсутствующий, пустой и нормализованный upstream namespace `functions`
   одним default namespace через `ToolName::is_default_namespace()`, но не
   материализовать одноимённые tools из других namespaces как core activity;
+- добавить единственное точное исключение для пары namespace/name
+  `clock/curr_time`, которое создаёт `CoreToolActivityKind::SystemTime` с detail
+  `utc`; не расширять его на `clock/sleep` или другие namespace/name без
+  отдельного решения;
 - принимать `read_file` как прямой `FunctionCall` с экспозицией
   `DirectModelOnly`; code-mode `exec` не должен владеть file-read lifecycle;
 - для `read_file` повторить компактность старого shell `Read`: короткие имена
@@ -320,6 +342,7 @@ function tools и не притворяется shell execution.
 FunctionCall(read_file args) -> CoreToolActivity(kind=File, group=Explore)
 FunctionCall(get_thread_info args) -> CoreToolActivity(kind=ThreadInfo, group=Inspect)
 FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=Inspect)
+FunctionCall(clock/curr_time args) -> CoreToolActivity(kind=SystemTime, group=Inspect, detail=utc)
 ```
 
 Выбранная форма реализации:
@@ -330,7 +353,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
 | App-server v2 | `ThreadItem::CoreToolActivity` |
 | Kind | `File`, `ThreadInfo`, `SystemTime` |
 | Status | `InProgress`, `Completed`, `Failed` |
-| Detail | Короткая строка, вычисленная из аргументов: basename файла для `read_file`, разрешенный через выбранную step environment, `current`, `local`, `utc` или фиксированный offset |
+| Detail | Короткая строка, вычисленная из аргументов: basename файла для `read_file`, разрешенный через выбранную step environment, `current`, `local`, `utc` или фиксированный offset; для `clock/curr_time` всегда `utc` |
 | Raw diagnostics | `tool_name` и `arguments` сохраняются в structured payload |
 
 Главный инвариант: model-visible output остается `FunctionCallOutput`, а TUI
@@ -347,8 +370,9 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    и не отключать activity mapping.
 3. Выбрать или перенести минимальную структурированную поверхность для выбранной
    core tool activity; текущая реализация использует `CoreToolActivity` item.
-4. Реализовать mapping только для `read_file`, `get_thread_info` и
-   `get_system_time`.
+4. Реализовать сопоставление для default namespace только для `read_file`,
+   `get_thread_info` и `get_system_time`, а также точное исключение
+   `clock/curr_time -> SystemTime(utc)`. Не включать `clock/sleep`.
 5. Подключить lifecycle к текущему API результата registry без промежуточного
    хранилища: activity создаётся перед future обработчика, а completion использует
    success/error итогового `AnyToolResult`. Сохранить model-visible outputs без
@@ -371,8 +395,9 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
    чтений.
 10. Добавить snapshot-покрытие для active и completed состояний:
     `Exploring/Explored -> File`, `Inspecting/Inspected -> Thread info`,
-    `Inspecting/Inspected -> System time`, а также для сгруппированной
-    `File` activity и смешанного `Search`/`File` exploration-блока.
+    `Inspecting/Inspected -> System time` для `get_system_time` и
+    `clock/curr_time`, а также для сгруппированной `File` activity и смешанного
+    `Search`/`File` exploration-блока.
 11. Поддержать app-server v2 conversion и thread history replay, если переносимый
     upstream еще не знает `CoreToolActivity`.
 12. Проверить exhaustive matches после upstream-изменений `ThreadItem`: Responses
@@ -393,7 +418,7 @@ FunctionCall(get_system_time args) -> CoreToolActivity(kind=SystemTime, group=In
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "типизированная activity, lifecycle registry и безопасная detail-строка для трёх core tools",
+      "purpose": "типизированная activity, lifecycle registry и безопасная detail-строка для трёх tools из default namespace и clock/curr_time",
       "argv": ["just", "test", "-p", "codex-core", "core_tool_activity"]
     },
     {
@@ -479,4 +504,5 @@ app-server v2 schema и wire enums.
   `ItemStarted`/`ItemCompleted`; отдельный сценарий ошибки остаётся непокрытым.
 - Нельзя проверять default tool только как `namespace == None`: upstream может
   заранее нормализовать его в `functions`. При этом любой иной namespace должен
-  оставаться исключённым, чтобы одноимённый extension tool не выглядел как core.
+  оставаться исключённым, кроме точной пары `clock/curr_time`; это исключение не
+  должно делать видимыми `clock/sleep` или одноимённый extension tool.
