@@ -106,6 +106,10 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
                         if item.kind == SubAgentActivityKind::Completed
                 )
         }
+        EventMsg::TerminalInteraction(codex_protocol::protocol::TerminalInteractionEvent {
+            stdin,
+            ..
+        }) if !stdin.is_empty() => true,
         EventMsg::TokenCount(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::ThreadRolledBack(_)

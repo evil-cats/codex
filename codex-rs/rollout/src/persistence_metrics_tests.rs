@@ -13,6 +13,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExitedReviewModeEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ReviewTarget;
+use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
@@ -153,6 +154,44 @@ fn retained_items_are_byte_identical() {
         measurement.post_filter.payload_bytes,
         measurement.items[0].payload_bytes.expect("payload bytes")
     );
+}
+
+#[test]
+fn terminal_interaction_persists_only_confirmed_nonempty_input() {
+    let confirmed =
+        RolloutItem::EventMsg(EventMsg::TerminalInteraction(TerminalInteractionEvent {
+            id: "interaction-1".to_string(),
+            call_id: "exec-1".to_string(),
+            process_id: "1000".to_string(),
+            stdin: "hello\n".to_string(),
+        }));
+    let polling = RolloutItem::EventMsg(EventMsg::TerminalInteraction(TerminalInteractionEvent {
+        id: "interaction-2".to_string(),
+        call_id: "exec-1".to_string(),
+        process_id: "1000".to_string(),
+        stdin: String::new(),
+    }));
+
+    for history_mode in [ThreadHistoryMode::Legacy, ThreadHistoryMode::Paginated] {
+        let (persisted, measurement) =
+            measure_and_filter_rollout_items(&[confirmed.clone(), polling.clone()], history_mode);
+        assert_eq!(
+            serde_json::to_value(persisted).expect("serialize persisted interactions"),
+            serde_json::to_value([confirmed.clone()]).expect("serialize expected interactions")
+        );
+        assert_eq!(
+            measurement.items[0].rollout_item_type,
+            "event.terminal_interaction"
+        );
+        assert_eq!(
+            measurement.items[0].decision,
+            super::PersistenceDecision::Kept
+        );
+        assert_eq!(
+            measurement.items[1].decision,
+            super::PersistenceDecision::Dropped
+        );
+    }
 }
 
 #[test]

@@ -3508,6 +3508,12 @@ pub struct ExecCommandOutputDeltaEvent {
 #[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct TerminalInteractionEvent {
+    /// Уникальный идентификатор подтверждённой передачи stdin.
+    ///
+    /// В старых rollout-событиях поле отсутствует; потребитель истории должен
+    /// восстановить устойчивый идентификатор из позиции записи.
+    #[serde(default)]
+    pub id: String,
     /// Identifier for the ExecCommandBegin that produced this chunk.
     pub call_id: String,
     /// Process id associated with the running command.

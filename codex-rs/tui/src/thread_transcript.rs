@@ -12,6 +12,7 @@ use crate::history_cell::PrefixedWrappedHistoryCell;
 use crate::history_cell::ReasoningSummaryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::history_cell::new_core_tool_activity_cell;
+use crate::history_cell::new_unified_exec_interaction;
 use crate::history_cell::split_reasoning_summary_parts;
 use crate::inline_visualization::InlineVisualizationContext;
 use crate::legacy_core::config::Config;
@@ -205,6 +206,13 @@ pub(crate) fn thread_items_to_transcript_cells_with_context(
                     cells.push(Arc::new(cell));
                 }
             }
+            ThreadItem::TerminalInteraction { stdin, .. } => {
+                if !stdin.is_empty() {
+                    cells.push(Arc::new(new_unified_exec_interaction(
+                        /*command_display*/ None, stdin,
+                    )));
+                }
+            }
             other => {
                 if let Some(cell) = fallback_transcript_cell(&other) {
                     cells.push(Arc::new(cell));
@@ -349,6 +357,7 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
         | ThreadItem::FunctionCallOutput { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
+        | ThreadItem::TerminalInteraction { .. }
         | ThreadItem::Sleep(_) => return None,
     };
     (!lines.is_empty()).then(|| PlainHistoryCell::new(lines))

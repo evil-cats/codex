@@ -29,7 +29,7 @@ impl HistoryCell for UnifiedExecInteractionCell {
         let mut header_spans = if waited_only {
             vec!["• Waited for background terminal".bold()]
         } else {
-            vec!["↳ ".dim(), "Interacted with background terminal".bold()]
+            vec!["↳ ".dim(), "Interacted with terminal".bold()]
         };
         if let Some(command) = &self.command_display
             && !command.is_empty()
@@ -85,11 +85,9 @@ impl HistoryCell for UnifiedExecInteractionCell {
             .as_ref()
             .filter(|command| !command.is_empty())
         {
-            out.push(Line::from(format!(
-                "Interacted with background terminal: {command}"
-            )));
+            out.push(Line::from(format!("Interacted with terminal: {command}")));
         } else {
-            out.push(Line::from("Interacted with background terminal"));
+            out.push(Line::from("Interacted with terminal"));
         }
         out.extend(raw_lines_from_source(&self.stdin));
         out

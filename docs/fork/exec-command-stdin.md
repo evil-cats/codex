@@ -80,6 +80,7 @@ echo "hello" | wc -c
 | `codex-rs/core/src/unified_exec/oneshot.rs` | Проводит тот же `ExecCommandRequest` через управляемый одноразовый режим до завершения, тайм-аута или отмены без потери начального ввода |
 | `codex-rs/core/src/tools/runtimes/unified_exec.rs` | Проводит начальный ввод через исполнитель unified exec, сохраняет основанный только на команде `UnifiedExecApprovalKey` и передаёт фактические полномочия запуска в проверку содержимого |
 | `codex-rs/core/src/tools/approvals.rs` | Представляет полный начальный `stdin` в `approval action` без добавления данных в идентичность разрешения команды или `prefix_rule` |
+| `codex-rs/core/src/tools/sandboxing.rs` | Позволяет проверяемому `stdin` принудительно обойти чтение сохранённого approval, сохраняя прежний ключ команды только для записи решения `ApprovedForSession` |
 | `codex-rs/core/src/guardian/approval_request.rs` | Передаёт полный начальный `stdin` и фактические полномочия в Guardian action без усечения проверяемого хвоста |
 | `codex-rs/core/src/unified_exec/stdin_approval.rs` | Предоставляет общий обработчик политики для начального `stdin` и `write_stdin`: решение по полномочиям, `strict review`, NUL и размеру полного проверяемого действия |
 | `codex-rs/core/src/unified_exec/stdin_approval_tests.rs` | Проверяет общую границу политики для начального и последующего `stdin` без эвристики исполнимости содержимого |
@@ -89,17 +90,29 @@ echo "hello" | wc -c
 | `codex-rs/core/src/unified_exec/mod_tests.rs` | Обновляет существующие тестовые вызовы диспетчера процессов для нового опционального аргумента |
 | `codex-rs/core/tests/suite/mod.rs` | Регистрирует отдельный интеграционный модуль доработки |
 | `codex-rs/core/tests/suite/unified_exec_initial_stdin.rs` | Проверяет полный путь вызова инструмента, EOF, точность текста, approval до запуска, границы проверки, взаимодействие с терминалом, управляемый одноразовый режим, TTY, объявленную возможность удалённого сервера и отказ `apply_patch` до мутации |
+| `codex-rs/core/tests/suite/unified_exec_stdin_review_size.rs` | Проверяет, что слишком большой последующий `write_stdin` отклоняется до approval и передачи, а следующий допустимый ввод не наблюдает отклонённых байтов |
 | `codex-rs/protocol/src/protocol.rs` | Хранит подтверждённое взаимодействие с терминалом с устойчивой связью с исходным вызовом `exec` и отдельной идентичностью конкретной записи `stdin` |
 | `codex-rs/rollout/src/policy.rs` | Сохраняет подтверждённое взаимодействие с терминалом как отдельную запись rollout, не добавляя её в видимую модели историю |
 | `codex-rs/rollout/src/persistence_metrics.rs` | Классифицирует подтверждённое взаимодействие с терминалом как отдельный тип сохраняемой записи |
+| `codex-rs/rollout/src/persistence_metrics_tests.rs` | Проверяет сохранение непустого подтверждённого взаимодействия и отбрасывание пустого poll в обоих режимах истории |
+| `codex-rs/analytics/src/reducer.rs` | Не классифицирует взаимодействие с терминалом как самостоятельный tool call в аналитике |
+| `codex-rs/thread-store/src/local/thread_history.rs` | Сохраняет элемент в общей истории, но не использует его как текстовую сводку хода |
+| `codex-rs/thread-store/src/local/thread_history/search.rs` | Не индексирует содержимое `stdin` как поисковый текст thread store |
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Представляет взаимодействие с терминалом как отдельный `ThreadItem` в исходном хронологическом порядке для истории и `resume` |
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Формирует только подтверждённые сохранённые взаимодействия и восстанавливает их порядок при replay |
 | `codex-rs/app-server-protocol/schema/` | Хранит сгенерированные артефакты JSON и TypeScript нового сохраняемого `ThreadItem` |
+| `codex-rs/app-server/README.md` | Документирует публичную форму, подтверждённость и replay элемента `terminalInteraction` |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет полученное в текущей сессии взаимодействие с терминалом в общий жизненный цикл TUI |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает сохранённое взаимодействие с терминалом из истории thread без чтения исходных `arguments` вызова `FunctionCall` |
 | `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | Добавляет подтверждённый stdin в живой транскрипт и не отображает пустой либо отклонённый ввод как состоявшуюся передачу |
+| `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет живой транскрипт для непустой передачи и пустого poll в обоих порядках |
+| `codex-rs/tui/src/chatwidget/tests/history_replay.rs` | Проверяет многострочное подтверждённое взаимодействие после replay |
+| `codex-rs/tui/src/chatwidget/snapshots/` | Фиксирует визуальный контракт живого и восстановленного взаимодействия с терминалом |
 | `codex-rs/tui/src/history_cell/exec.rs` | Рисует начальный `stdin` и `write_stdin` в единой пользовательской ячейке взаимодействия |
+| `codex-rs/tui/src/history_cell/tests.rs` | Проверяет точный заголовок и содержимое ячейки взаимодействия |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит сохранённые взаимодействия с терминалом в транскрипте и истории после `resume` |
+| `codex-rs/tui/src/dynamic_tools.rs` | Сохраняет отдельный тип элемента в явной сводке thread, но включает `stdin` только при запрошенных outputs и не выдаёт его за активный tool marker |
+| `codex-rs/tui/src/app/agent_status_feed.rs` | Не дублирует передачу `stdin` в кратком status feed агента |
 | `codex-rs/utils/pty/src/process.rs` | Предоставляет подтверждаемую запись начального ввода и возвращает фактическую ошибку поддерживающей реализации |
 | `codex-rs/utils/pty/src/lib.rs` | Экспортирует подтверждаемый запрос начального stdin для транспортов с внешним драйвером |
 | `codex-rs/utils/pty/src/pipe.rs` | Подтверждает результат `write_all` и `flush` для начального ввода процесса с pipe |
@@ -122,6 +135,14 @@ echo "hello" | wc -c
 | `codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs` | Открывает только для тестов доступ к объединителю каналов stdin |
 | `codex-rs/windows-sandbox-rs/src/unified_exec/tests.rs` | Актуализирует тестовые литералы `ProcessDriver` и проверяет сохранение обычного протокола stdin/EOF для `runner` |
 | `docs/fork/exec-command-stdin.md` | Документ-владелец для переноса, проверки и отката доработки |
+
+Расширение `ApprovalAction` требует совместимо обновлять тестовые литералы без
+изменения их сценариев:
+
+- `codex-rs/core/src/guardian/review_session.rs`;
+- `codex-rs/core/src/guardian/tests.rs`;
+- `codex-rs/core/src/session/tests.rs`;
+- `codex-rs/core/src/session/tests/guardian_tests.rs`.
 
 Литералы `ExecParams`, которые не передают начальный ввод, должны явно задавать
 `initial_stdin: None`:
@@ -338,11 +359,16 @@ stdin?: string
 - после подтверждённой полной передачи непустого начального `stdin` создаётся
   отдельная запись взаимодействия с терминалом с уникальным идентификатором и
   ссылкой на исходный вызов `exec`;
+- успешный непустой `write_stdin` создаёт такую запись сразу после подтверждения
+  полной передачи, даже если последующая проверка состояния процесса завершится
+  ошибкой;
 - подтверждённое взаимодействие сохраняется как отдельная запись rollout, а
   app-server формирует из неё отдельный `ThreadItem` в исходном хронологическом
   порядке;
 - текущий путь и replay используют одну ячейку истории TUI; после `resume`
   восстанавливаются как начальный `stdin`, так и последующий `write_stdin`;
+- старые rollout-события `TerminalInteraction` без поля `id` получают при
+  replay детерминированный идентификатор из `call_id` и позиции записи;
 - отклонённый approval, ошибка запуска и неподтверждённая полная передача не
   создают ложную запись об успешном взаимодействии;
 - исходный `FunctionCall` с аргументом `stdin` сохраняется отдельно как

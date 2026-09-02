@@ -67,11 +67,18 @@ impl ApprovalStore {
 /// - If all keys are already approved for session, we skip prompting.
 /// - If the user approves for session, we store the decision for each key individually
 ///   so future requests touching any subset can also skip prompting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApprovalCacheLookup {
+    Reuse,
+    Fresh,
+}
+
 pub(crate) async fn with_cached_approval<K, F, Fut>(
     services: &SessionServices,
     // Name of the tool, used for metrics collection.
     tool_name: &str,
     keys: Vec<K>,
+    lookup: ApprovalCacheLookup,
     fetch: F,
 ) -> ReviewDecision
 where
@@ -84,7 +91,7 @@ where
         return fetch().await;
     }
 
-    let already_approved = {
+    let already_approved = matches!(lookup, ApprovalCacheLookup::Reuse) && {
         let store = services.tool_approvals.lock().await;
         keys.iter()
             .all(|key| matches!(store.get(key), Some(ReviewDecision::ApprovedForSession)))

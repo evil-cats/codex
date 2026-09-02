@@ -1076,6 +1076,7 @@ async fn execute_inner(
                                     | ThreadItem::AgentMessage { .. }
                                     | ThreadItem::Plan { .. }
                                     | ThreadItem::Reasoning { .. }
+                                    | ThreadItem::TerminalInteraction { .. }
                                     | ThreadItem::SubAgentActivity { .. }
                                     | ThreadItem::ImageView { .. }
                                     | ThreadItem::EnteredReviewMode { .. }
@@ -1424,6 +1425,23 @@ fn turn_summary(turn: &Turn, include_outputs: bool, output_chars: usize) -> Valu
                 });
                 if include_outputs && let Some(output) = aggregated_output {
                     item["output"] = output_summary(output, output_chars);
+                }
+                item
+            }
+            ThreadItem::TerminalInteraction {
+                id,
+                call_id,
+                process_id,
+                stdin,
+            } => {
+                let mut item = json!({
+                    "type": "terminalInteraction",
+                    "id": id,
+                    "callId": call_id,
+                    "processId": process_id,
+                });
+                if include_outputs {
+                    item["stdin"] = output_summary(stdin, output_chars);
                 }
                 item
             }

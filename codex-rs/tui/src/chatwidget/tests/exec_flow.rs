@@ -1303,7 +1303,7 @@ async fn unified_exec_wait_status_renders_command_in_single_details_row_snapshot
 }
 
 #[tokio::test]
-async fn unified_exec_empty_then_non_empty_snapshot() {
+async fn terminal_interaction_empty_then_non_empty_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
     begin_unified_exec_startup(&mut chat, "call-wait-2", "proc-2", "just fix");
@@ -1320,7 +1320,7 @@ async fn unified_exec_empty_then_non_empty_snapshot() {
 }
 
 #[tokio::test]
-async fn unified_exec_non_empty_then_empty_snapshots() {
+async fn terminal_interaction_non_empty_then_empty_snapshots() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
     begin_unified_exec_startup(&mut chat, "call-wait-3", "proc-3", "just fix");

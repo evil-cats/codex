@@ -317,6 +317,14 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    TerminalInteraction {
+        id: String,
+        call_id: String,
+        process_id: String,
+        stdin: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     FileChange {
         id: String,
         changes: Vec<FileUpdateChange>,
@@ -461,6 +469,7 @@ impl ThreadItem {
             | ThreadItem::Plan { id, .. }
             | ThreadItem::Reasoning { id, .. }
             | ThreadItem::CommandExecution { id, .. }
+            | ThreadItem::TerminalInteraction { id, .. }
             | ThreadItem::FileChange { id, .. }
             | ThreadItem::McpToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }

@@ -521,6 +521,7 @@ WHERE thread_id = ?
             | ThreadItem::FunctionCallOutput { .. }
             | ThreadItem::Plan { .. }
             | ThreadItem::Reasoning { .. }
+            | ThreadItem::TerminalInteraction { .. }
             | ThreadItem::CommandExecution { .. }
             | ThreadItem::FileChange { .. }
             | ThreadItem::McpToolCall { .. }

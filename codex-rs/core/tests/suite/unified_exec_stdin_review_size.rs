@@ -1,8 +1,7 @@
-//! Stdin approval must cover the complete input before any bytes reach a terminal.
+//! Проверка `stdin` должна охватывать полный ввод до передачи байтов терминалу.
 
 use anyhow::Result;
 use codex_core::TurnInputRequest;
-use codex_features::Feature;
 use codex_protocol::approvals::ExecApprovalKind;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -25,17 +24,13 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn oversized_stdin_is_rejected_before_approval_or_execution() -> Result<()> {
+async fn exec_command_stdin_oversized_write_is_rejected_before_approval_or_execution() -> Result<()>
+{
     skip_if_target_windows!(Ok(()), "uses a POSIX interactive shell");
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::WriteStdinApproval)
-            .expect("enable stdin approvals");
-    });
+    let mut builder = test_codex();
     let test = builder.build_with_auto_env(&server).await?;
     // The raw input fits in 8KB, but its JSON escapes do not. None of the
     // rejected input, including the trailing assignment, may reach the shell.

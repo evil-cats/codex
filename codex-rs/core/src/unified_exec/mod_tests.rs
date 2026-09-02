@@ -143,7 +143,14 @@ async fn exec_command_with_tty(
             hook_command: cmd.to_string(),
             tty,
             environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
-            escalated: false,
+            permissions: TerminalPermissions::for_launch(
+                turn.environments.primary().expect("turn environment"),
+                turn,
+                TerminalSandboxSource::Native,
+                SandboxPermissions::UseDefault,
+                /*additional_permissions*/ None,
+                /*internal_permissions*/ None,
+            ),
             network_approval: None,
             session: Arc::downgrade(session),
             last_used: started_at,
@@ -613,7 +620,14 @@ async fn terminating_initial_exec_command_rechecks_initial_response_state() -> a
             hook_command: "sleep 60".to_string(),
             tty: true,
             environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
-            escalated: false,
+            permissions: TerminalPermissions::for_launch(
+                turn.environments.primary().expect("turn environment"),
+                &turn,
+                TerminalSandboxSource::Native,
+                SandboxPermissions::UseDefault,
+                /*additional_permissions*/ None,
+                /*internal_permissions*/ None,
+            ),
             network_approval: None,
             session: Arc::downgrade(&session),
             last_used: Instant::now(),
@@ -689,7 +703,14 @@ async fn terminating_during_stdin_poll_returns_exited_response() -> anyhow::Resu
             hook_command: "sleep 60".to_string(),
             tty: true,
             environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
-            escalated: false,
+            permissions: TerminalPermissions::for_launch(
+                turn.environments.primary().expect("turn environment"),
+                &turn,
+                TerminalSandboxSource::Native,
+                SandboxPermissions::UseDefault,
+                /*additional_permissions*/ None,
+                /*internal_permissions*/ None,
+            ),
             network_approval: None,
             session: Arc::downgrade(&session),
             last_used,
@@ -906,7 +927,14 @@ async fn stdin_approval_preserves_the_reviewed_terminal() -> anyhow::Result<()> 
     let original = {
         let mut store = manager.process_store.lock().await;
         let entry = store.processes.get_mut(&process_id).unwrap();
-        entry.escalated = true;
+        entry.permissions = TerminalPermissions::for_launch(
+            turn.environments.primary().expect("turn environment"),
+            &turn,
+            TerminalSandboxSource::Native,
+            SandboxPermissions::RequireEscalated,
+            /*additional_permissions*/ None,
+            /*internal_permissions*/ None,
+        );
         entry.environment_id = "unselected-executor".to_string();
         entry.cwd = cwd.clone();
         Arc::clone(&entry.process)
@@ -928,6 +956,20 @@ async fn stdin_approval_preserves_the_reviewed_terminal() -> anyhow::Result<()> 
     );
     Arc::make_mut(&mut Arc::get_mut(&mut turn).unwrap().config).approvals_reviewer =
         ApprovalsReviewer::User;
+    manager
+        .process_store
+        .lock()
+        .await
+        .processes
+        .get_mut(&process_id)
+        .unwrap()
+        .environment_id = turn
+        .environments
+        .primary()
+        .unwrap()
+        .selection
+        .environment_id
+        .clone();
     for (input, decision) in [
         ("rejected\n", ReviewDecision::denied("test denial")),
         ("accepted\n", ReviewDecision::Approved),

@@ -335,6 +335,7 @@ fn searchable_text(item: &ThreadItem) -> Option<Cow<'_, str>> {
         | ThreadItem::FunctionCallOutput { .. }
         | ThreadItem::Plan { .. }
         | ThreadItem::Reasoning { .. }
+        | ThreadItem::TerminalInteraction { .. }
         | ThreadItem::CommandExecution { .. }
         | ThreadItem::FileChange { .. }
         | ThreadItem::McpToolCall { .. }

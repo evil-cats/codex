@@ -8,7 +8,15 @@ use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use codex_config::test_support::CloudConfigBundleFixture;
+use codex_core::TurnInputRequest;
+use codex_protocol::approvals::ExecApprovalKind;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ReviewDecision;
+use codex_protocol::protocol::ThreadSettingsOverrides;
+use codex_protocol::user_input::UserInput;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -20,6 +28,8 @@ use core_test_support::skip_if_sandbox;
 use core_test_support::skip_if_target_windows;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
+use core_test_support::test_codex::turn_permission_fields;
+use core_test_support::wait_for_event;
 use futures::SinkExt;
 use futures::StreamExt;
 use pretty_assertions::assert_eq;
@@ -63,6 +73,34 @@ async fn mount_exec_command(
         ],
     )
     .await;
+    Ok(())
+}
+
+/// Запускает ход с указанным профилем, не поглощая lifecycle-события.
+async fn start_exec_command_turn(
+    harness: &TestCodexHarness,
+    prompt: &str,
+    approval_policy: AskForApproval,
+    permission_profile: PermissionProfile,
+) -> Result<()> {
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(permission_profile, harness.cwd());
+    harness
+        .test()
+        .codex
+        .start_or_steer_turn(
+            TurnInputRequest::user_input(vec![UserInput::Text {
+                text: prompt.to_string(),
+                text_elements: Vec::new(),
+            }])
+            .with_thread_settings(ThreadSettingsOverrides {
+                approval_policy: Some(approval_policy),
+                sandbox_policy: Some(sandbox_policy),
+                permission_profile,
+                ..Default::default()
+            }),
+        )
+        .await?;
     Ok(())
 }
 
@@ -287,6 +325,195 @@ async fn exec_command_stdin_does_not_add_a_newline() -> Result<()> {
 
     let output = harness.function_call_stdout(call_id).await;
     assert!(output.lines().any(|line| line.trim() == "5"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_command_stdin_safe_launch_accepts_unreviewable_bytes_and_emits_interaction()
+-> Result<()> {
+    skip_if_target_windows!(Ok(()), "uses POSIX wc");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let harness = TestCodexHarness::with_auto_env_builder(unified_exec_builder()).await?;
+    let call_id = "exec-command-stdin-safe-unreviewable";
+    let stdin = format!("\0{}", "x".repeat(9_000));
+    mount_exec_command(
+        &harness,
+        call_id,
+        json!({
+            "cmd": "wc -c",
+            "stdin": stdin,
+            "yield_time_ms": 1_000,
+        }),
+    )
+    .await?;
+
+    start_exec_command_turn(
+        &harness,
+        "send safe unreviewable stdin",
+        AskForApproval::Never,
+        PermissionProfile::read_only(),
+    )
+    .await?;
+
+    let interaction = loop {
+        match wait_for_event(&harness.test().codex, |_| true).await {
+            EventMsg::TerminalInteraction(event) if event.call_id == call_id => break event,
+            EventMsg::ExecApprovalRequest(request) => {
+                panic!("safe launch must not request approval: {request:?}")
+            }
+            EventMsg::TurnComplete(_) => panic!("missing terminal interaction before completion"),
+            _ => {}
+        }
+    };
+    assert_eq!(interaction.call_id, call_id);
+    assert_eq!(interaction.stdin, stdin);
+    assert!(!interaction.id.is_empty());
+    assert_ne!(interaction.id, interaction.call_id);
+    assert!(!interaction.process_id.is_empty());
+    wait_for_event(&harness.test().codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let output = harness.function_call_stdout(call_id).await;
+    assert!(output.lines().any(|line| line.trim() == "9001"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_command_stdin_escalated_input_is_reviewed_before_process_start() -> Result<()> {
+    skip_if_target_windows!(Ok(()), "uses POSIX wc");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let harness = TestCodexHarness::with_auto_env_builder(unified_exec_builder()).await?;
+    let call_id = "exec-command-stdin-reviewed-before-start";
+    let stdin = "dangerous\n";
+    mount_exec_command(
+        &harness,
+        call_id,
+        json!({
+            "cmd": "wc -c",
+            "stdin": stdin,
+            "yield_time_ms": 1_000,
+            "sandbox_permissions": "require_escalated",
+        }),
+    )
+    .await?;
+
+    start_exec_command_turn(
+        &harness,
+        "review initial stdin",
+        AskForApproval::OnRequest,
+        PermissionProfile::read_only(),
+    )
+    .await?;
+
+    let request = loop {
+        match wait_for_event(&harness.test().codex, |_| true).await {
+            EventMsg::ExecApprovalRequest(request) => break request,
+            EventMsg::ExecCommandBegin(event) if event.call_id == call_id => {
+                panic!("process started before stdin approval")
+            }
+            EventMsg::TerminalInteraction(event) if event.call_id == call_id => {
+                panic!("stdin was recorded before approval")
+            }
+            EventMsg::TurnComplete(_) => panic!("turn completed without stdin approval"),
+            _ => {}
+        }
+    };
+    assert_eq!(request.kind, ExecApprovalKind::Command);
+    assert_eq!(request.call_id, call_id);
+    let reviewed_stdin = serde_json::to_string(stdin)?;
+    assert!(
+        request
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains(&reviewed_stdin)),
+        "approval reason must contain exact JSON stdin: {:?}",
+        request.reason
+    );
+    harness
+        .test()
+        .codex
+        .submit(Op::ExecApproval {
+            id: request.effective_approval_id(),
+            turn_id: Some(request.turn_id),
+            decision: ReviewDecision::Approved,
+        })
+        .await?;
+
+    let mut process_started = false;
+    let mut interaction = None;
+    loop {
+        match wait_for_event(&harness.test().codex, |_| true).await {
+            EventMsg::ExecCommandBegin(event) if event.call_id == call_id => {
+                process_started = true;
+            }
+            EventMsg::TerminalInteraction(event) if event.call_id == call_id => {
+                assert!(process_started, "stdin must follow process start");
+                interaction = Some(event);
+            }
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+    assert_eq!(interaction.expect("confirmed stdin event").stdin, stdin);
+    let output = harness.function_call_stdout(call_id).await;
+    assert!(output.lines().any(|line| line.trim() == "10"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_command_stdin_reviewed_nul_is_rejected_before_approval_or_process_start() -> Result<()>
+{
+    skip_if_target_windows!(Ok(()), "uses POSIX cat");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    let harness = TestCodexHarness::with_auto_env_builder(unified_exec_builder()).await?;
+    let call_id = "exec-command-stdin-reviewed-nul";
+    mount_exec_command(
+        &harness,
+        call_id,
+        json!({
+            "cmd": "cat",
+            "stdin": "rejected\0input",
+            "sandbox_permissions": "require_escalated",
+        }),
+    )
+    .await?;
+
+    start_exec_command_turn(
+        &harness,
+        "reject unreviewable initial stdin",
+        AskForApproval::OnRequest,
+        PermissionProfile::read_only(),
+    )
+    .await?;
+
+    loop {
+        match wait_for_event(&harness.test().codex, |_| true).await {
+            EventMsg::ExecApprovalRequest(request) => {
+                panic!("unreviewable stdin must fail before approval: {request:?}")
+            }
+            EventMsg::ExecCommandBegin(event) if event.call_id == call_id => {
+                panic!("unreviewable stdin must fail before process start")
+            }
+            EventMsg::TerminalInteraction(event) if event.call_id == call_id => {
+                panic!("rejected stdin must not be recorded")
+            }
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+    let output = harness.function_call_stdout(call_id).await;
+    assert!(
+        output.contains("NUL"),
+        "unexpected rejection output: {output:?}"
+    );
     Ok(())
 }
 

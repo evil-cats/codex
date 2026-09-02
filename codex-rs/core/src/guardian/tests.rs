@@ -288,6 +288,7 @@ fn guardian_exec_command_request(id: &str) -> GuardianApprovalRequest {
     GuardianApprovalRequest::ExecCommand {
         id: id.to_string(),
         command: vec!["git".to_string(), "push".to_string()],
+        stdin: None,
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -501,6 +502,7 @@ async fn build_guardian_prompt_full_mode_preserves_initial_review_format() -> an
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -538,6 +540,7 @@ async fn build_guardian_prompt_prefers_retry_reason_over_approval_reason() -> an
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -577,6 +580,7 @@ async fn build_guardian_prompt_truncates_oversized_approval_reason() -> anyhow::
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -668,6 +672,7 @@ async fn build_guardian_prompt_includes_parent_turn_denied_reads() -> anyhow::Re
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["cat".to_string(), "/repo/private/secret.txt".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::RequireEscalated,
             additional_permissions: None,
@@ -725,6 +730,7 @@ async fn build_guardian_prompt_delta_mode_preserves_original_numbering() -> anyh
         GuardianApprovalRequest::ExecCommand {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -764,6 +770,7 @@ async fn build_guardian_prompt_delta_mode_handles_empty_delta() -> anyhow::Resul
         GuardianApprovalRequest::ExecCommand {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -800,6 +807,7 @@ async fn build_guardian_prompt_stale_delta_cursor_falls_back_to_full_prompt() ->
         GuardianApprovalRequest::ExecCommand {
             id: "shell-3".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -886,6 +894,7 @@ async fn build_guardian_prompt_stale_delta_version_falls_back_to_full_prompt() -
         GuardianApprovalRequest::ExecCommand {
             id: "shell-4".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -1376,6 +1385,8 @@ fn guardian_write_stdin_preserves_input_and_foreign_cwd() -> serde_json::Result<
         input: input.to_string(),
         cwd: cwd.clone(),
         tty: true,
+        sandbox_permissions: crate::sandboxing::SandboxPermissions::RequireEscalated,
+        additional_permissions: None,
     };
 
     assert_eq!(
@@ -1844,6 +1855,7 @@ async fn guardian_request_model_for_auto_review(
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -2090,6 +2102,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
             "origin".to_string(),
             "guardian-approval-mvp".to_string(),
         ],
+        stdin: None,
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -2251,6 +2264,7 @@ async fn build_guardian_prompt_items_includes_parent_session_id() -> anyhow::Res
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "status".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -2345,6 +2359,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
     let first_request = GuardianApprovalRequest::ExecCommand {
         id: "shell-1".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
+        stdin: None,
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -2396,6 +2411,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
             "push".to_string(),
             "--force-with-lease".to_string(),
         ],
+        stdin: None,
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -2466,6 +2482,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
     let third_request = GuardianApprovalRequest::ExecCommand {
         id: "shell-3".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
+        stdin: None,
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         additional_permissions: None,
@@ -2714,6 +2731,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
         GuardianApprovalRequest::ExecCommand {
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -2760,6 +2778,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
         GuardianApprovalRequest::ExecCommand {
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -2841,6 +2860,7 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
         GuardianApprovalRequest::ExecCommand {
             id: "shell-guardian-error".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -3289,6 +3309,7 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
         let initial_request = GuardianApprovalRequest::ExecCommand {
             id: "shell-guardian-1".to_string(),
             command: vec!["git".to_string(), "status".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -3333,6 +3354,7 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
         let second_request = GuardianApprovalRequest::ExecCommand {
             id: "shell-guardian-2".to_string(),
             command: vec!["git".to_string(), "diff".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,
@@ -3342,6 +3364,7 @@ async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() ->
         let third_request = GuardianApprovalRequest::ExecCommand {
             id: "shell-guardian-3".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
+            stdin: None,
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
             sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
             additional_permissions: None,

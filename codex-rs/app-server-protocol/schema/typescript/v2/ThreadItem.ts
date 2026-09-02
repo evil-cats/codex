@@ -70,7 +70,7 @@ exitCode: number | null,
 /**
  * The duration of the command execution in milliseconds.
  */
-durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, appContext: McpToolCallAppContext | null,
+durationMs: number | null, } | { "type": "terminalInteraction", id: string, callId: string, processId: string, stdin: string, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, appContext: McpToolCallAppContext | null,
 /**
  * Deprecated: use `appContext.resourceUri` instead.
  */

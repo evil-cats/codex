@@ -796,13 +796,13 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
 }
 
 #[test]
-fn unified_exec_interaction_cell_renders_input() {
+fn terminal_interaction_cell_renders_input() {
     let cell = new_unified_exec_interaction(Some("echo hello".to_string()), "ls\npwd".to_string());
     let lines = render_transcript(&cell);
     assert_eq!(
         lines,
         vec![
-            "↳ Interacted with background terminal · echo hello",
+            "↳ Interacted with terminal · echo hello",
             "  └ ls",
             "    pwd",
         ],

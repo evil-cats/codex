@@ -20,6 +20,7 @@ pub(crate) enum GuardianApprovalRequest {
     ExecCommand {
         id: String,
         command: Vec<String>,
+        stdin: Option<String>,
         cwd: AbsolutePathBuf,
         sandbox_permissions: crate::sandboxing::SandboxPermissions,
         additional_permissions: Option<AdditionalPermissionProfile>,
@@ -34,6 +35,8 @@ pub(crate) enum GuardianApprovalRequest {
         input: String,
         cwd: PathUri,
         tty: bool,
+        sandbox_permissions: crate::sandboxing::SandboxPermissions,
+        additional_permissions: Option<AdditionalPermissionProfile>,
     },
     #[cfg(unix)]
     Execve {
@@ -110,6 +113,8 @@ pub(crate) struct GuardianMcpAnnotations {
 struct CommandApprovalAction<'a> {
     tool: &'a str,
     command: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdin: Option<&'a String>,
     cwd: &'a Path,
     sandbox_permissions: crate::sandboxing::SandboxPermissions,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,6 +133,8 @@ struct WriteStdinApprovalAction<'a> {
     chars: &'a str,
     cwd: LegacyAppPathString,
     sandbox_permissions: crate::sandboxing::SandboxPermissions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    additional_permissions: Option<&'a AdditionalPermissionProfile>,
     tty: bool,
 }
 
@@ -193,6 +200,7 @@ fn serialize_guardian_action(value: impl Serialize) -> serde_json::Result<Value>
 fn serialize_command_guardian_action(
     tool: &'static str,
     command: &[String],
+    stdin: Option<&String>,
     cwd: &Path,
     sandbox_permissions: crate::sandboxing::SandboxPermissions,
     additional_permissions: Option<&AdditionalPermissionProfile>,
@@ -202,6 +210,7 @@ fn serialize_command_guardian_action(
     serialize_guardian_action(CommandApprovalAction {
         tool,
         command,
+        stdin,
         cwd,
         sandbox_permissions,
         additional_permissions,
@@ -280,6 +289,7 @@ pub(crate) fn guardian_approval_request_to_json(
         GuardianApprovalRequest::ExecCommand {
             id: _,
             command,
+            stdin,
             cwd,
             sandbox_permissions,
             additional_permissions,
@@ -288,6 +298,7 @@ pub(crate) fn guardian_approval_request_to_json(
         } => serialize_command_guardian_action(
             "exec_command",
             command,
+            stdin.as_ref(),
             cwd,
             *sandbox_permissions,
             additional_permissions.as_ref(),
@@ -300,6 +311,8 @@ pub(crate) fn guardian_approval_request_to_json(
             input,
             cwd,
             tty,
+            sandbox_permissions,
+            additional_permissions,
             ..
         } => serialize_guardian_action(WriteStdinApprovalAction {
             tool: "write_stdin",
@@ -307,7 +320,8 @@ pub(crate) fn guardian_approval_request_to_json(
             session_id: *process_id,
             chars: input,
             cwd: cwd.clone().into(),
-            sandbox_permissions: crate::sandboxing::SandboxPermissions::RequireEscalated,
+            sandbox_permissions: *sandbox_permissions,
+            additional_permissions: additional_permissions.as_ref(),
             tty: *tty,
         }),
         #[cfg(unix)]

@@ -8,6 +8,7 @@ use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::guardian::GUARDIAN_REVIEW_TIMEOUT;
 use crate::guardian::GuardianNetworkAccessTrigger;
+use crate::guardian::GuardianReviewContext;
 use crate::guardian::routes_approval_policy_to_guardian;
 use crate::plugins::metrics::sidecar_for_command;
 use crate::sandboxing::ExecOptions;
@@ -15,6 +16,7 @@ use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::turn_context::TurnEnvironment;
 use crate::shell::ShellType;
+use crate::tools::ApprovalContext;
 use crate::tools::flat_tool_name;
 use crate::tools::network_approval::NetworkApprovalSpec;
 use crate::tools::runtimes::RuntimePathPrepends;
@@ -35,6 +37,8 @@ use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::sandbox_permissions_preserving_denied_reads;
 use crate::unified_exec::NoopSpawnLifecycle;
+use crate::unified_exec::TerminalPermissions;
+use crate::unified_exec::TerminalSandboxSource;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
@@ -107,7 +111,7 @@ pub struct UnifiedExecRuntime<'a> {
 pub(crate) struct UnifiedExecAttempt {
     pub(crate) process: UnifiedExecProcess,
     pub(crate) metrics_sidecar: Option<PluginMetricsSidecar>,
-    pub(crate) escalated: bool,
+    pub(crate) permissions: TerminalPermissions,
 }
 
 fn unified_exec_options(
@@ -151,6 +155,31 @@ impl<'a> UnifiedExecRuntime<'a> {
             shell_mode,
         }
     }
+
+    fn approval_action_with_permissions(
+        &self,
+        req: &UnifiedExecRequest,
+        call_id: &str,
+        sandbox_permissions: SandboxPermissions,
+        additional_permissions: Option<AdditionalPermissionProfile>,
+    ) -> ApprovalAction {
+        ApprovalAction::ExecCommand {
+            id: call_id.to_string(),
+            environment_id: req.turn_environment.selection.environment_id.clone(),
+            command: req.command.clone(),
+            stdin: req.stdin.clone().filter(|stdin| !stdin.is_empty()),
+            hook_command: req.hook_command.clone(),
+            cwd: req.cwd.clone(),
+            sandbox_permissions,
+            additional_permissions,
+            justification: req.justification.clone(),
+            tty: req.tty,
+            proposed_execpolicy_amendment: req
+                .exec_approval_requirement
+                .proposed_execpolicy_amendment()
+                .cloned(),
+        }
+    }
 }
 
 impl Sandboxable for UnifiedExecRuntime<'_> {
@@ -169,21 +198,12 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         req: &UnifiedExecRequest,
         call_id: &str,
     ) -> std::io::Result<ApprovalAction> {
-        Ok(ApprovalAction::ExecCommand {
-            id: call_id.to_string(),
-            environment_id: req.turn_environment.selection.environment_id.clone(),
-            command: req.command.clone(),
-            hook_command: req.hook_command.clone(),
-            cwd: req.cwd.clone(),
-            sandbox_permissions: req.sandbox_permissions,
-            additional_permissions: req.additional_permissions.clone(),
-            justification: req.justification.clone(),
-            tty: req.tty,
-            proposed_execpolicy_amendment: req
-                .exec_approval_requirement
-                .proposed_execpolicy_amendment()
-                .cloned(),
-        })
+        Ok(self.approval_action_with_permissions(
+            req,
+            call_id,
+            req.sandbox_permissions,
+            req.additional_permissions.clone(),
+        ))
     }
 
     fn exec_approval_requirement(
@@ -435,6 +455,61 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
             req.additional_permissions.as_ref(),
             sidecar_permissions.as_ref(),
         );
+        let permissions = TerminalPermissions::for_launch(
+            &req.turn_environment,
+            &ctx.step_context.turn,
+            if self.uses_executor_managed_process_sandbox(req) {
+                TerminalSandboxSource::Executor
+            } else {
+                TerminalSandboxSource::Native
+            },
+            if attempt.is_escalated() {
+                SandboxPermissions::RequireEscalated
+            } else {
+                SandboxPermissions::UseDefault
+            },
+            req.additional_permissions.as_ref(),
+            sidecar_permissions.as_ref(),
+        );
+        let strict_auto_review = ctx
+            .session
+            .active_turn_context_and_strict_auto_review()
+            .await
+            .is_some_and(|(_, _, strict)| strict);
+        let command_was_reviewed = strict_auto_review
+            || matches!(
+                &req.exec_approval_requirement,
+                ExecApprovalRequirement::NeedsApproval { .. }
+            );
+        if let Some(approval) = permissions
+            .initial_stdin_approval(
+                req.stdin.as_deref(),
+                command_was_reviewed,
+                req.sandbox_permissions,
+                req.additional_permissions.as_ref(),
+            )
+            .map_err(|error| ToolError::Rejected(error.to_string()))?
+        {
+            let action = self.approval_action_with_permissions(
+                req,
+                &ctx.call_id,
+                approval.sandbox_permissions,
+                approval.additional_permissions,
+            );
+            let approval_context = ApprovalContext {
+                review_context: GuardianReviewContext::from(&ctx.step_context),
+                cancellation_token: Some(ctx.cancellation_token.clone()),
+                call_id: ctx.call_id.clone(),
+                tool_name: ctx.tool_name.clone(),
+                strict_auto_review,
+                approval_reason: Some(approval.reason),
+                retry_reason: None,
+                network_approval_context: None,
+            };
+            ctx.session
+                .request_approval(action, approval_context)
+                .await?;
+        }
 
         if let UnifiedExecShellMode::ZshFork(zsh_fork_config) = &self.shell_mode {
             let command = build_unified_exec_sandbox_command(
@@ -495,7 +570,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
                     return Ok(UnifiedExecAttempt {
                         process,
                         metrics_sidecar,
-                        escalated: attempt.is_escalated(),
+                        permissions,
                     });
                 }
                 None => {
@@ -541,7 +616,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
         Ok(UnifiedExecAttempt {
             process,
             metrics_sidecar,
-            escalated: attempt.is_escalated(),
+            permissions,
         })
     }
 }

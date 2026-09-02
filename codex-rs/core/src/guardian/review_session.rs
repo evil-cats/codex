@@ -1630,6 +1630,7 @@ mod tests {
             request: GuardianApprovalRequest::ExecCommand {
                 id: "shell-1".to_string(),
                 command: vec!["git".to_string(), "status".to_string()],
+                stdin: None,
                 cwd,
                 sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
                 additional_permissions: None,

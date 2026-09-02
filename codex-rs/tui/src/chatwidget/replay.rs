@@ -177,6 +177,13 @@ impl ChatWidget {
                 self.handle_command_execution_completed_now(item);
             }
             item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_completed(item),
+            ThreadItem::TerminalInteraction { stdin, .. } => {
+                if !stdin.is_empty() {
+                    self.add_to_history(history_cell::new_unified_exec_interaction(
+                        /*command_display*/ None, stdin,
+                    ));
+                }
+            }
             ThreadItem::FileChange {
                 status: codex_app_server_protocol::PatchApplyStatus::InProgress,
                 ..

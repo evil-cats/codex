@@ -49,6 +49,7 @@ use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::McpToolCallEndEvent;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
+use codex_protocol::protocol::TerminalInteractionEvent;
 use codex_protocol::protocol::ThreadRolledBackEvent;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnCompleteEvent;
@@ -340,6 +341,7 @@ impl ThreadHistoryBuilder {
             EventMsg::WebSearchEnd(payload) => self.handle_web_search_end(payload),
             EventMsg::ExecCommandBegin(payload) => self.handle_exec_command_begin(payload),
             EventMsg::ExecCommandEnd(payload) => self.handle_exec_command_end(payload),
+            EventMsg::TerminalInteraction(payload) => self.handle_terminal_interaction(payload),
             EventMsg::GuardianAssessment(payload) => self.handle_guardian_assessment(payload),
             EventMsg::ApplyPatchApprovalRequest(payload) => {
                 self.handle_apply_patch_approval_request(payload)
@@ -657,6 +659,26 @@ impl ThreadHistoryBuilder {
     fn handle_exec_command_begin(&mut self, payload: &ExecCommandBeginEvent) {
         let item = build_command_execution_begin_item(payload);
         self.upsert_item_in_turn_id(&payload.turn_id, item);
+    }
+
+    fn handle_terminal_interaction(&mut self, payload: &TerminalInteractionEvent) {
+        if payload.stdin.is_empty() {
+            return;
+        }
+        let id = if payload.id.is_empty() {
+            format!(
+                "{}-terminal-interaction-{}",
+                payload.call_id, self.current_rollout_index
+            )
+        } else {
+            payload.id.clone()
+        };
+        self.push_item_in_current_turn(ThreadItem::TerminalInteraction {
+            id,
+            call_id: payload.call_id.clone(),
+            process_id: payload.process_id.clone(),
+            stdin: payload.stdin.clone(),
+        });
     }
 
     fn handle_exec_command_end(&mut self, payload: &ExecCommandEndEvent) {
@@ -4989,6 +5011,79 @@ mod tests {
                 changed_turns: Vec::new(),
                 removed_turn_ids: vec!["turn-a".into()],
             }
+        );
+    }
+
+    #[test]
+    fn terminal_interaction_rebuilds_only_confirmed_input_in_order() {
+        let mut builder = ThreadHistoryBuilder::new();
+        builder.handle_event(&EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            trace_id: None,
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }));
+        for (id, stdin) in [
+            ("interaction-1", "first\n"),
+            ("poll", ""),
+            ("interaction-2", "second\n"),
+        ] {
+            builder.handle_event(&EventMsg::TerminalInteraction(TerminalInteractionEvent {
+                id: id.to_string(),
+                call_id: "exec-1".to_string(),
+                process_id: "1000".to_string(),
+                stdin: stdin.to_string(),
+            }));
+        }
+
+        assert_eq!(
+            builder.finish()[0].items,
+            vec![
+                ThreadItem::TerminalInteraction {
+                    id: "interaction-1".to_string(),
+                    call_id: "exec-1".to_string(),
+                    process_id: "1000".to_string(),
+                    stdin: "first\n".to_string(),
+                },
+                ThreadItem::TerminalInteraction {
+                    id: "interaction-2".to_string(),
+                    call_id: "exec-1".to_string(),
+                    process_id: "1000".to_string(),
+                    stdin: "second\n".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_interaction_rebuilds_legacy_event_without_id() {
+        let started = RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            trace_id: None,
+            started_at: None,
+            model_context_window: None,
+            collaboration_mode_kind: Default::default(),
+        }));
+        let legacy: TerminalInteractionEvent = serde_json::from_value(serde_json::json!({
+            "call_id": "exec-1",
+            "process_id": "1000",
+            "stdin": "legacy input\n"
+        }))
+        .expect("deserialize legacy terminal interaction");
+        let interaction = RolloutItem::EventMsg(EventMsg::TerminalInteraction(legacy));
+        let mut builder = ThreadHistoryBuilder::new();
+        builder.handle_rollout_item(&started);
+        builder.handle_rollout_item(&interaction);
+
+        assert_eq!(
+            builder.finish()[0].items,
+            vec![ThreadItem::TerminalInteraction {
+                id: "exec-1-terminal-interaction-1".to_string(),
+                call_id: "exec-1".to_string(),
+                process_id: "1000".to_string(),
+                stdin: "legacy input\n".to_string(),
+            }]
         );
     }
 }

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/history_replay.rs
+assertion_line: 1258
+expression: rendered
+---
+↳ Interacted with terminal
+  └ first line
+    second line

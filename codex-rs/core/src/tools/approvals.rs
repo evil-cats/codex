@@ -18,10 +18,12 @@ use crate::session::session::Session;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::runtimes::apply_patch::ApplyPatchApprovalKey;
 use crate::tools::runtimes::unified_exec::UnifiedExecApprovalKey;
+use crate::tools::sandboxing::ApprovalCacheLookup;
 use crate::tools::sandboxing::ApprovalRequestReasons;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::with_cached_approval;
+use crate::unified_exec::validate_terminal_input_review;
 use codex_analytics::GuardianApprovalRequestSource;
 use codex_config::types::AppToolApproval;
 use codex_hooks::PermissionRequestDecision;
@@ -69,6 +71,7 @@ pub(crate) enum ApprovalAction {
         id: String,
         environment_id: String,
         command: Vec<String>,
+        stdin: Option<String>,
         hook_command: String,
         cwd: PathUri,
         sandbox_permissions: SandboxPermissions,
@@ -85,6 +88,8 @@ pub(crate) enum ApprovalAction {
         input: String,
         cwd: PathUri,
         tty: bool,
+        sandbox_permissions: SandboxPermissions,
+        additional_permissions: Option<AdditionalPermissionProfile>,
     },
     #[cfg(unix)]
     Execve {
@@ -161,8 +166,21 @@ impl ApprovalAction {
             Self::ExecCommand {
                 hook_command,
                 justification,
+                stdin,
                 ..
-            } => PermissionRequestPayload::bash(hook_command.clone(), justification.clone()),
+            } => {
+                let mut payload =
+                    PermissionRequestPayload::bash(hook_command.clone(), justification.clone());
+                if let Some(stdin) = stdin.as_ref().filter(|stdin| !stdin.is_empty())
+                    && let Some(input) = payload.tool_input.as_object_mut()
+                {
+                    input.insert(
+                        "stdin".to_string(),
+                        serde_json::Value::String(stdin.clone()),
+                    );
+                }
+                payload
+            }
             Self::WriteStdin {
                 id,
                 approval_id,
@@ -171,6 +189,8 @@ impl ApprovalAction {
                 input,
                 cwd,
                 tty,
+                sandbox_permissions,
+                additional_permissions,
             } => PermissionRequestPayload {
                 tool_name: HookToolName::new("write_stdin"),
                 tool_input: serde_json::json!({
@@ -181,6 +201,8 @@ impl ApprovalAction {
                     "environment_id": environment_id,
                     "cwd": cwd,
                     "tty": tty,
+                    "sandbox_permissions": sandbox_permissions,
+                    "additional_permissions": additional_permissions,
                 }),
             },
             #[cfg(unix)]
@@ -274,6 +296,7 @@ impl ApprovalAction {
                 id,
                 environment_id,
                 command,
+                stdin,
                 cwd,
                 sandbox_permissions,
                 additional_permissions,
@@ -283,6 +306,7 @@ impl ApprovalAction {
             } => crate::guardian::GuardianApprovalRequest::ExecCommand {
                 id,
                 command,
+                stdin,
                 cwd: guardian_cwd(&environment_id, cwd)?,
                 sandbox_permissions,
                 additional_permissions,
@@ -297,6 +321,8 @@ impl ApprovalAction {
                 input,
                 cwd,
                 tty,
+                sandbox_permissions,
+                additional_permissions,
             } => crate::guardian::GuardianApprovalRequest::WriteStdin {
                 id,
                 approval_id,
@@ -305,6 +331,8 @@ impl ApprovalAction {
                 input,
                 cwd,
                 tty,
+                sandbox_permissions,
+                additional_permissions,
             },
             #[cfg(unix)]
             Self::Execve {
@@ -487,11 +515,30 @@ impl Session {
         action: ApprovalAction,
         ctx: ApprovalContext,
     ) -> Result<ReviewDecision, ToolError> {
-        // Stdin is a fresh sandbox approval, not an exec-policy cache hit. Strict
-        // review can route Never to Guardian, but granular restrictions still apply.
+        validate_terminal_input_review(
+            &action,
+            ctx.approval_reason.as_deref(),
+            ctx.retry_reason.as_deref(),
+            &ctx.review_context.turn().session_telemetry,
+        )?;
+
+        // Ввод с расширенными полномочиями требует самостоятельного sandbox approval.
+        // Strict review при Never по-прежнему направляется в Guardian.
         let policy = ctx.review_context.turn().approval_policy();
-        if matches!(&action, ApprovalAction::WriteStdin { .. })
-            && !(ctx.strict_auto_review && matches!(policy, AskForApproval::Never))
+        if (matches!(
+            &action,
+            ApprovalAction::ExecCommand {
+                stdin: Some(stdin),
+                sandbox_permissions,
+                ..
+            } if !stdin.is_empty() && sandbox_permissions.requests_sandbox_override()
+        ) || matches!(
+            &action,
+            ApprovalAction::WriteStdin {
+                sandbox_permissions,
+                ..
+            } if sandbox_permissions.requests_sandbox_override()
+        )) && !(ctx.strict_auto_review && matches!(policy, AskForApproval::Never))
             && let Some(reason) =
                 prompt_is_rejected_by_policy(policy, /*prompt_is_rule*/ false)
         {
@@ -691,6 +738,7 @@ impl Session {
             ApprovalAction::ExecCommand {
                 environment_id,
                 command,
+                stdin,
                 cwd,
                 additional_permissions,
                 justification,
@@ -707,11 +755,20 @@ impl Session {
                     }
                 };
                 let tool_name = "unified_exec";
-                let reason = ctx
+                let mut reason = ctx
                     .retry_reason
                     .clone()
                     .or_else(|| ctx.approval_reason.clone())
                     .or_else(|| justification.clone());
+                if let Some(stdin) = stdin.as_ref().filter(|stdin| !stdin.is_empty()) {
+                    let rendered = serde_json::to_string(stdin)
+                        .unwrap_or_else(|_| "<stdin serialization failed>".to_string());
+                    let input_reason = format!("Initial stdin (JSON string): {rendered}");
+                    reason = Some(match reason {
+                        Some(reason) => format!("{reason}\n{input_reason}"),
+                        None => input_reason,
+                    });
+                }
                 let policy_fingerprint = ctx
                     .review_context
                     .environments()
@@ -724,24 +781,35 @@ impl Session {
                     .into_iter()
                     .map(|key| (key, &policy_fingerprint))
                     .collect();
-                with_cached_approval(&self.services, tool_name, cache_keys, || async {
-                    self.request_command_approval(
-                        ctx.review_context.turn(),
-                        ExecApprovalKind::Command,
-                        ctx.call_id.clone(),
-                        /*approval_id*/ None,
-                        Some(environment_id.clone()),
-                        command.clone(),
-                        cwd.into(),
-                        reason,
-                        ctx.network_approval_context.clone(),
-                        proposed_execpolicy_amendment.clone(),
-                        additional_permissions.clone(),
-                        /*available_decisions*/ None,
-                        /*plugin_attribution_override*/ None,
-                    )
-                    .await
-                })
+                let cache_lookup = if stdin.as_ref().is_some_and(|stdin| !stdin.is_empty()) {
+                    ApprovalCacheLookup::Fresh
+                } else {
+                    ApprovalCacheLookup::Reuse
+                };
+                with_cached_approval(
+                    &self.services,
+                    tool_name,
+                    cache_keys,
+                    cache_lookup,
+                    || async {
+                        self.request_command_approval(
+                            ctx.review_context.turn(),
+                            ExecApprovalKind::Command,
+                            ctx.call_id.clone(),
+                            /*approval_id*/ None,
+                            Some(environment_id.clone()),
+                            command.clone(),
+                            cwd.into(),
+                            reason,
+                            ctx.network_approval_context.clone(),
+                            proposed_execpolicy_amendment.clone(),
+                            additional_permissions.clone(),
+                            /*available_decisions*/ None,
+                            /*plugin_attribution_override*/ None,
+                        )
+                        .await
+                    },
+                )
                 .await
             }
             ApprovalAction::WriteStdin {
@@ -751,6 +819,7 @@ impl Session {
                 process_id,
                 input,
                 cwd,
+                additional_permissions,
                 ..
             } => {
                 self.request_command_approval(
@@ -769,7 +838,7 @@ impl Session {
                     ctx.approval_reason.clone(),
                     /*network_approval_context*/ None,
                     /*proposed_execpolicy_amendment*/ None,
-                    /*additional_permissions*/ None,
+                    additional_permissions.clone(),
                     Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
                     /*plugin_attribution_override*/ None,
                 )
@@ -828,6 +897,7 @@ impl Session {
                     &self.services,
                     "apply_patch",
                     action.cache_keys(),
+                    ApprovalCacheLookup::Reuse,
                     || async {
                         self.request_patch_approval(
                             ctx.review_context.turn(),

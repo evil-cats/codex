@@ -1234,6 +1234,31 @@ async fn replayed_in_progress_mcp_tool_call_stays_active() {
 }
 
 #[tokio::test]
+async fn terminal_interaction_replays_confirmed_stdin_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _ = drain_insert_history(&mut rx);
+
+    chat.replay_thread_item(
+        AppServerThreadItem::TerminalInteraction {
+            id: "interaction-1".to_string(),
+            call_id: "exec-1".to_string(),
+            process_id: "1000".to_string(),
+            stdin: "first line\nsecond line\n".to_string(),
+        },
+        "turn-1".to_string(),
+        ReplayKind::ThreadSnapshot,
+    );
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.transcript_lines(/*width*/ 80))
+        }
+        other => panic!("expected InsertHistoryCell, got {other:?}"),
+    };
+    assert_chatwidget_snapshot!("terminal_interaction_replay", rendered);
+}
+
+#[tokio::test]
 async fn failed_repl_mcp_tool_call_preserves_status_and_result() {
     for server in ["node_repl", "cua_repl"] {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
