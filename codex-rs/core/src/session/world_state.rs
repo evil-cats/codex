@@ -25,6 +25,7 @@ use crate::context::world_state::ToolsState;
 use crate::context::world_state::WorldState;
 use codex_connectors::AppToolPolicyEvaluator;
 use codex_extension_api::WorldStateContributionInput;
+use codex_extension_api::WorldStateHostCapabilities;
 use codex_features::Feature;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -44,9 +45,20 @@ impl Session {
         let model_instructions = turn_context
             .model_info()
             .get_model_instructions(turn_context.personality());
+        let model_instructions = if !turn_context.config.update_plan_enabled
+            && turn_context.config.model_catalog.is_none()
+            && (turn_context.config.base_instructions.is_none()
+                || matches!(
+                    turn_context.config.base_instructions_provenance,
+                    Some(BaseInstructionsProvenance::Model { .. })
+                )) {
+            crate::context::without_update_plan_instructions(&model_instructions)
+        } else {
+            model_instructions
+        };
+        let base_instructions = self.get_prompt_base_instructions().await.text;
         let (previous_model, previous_context, base_instructions) = {
             let state = self.state.lock().await;
-            let base_instructions = state.session_configuration.base_instructions.clone();
             (
                 state
                     .previous_turn_settings()
@@ -189,6 +201,8 @@ impl Session {
                     .model_messages
                     .as_ref()
                     .and_then(|messages| messages.collaboration_modes.as_ref()),
+                turn_context.config.update_plan_enabled,
+                turn_context.config.model_catalog.is_some(),
             ));
         }
         if !crate::guardian::is_basic_session_source(&turn_context.session_source) {
@@ -227,6 +241,7 @@ impl Session {
                     &step_context.environments,
                     Some(current_date),
                 )
+                .await
                 .with_subagents(environment_subagents),
             );
         }
@@ -276,6 +291,11 @@ impl Session {
         let extension_metrics = super::extension_metrics::from_session_telemetry(
             turn_context.session_telemetry.clone(),
         );
+        turn_context
+            .extension_data
+            .insert(WorldStateHostCapabilities {
+                update_plan_enabled: turn_context.config.update_plan_enabled,
+            });
         for contributor in self.services.extensions.context_contributors() {
             for section in contributor
                 .contribute_world_state(WorldStateContributionInput {

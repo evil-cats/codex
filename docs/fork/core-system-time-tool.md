@@ -41,9 +41,10 @@ updated: 2026-09-02
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает `system_time` и `system_time_spec`, экспортирует `SystemTimeHandler` |
 | `codex-rs/config/src/config_toml.rs` | Объявляет самостоятельный включённый по умолчанию config gate `[tools.get_system_time].enabled` |
 | `codex-rs/core/src/config/mod.rs` | Преобразует config gate в `Config::get_system_time_enabled`, сохраняя обычное значение `true` |
+| `codex-rs/core/src/config/config_tests.rs` | Проверяет загрузку явного `tools.get_system_time.enabled = false` через обычный путь загрузки конфигурации |
 | `codex-rs/core/config.schema.json` | Содержит сгенерированную схему конфигурации для `[tools.get_system_time]` |
 | `codex-rs/core/src/tools/spec_plan.rs` | Добавляет `SystemTimeHandler` в `add_core_utility_tools(...)`, только если разрешён `get_system_time_enabled`, и сохраняет независимую upstream-регистрацию namespace `clock` из метаданных модели |
-| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет, что config gate одновременно управляет видимой модели и зарегистрированной поверхностями tool |
+| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет config gate для видимой модели и зарегистрированной поверхностей tool, а также сосуществование с upstream namespace `clock` |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный модуль `system_time` |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `codex-rs/tui/src/temporary_structured_request.rs` | Явно отключает `get_system_time` в fail-closed temporary structured thread |

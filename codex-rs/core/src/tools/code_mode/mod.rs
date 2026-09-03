@@ -253,13 +253,14 @@ impl CodeModeService {
     }
 }
 
-/// Преобразует ответ host-процесса в один внешний результат и применяет spill до усечения.
+/// Преобразует ответ хост-процесса в один внешний результат, применяет spill до
+/// усечения и добавляет уже рассчитанную вызывающей стороной длительность.
 pub(super) async fn handle_runtime_response(
     exec: &ExecContext,
     call_id: &str,
     response: RuntimeResponse,
     max_output_tokens: Option<usize>,
-    started_at: std::time::Instant,
+    wall_time: Duration,
 ) -> Result<FunctionToolOutput, String> {
     let script_status = format_script_status(&response);
     let cell_id = match &response {
@@ -304,7 +305,7 @@ pub(super) async fn handle_runtime_response(
             excerpt_token_count,
         } => truncate_spilled_code_mode_result(items, max_output_tokens, excerpt_token_count),
     };
-    prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
+    prepend_script_status(&mut content_items, &script_status, wall_time);
     Ok(FunctionToolOutput::from_content(
         content_items,
         Some(success),

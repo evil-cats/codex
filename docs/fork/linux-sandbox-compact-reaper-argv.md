@@ -2,7 +2,7 @@
 id: fork-linux-sandbox-compact-reaper-argv
 status: active
 created: 2026-08-23
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Компактный `argv` PID-1 reaper в Linux sandbox
@@ -24,7 +24,7 @@ Bubblewrap `--as-pid-1`. Helper применяет ограничения, со�
 потомков. Это исправляет сбор осиротевших процессов, но оставляет исходный
 `argv` helper на всё время работы команды.
 
-В `rust-v0.151.0` upstream сохраняет эту схему работы без компактного self-`exec`:
+В `rust-v0.152.0` upstream сохраняет эту схему работы без компактного self-`exec`:
 цикл `waitpid(-1)` по-прежнему выполняется исходным helper. Поэтому fork-доработка
 остаётся применимой и владеет заменой только долгоживущего reaper, не меняя
 контракт upstream по сбору потомков.
@@ -42,6 +42,7 @@ Bubblewrap `--as-pid-1`. Helper применяет ограничения, со�
 | `codex-rs/linux-sandbox/src/linux_run_main.rs` | Распознаёт внутренний режим reaper до обычного разбора CLI и передаёт ему команду после применения ограничений |
 | `codex-rs/linux-sandbox/src/linux_run_main/namespace_reaper.rs` | Выполняет `fork`, компактный self-`exec`, пересылку сигналов, сбор потомков и сохранение exit status основной команды |
 | `codex-rs/linux-sandbox/src/linux_run_main/namespace_reaper_tests.rs` | Принудительно ломает компактный self-`exec` и проверяет in-process fallback |
+| `codex-rs/linux-sandbox/src/linux_run_main_tests.rs` | Проверяет общий helper пересылки сигналов, который использует компактный namespace reaper |
 | `codex-rs/linux-sandbox/tests/suite/managed_proxy.rs` | Проверяет фактический `/proc/1/cmdline`, exit status и прежний контракт namespace reaper |
 | `docs/fork/linux-sandbox-compact-reaper-argv.md` | Документ-владелец для переноса, проверки и отката доработки |
 

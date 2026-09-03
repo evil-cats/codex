@@ -461,6 +461,7 @@ fn one_shot_exec_command_spec_preserves_stdin_without_interactive_controls() {
         exec_permission_approvals_enabled: false,
         include_environment_id: false,
         include_shell_parameter: true,
+        include_windows_shell_guidance: false,
     })
     .spec();
     let tool = serde_json::to_value(tool).expect("one-shot tool spec should serialize");

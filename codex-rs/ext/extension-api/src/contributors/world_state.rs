@@ -27,6 +27,14 @@ pub struct WorldStateContributionInput<'a> {
     pub turn_store: &'a ExtensionData,
 }
 
+/// Возможности среды выполнения, захваченные для того же sampling step, что и
+/// extension-owned `WorldState`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorldStateHostCapabilities {
+    /// Доступен ли tool `update_plan` в текущем sampling step.
+    pub update_plan_enabled: bool,
+}
+
 /// What the harness knows about the previous value of one extension-owned section.
 pub enum PreviousWorldStateSection<'a> {
     Absent,

@@ -3,6 +3,7 @@
 use codex_core::context::ContextualUserFragment;
 use codex_core::context::InternalContextSource;
 use codex_core::context::InternalModelContextFragment;
+use codex_core::context::without_update_plan_instructions;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ThreadGoal;
 use codex_utils_template::Template;
@@ -22,6 +23,13 @@ static ACTIVE_CONTEXT_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
     )
 });
 
+static ACTIVE_CONTEXT_PROMPT_WITHOUT_UPDATE_PLAN: LazyLock<Template> = LazyLock::new(|| {
+    parse_embedded_template(
+        &without_update_plan_instructions(include_str!("../templates/goals/active_context.md")),
+        "goals/active_context.md",
+    )
+});
+
 static BUDGET_LIMIT_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| {
     parse_embedded_template(
         include_str!("../templates/goals/budget_limit.md"),
@@ -36,7 +44,7 @@ static OBJECTIVE_UPDATED_PROMPT_TEMPLATE: LazyLock<Template> = LazyLock::new(|| 
     )
 });
 
-fn parse_embedded_template(source: &'static str, template_name: &str) -> Template {
+fn parse_embedded_template(source: &str, template_name: &str) -> Template {
     match Template::parse(source) {
         Ok(template) => template,
         Err(err) => panic!("embedded template {template_name} is invalid: {err}"),
@@ -84,14 +92,19 @@ fn continuation_prompt(goal: &ThreadGoal) -> String {
         })
 }
 
-pub(crate) fn active_goal_context_prompt(goal: &ThreadGoal) -> String {
+pub(crate) fn active_goal_context_prompt(goal: &ThreadGoal, update_plan_enabled: bool) -> String {
     let objective = escape_xml_text(&goal.objective);
     let token_budget = goal
         .token_budget
         .map(|budget| budget.to_string())
         .unwrap_or_else(|| "none".to_string());
 
-    ACTIVE_CONTEXT_PROMPT_TEMPLATE
+    let template = if update_plan_enabled {
+        &*ACTIVE_CONTEXT_PROMPT_TEMPLATE
+    } else {
+        &*ACTIVE_CONTEXT_PROMPT_WITHOUT_UPDATE_PLAN
+    };
+    template
         .render([
             ("objective", objective.as_str()),
             ("token_budget", token_budget.as_str()),

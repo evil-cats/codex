@@ -7,6 +7,7 @@ use codex_extension_api::ExtensionFuture;
 use codex_extension_api::PreviousWorldStateSection;
 use codex_extension_api::RenderedWorldStateFragment;
 use codex_extension_api::WorldStateContributionInput;
+use codex_extension_api::WorldStateHostCapabilities;
 use codex_extension_api::WorldStateSectionContribution;
 use codex_protocol::protocol::ThreadGoal;
 use codex_state::ThreadGoalStatus;
@@ -66,7 +67,13 @@ where
                 None
             };
 
-            vec![active_goal_world_state_section(active_goal.as_ref())]
+            vec![active_goal_world_state_section(
+                active_goal.as_ref(),
+                input
+                    .turn_store
+                    .get::<WorldStateHostCapabilities>()
+                    .is_some_and(|capabilities| capabilities.update_plan_enabled),
+            )]
         })
     }
 }
@@ -74,8 +81,9 @@ where
 /// Формирует стабильную секцию и очищает только доказанный предыдущий snapshot `active`.
 fn active_goal_world_state_section(
     active_goal: Option<&ThreadGoal>,
+    update_plan_enabled: bool,
 ) -> WorldStateSectionContribution {
-    let body = active_goal.map(active_goal_context_prompt);
+    let body = active_goal.map(|goal| active_goal_context_prompt(goal, update_plan_enabled));
     let snapshot = json!({
         "state": if body.is_some() { "active" } else { "inactive" },
         "body": body,

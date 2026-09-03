@@ -2,7 +2,7 @@
 id: fork-codex-agent-env-var
 status: active
 created: 2026-06-17
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Runtime-переменные окружения Codex
@@ -65,17 +65,17 @@ Hermione workflow использует несколько агентов и suba
 | `codex-rs/core/src/agent/mod.rs` | Подключает модуль `agent_name` |
 | `codex-rs/core/src/tools/handlers/thread_info.rs` | Использует общий helper, чтобы поле `agent_name` осталось единым с `CODEX_AGENT` |
 | `codex-rs/core/src/tools/handlers/thread_info_tests.rs` | Оставляет tests разбора `thread_id`; tests helper-а перенесены к owner-модулю |
-| `codex-rs/protocol/src/shell_environment.rs` | Добавляет константы `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`, `CODEX_ROLLOUT_ENV_VAR`; вводит `RuntimeEnv`; вставляет служебные runtime-переменные после shell env policy; сохраняет актуальные upstream-сигнатуры вспомогательных функций |
-| `codex-rs/protocol/src/shell_environment_tests.rs` | Проверяет добавление runtime-переменных после `include_only` вместе с upstream-проверками очистки non-inheritable env |
+| `codex-rs/protocol/src/shell_environment.rs` | Добавляет константы `CODEX_AGENT_ENV_VAR`, `CODEX_CALL_ID_ENV_VAR`, `CODEX_ROLLOUT_ENV_VAR`; вводит `RuntimeEnv`; вставляет служебные runtime-переменные после shell env policy и сохраняет последующую upstream-очистку переменных, запрещённых к наследованию; сохраняет актуальные upstream-сигнатуры вспомогательных функций |
+| `codex-rs/protocol/src/shell_environment_tests.rs` | Проверяет добавление runtime-переменных после `include_only` вместе с upstream-проверками очистки переменных, запрещённых к наследованию |
 | `codex-rs/core/src/exec_env.rs` | Экспортирует fork-константы runtime environment вместе с upstream `CODEX_SESSION_ID_ENV_VAR`; вводит core-level `RuntimeEnv` с `ThreadId`; конвертирует значения в protocol `RuntimeEnv` |
 | `codex-rs/core/src/exec_env_tests.rs` | Проверяет, что runtime-переменные вставляются после фильтров policy и перезаписывают родительское окружение |
 | `codex-rs/exec-server/src/local_process.rs` | Использует актуальную upstream-сигнатуру `shell_environment::create_env(...)` при построении policy env для локального процесса |
 | `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Использует актуальную upstream-сигнатуру `shell_environment::create_env_from_vars(...)` в проверке remote exec policy |
-| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task; использует `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, тот же UUID как `CommandExecutionItem.id` и сохраняет upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
-| `codex-rs/core/tests/suite/user_shell_cmd.rs` | Интеграционно доказывает один UUID `CODEX_CALL_ID` в окружении дочерней `/shell`-команды, элементах `CommandExecutionItem` и событиях `ExecCommandBegin`/`ExecCommandEnd` |
-| `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает fork-переменные и связанные upstream runtime-переменные после обертки shell snapshot |
-| `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT` и `CODEX_THREAD_ID` после snapshot |
-| `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session из `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, но не в `local_policy_env`; сохраняет upstream session/apply-patch env |
+| `codex-rs/core/src/tasks/user_shell.rs` | Передает `CODEX_AGENT`, UUID `CODEX_CALL_ID` и best-effort `CODEX_ROLLOUT` для пользовательского `/shell` task; использует `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, тот же UUID как `CommandExecutionItem.id`, принимает upstream `timeout_ms` и сохраняет upstream-проверку `cwd` на совместимость с host Codex через `to_abs_path()` |
+| `codex-rs/core/tests/suite/user_shell_cmd.rs` | Интеграционно доказывает один UUID `CODEX_CALL_ID` в окружении дочерней `/shell`-команды, элементах `CommandExecutionItem` и событиях `ExecCommandBegin`/`ExecCommandEnd`; передает `timeout_ms: None` в актуальный upstream `Op::RunUserShellCommand` |
+| `codex-rs/core/src/tools/runtimes/mod.rs` | Восстанавливает fork-переменные, `CODEX_PERMISSION_PROFILE` и связанные upstream runtime-переменные после обертки shell snapshot |
+| `codex-rs/core/src/tools/runtimes/mod_tests.rs` | Проверяет сохранение `CODEX_AGENT`, `CODEX_CALL_ID`, `CODEX_ROLLOUT`, `CODEX_THREAD_ID` и `CODEX_PERMISSION_PROFILE` после snapshot |
+| `codex-rs/core/src/unified_exec/process_manager.rs` | Добавляет runtime-переменные в env unified exec sandbox session из `ShellEnvironmentPolicy` выбранного `TurnEnvironment`, но не в `local_policy_env`; сохраняет upstream session/apply-patch env и добавляет активный `CODEX_PERMISSION_PROFILE` |
 | `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Проверяет, что exec-server overlay содержит runtime-переменные как runtime-изменение |
 | `docs/fork/codex-agent-env-var.md` | Владеющий handoff-артефакт для runtime-переменных идентичности |
 | `docs/fork/core-thread-info-tool.md` | Связанная карточка: фиксирует общий helper `agent_name` и прежний контракт tool |
@@ -155,6 +155,8 @@ Hermione workflow использует несколько агентов и suba
    - `CODEX_CALL_ID`, если id вызова передан;
    - `CODEX_ROLLOUT`, если путь rollout передан;
    - `CODEX_THREAD_ID`, если thread id передан.
+7. удаляет upstream-переменные, запрещённые к наследованию, независимо от
+   унаследованного окружения, `set` и регистра имени переменной.
 
 Следствие: runtime-переменные переживают `include_only` и перезаписывают
 одноименные значения из inherited env или `set`.
@@ -171,6 +173,8 @@ Hermione workflow использует несколько агентов и suba
 - передает значения в `create_env_with_runtime(...)` вместе с
   `Session.thread_id`;
 - после этого добавляет upstream `CODEX_SESSION_ID` и apply-patch env;
+- upstream `timeout_ms` управляет сроком выполнения `/shell`, но не меняет
+  runtime-идентичность команды;
 - snapshot preparation и proxy stripping работают поверх уже собранного env.
 
 Unified exec sandbox session:
@@ -181,7 +185,8 @@ Unified exec sandbox session:
 - затем, если `current_agent_name(...)` вернул имя, добавляется `CODEX_AGENT`;
 - затем, если `Session::hook_transcript_path()` вернул путь, добавляется
   `CODEX_ROLLOUT`;
-- затем добавляются upstream `CODEX_SESSION_ID` и apply-patch env;
+- затем добавляются upstream `CODEX_SESSION_ID`, apply-patch env и активный
+  `CODEX_PERMISSION_PROFILE`;
 - `ExecServerEnvConfig.local_policy_env` остается без этих runtime-переменных
   идентичности, чтобы exec-server overlay видел их как runtime-изменение.
 
@@ -191,7 +196,7 @@ Unified exec sandbox session:
   live env отдельно;
 - после source snapshot обертка восстанавливает `CODEX_AGENT`,
   `CODEX_CALL_ID`, `CODEX_ROLLOUT`, `CODEX_THREAD_ID` и связанные upstream
-  runtime-переменные из live env;
+  runtime-переменные, включая `CODEX_PERMISSION_PROFILE`, из live env;
 - эти переменные не считаются явными shell policy overrides.
 
 ### Примеры поведения
@@ -336,7 +341,8 @@ rollout не удалось получить.
    актуальными сигнатурами upstream `policy + thread_id`, а fork-значения
    передавать через варианты с `RuntimeEnv`.
 5. Убедиться, что служебные runtime-переменные идентичности добавляются после
-   `include_only`.
+   `include_only`, а последующая upstream-очистка переменных, запрещённых к
+   наследованию, сохранена.
 6. Вынести или восстановить общий helper имени агента:
    - root: `name` effective config, затем active profile;
    - subagent: `agent_role`, затем leaf `agent_path`, затем `agent_nickname`;
@@ -345,23 +351,25 @@ rollout не удалось получить.
 7. Переключить `get_thread_info` на общий helper.
 8. Передать `current_agent_name(...)`, UUID `call_id` и best-effort
    `rollout_path` в `/shell` user task. Для shell policy использовать выбранный
-   `TurnEnvironment`, не общий `TurnContext.config`.
+   `TurnEnvironment`, не общий `TurnContext.config`; при изменениях
+   `Op::RunUserShellCommand` адаптировать upstream `timeout_ms`, не меняя
+   runtime-идентичность.
 9. Для `/shell` генерировать UUID `call_id` до сборки env, а потом использовать
     тот же id как `CommandExecutionItem.id` в `ItemStarted`/`ItemCompleted` и
     производных legacy-событиях `ExecCommandBegin`/`ExecCommandEnd`, сохраняя
     upstream-проверку `turn_environment.cwd().to_abs_path()` перед подготовкой
     snapshot и env.
 10. Для unified exec строить `local_policy_env` из выбранного
-    `TurnEnvironment`, не класть туда runtime-переменные и добавлять их только в
-    runtime env вместе с upstream session/apply-patch env. При разрешении
-    конфликтов в импортах сохранять upstream-тип `super::oneshot::Completion`:
-    переменные runtime-идентичности не заменяют путь завершения одноразовой
-    команды.
+     `TurnEnvironment`, не класть туда runtime-переменные и добавлять их только в
+     runtime env вместе с upstream session/apply-patch env и активным
+     `CODEX_PERMISSION_PROFILE`. При разрешении конфликтов в импортах сохранять
+     upstream-тип `super::oneshot::Completion`: переменные runtime-идентичности не
+     заменяют путь завершения одноразовой команды.
 11. Использовать `Session::hook_transcript_path()` для `CODEX_ROLLOUT`, чтобы
     отсутствие path не блокировало запуск команды.
 12. Обновить обертку shell snapshot, чтобы она восстанавливала fork-набор и
-    связанные upstream runtime-переменные, а отсутствующие live-значения не
-    воскресали из snapshot.
+    связанные upstream runtime-переменные, включая `CODEX_PERMISSION_PROFILE`, а
+    отсутствующие live-значения не воскресали из snapshot.
 13. Перенести tests для env policy, agent helper, shell snapshot и unified exec
     overlay.
 
@@ -442,9 +450,6 @@ rollout не удалось получить.
   ]
 }
 ```
-
-Новый интеграционный тест принят статической вычиткой. Его компиляция,
-форматирование и запуск отложены до общего прохода по карточкам.
 
 ## Риски и ограничения
 

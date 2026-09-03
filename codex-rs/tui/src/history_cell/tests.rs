@@ -1636,6 +1636,8 @@ fn grouped_core_tool_activity_files_snapshot() {
   └ File fork_cli.py, checks-and-gates.md, shell.md");
 }
 
+/// Завершённые inspect activity используют пользовательские подписи для thread
+/// metadata, fork-инструмента времени и upstream-пары `clock/curr_time`.
 #[test]
 fn completed_core_tool_activity_inspect_tools_snapshot() {
     let cells = [
@@ -1659,6 +1661,16 @@ fn completed_core_tool_activity_inspect_tools_snapshot() {
             error: None,
             duration_ms: Some(1),
         },
+        codex_app_server_protocol::ThreadItem::CoreToolActivity {
+            id: "call-clock-current-time".to_string(),
+            tool_name: "clock/curr_time".to_string(),
+            kind: codex_app_server_protocol::CoreToolActivityKind::SystemTime,
+            detail: "utc".to_string(),
+            arguments: json!({}),
+            status: codex_app_server_protocol::CoreToolActivityStatus::Completed,
+            error: None,
+            duration_ms: Some(1),
+        },
     ]
     .into_iter()
     .map(|item| {
@@ -1673,7 +1685,10 @@ fn completed_core_tool_activity_inspect_tools_snapshot() {
   └ Thread info current
 
 • Inspected
-  └ System time +03:00");
+  └ System time +03:00
+
+• Inspected
+  └ System time utc");
 }
 
 #[test]

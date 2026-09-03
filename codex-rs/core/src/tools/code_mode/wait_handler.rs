@@ -65,8 +65,9 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
 }
 
 impl CodeModeWaitHandler {
-    /// Ждёт очередной ответ ячейки и привязывает возможный spill к текущему
-    /// `call_id` вызова `wait`.
+    /// Ждёт очередной ответ ячейки и передаёт общему пути ответа текущий
+    /// `call_id` вызова `wait` вместе с длительностью от хост-процесса или
+    /// резервным локальным замером.
     async fn handle_call(
         &self,
         invocation: ToolInvocation,
@@ -98,6 +99,7 @@ impl CodeModeWaitHandler {
                 })?;
                 let exec = ExecContext { session, turn };
                 let started_at = std::time::Instant::now();
+                telemetry.cell_id = Some(args.cell_id.clone());
                 let cell_id = codex_code_mode::CellId::new(args.cell_id);
                 let wait_response = if args.terminate {
                     exec.session
@@ -156,13 +158,19 @@ impl CodeModeWaitHandler {
                             );
                     }
                 }
+                if let Some(code_mode_host_duration) = wait_response.code_mode_host_duration() {
+                    telemetry.record_code_mode_host_duration(code_mode_host_duration);
+                }
                 exec.session.services.elicitations.wait_until_clear().await;
+                let wall_time = wait_response
+                    .code_mode_host_duration()
+                    .unwrap_or_else(|| started_at.elapsed());
                 handle_runtime_response(
                     &exec,
                     &call_id,
                     wait_response.into(),
                     args.max_tokens,
-                    started_at,
+                    wall_time,
                 )
                 .await
                 .map_err(FunctionCallError::RespondToModel)

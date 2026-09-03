@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Preview локальных изображений в истории TUI
@@ -83,12 +83,14 @@ config/API, проверки, ограничения и известные ри�
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | `ImagePreviewSize`, `ImageViewItem.path` как `PathUri`, `ImageViewItem.preview_size`, `ImageGenerationItem.saved_path` |
 | `codex-rs/protocol/src/protocol.rs` | Устаревающее событие `ViewImageToolCallEvent.preview_size` |
+| `codex-rs/protocol/src/legacy_events.rs` | Преобразование `TurnItem::ImageView` в устаревающее событие без потери `preview_size` |
 | `codex-rs/core/src/tools/handlers/view_image.rs` | Разбор `preview_size` и отклонение недопустимых значений |
 | `codex-rs/core/src/tools/handlers/view_image_spec.rs` | Публикация `preview_size` без `preview_rows` |
 | `codex-rs/config/src/types.rs` | Значения `[tui.history_image_preview]` по умолчанию |
 | `codex-rs/core/src/config/mod.rs` | Выбор строк через `HistoryImagePreviewConfig::rows_for` во время выполнения |
 | `codex-rs/core/config.schema.json` | Схема config |
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | App-server v2 `ThreadItem::ImageView.path` как `LegacyAppPathString`, `previewSize` |
+| `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Восстановление `ThreadItem::ImageView` из устаревающего события с `preview_size` |
 | `codex-rs/app-server-protocol/schema/typescript/v2/ThreadItem.ts` | Сгенерированный union TS для `ThreadItem::ImageView.path` и `previewSize` |
 | `codex-rs/app-server-protocol/schema/typescript/ImagePreviewSize.ts` | Сгенерированный enum TS |
 | `codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json` | Сводная сгенерированная схема с `v2/ImagePreviewSize` и `previewSize` |
@@ -335,6 +337,10 @@ fork-поля и типизированные маркеры:
 - `TurnItem::ImageView`, устаревающее событие, app-server v2, сгенерированный
   TypeScript и повторное воспроизведение TUI передают один `ImagePreviewSize` без
   числового `preview_rows`;
+- `TurnItem::as_legacy_events` в `protocol/src/legacy_events.rs` и
+  `ThreadHistoryBuilder::handle_view_image_tool_call` в
+  `app-server-protocol/src/protocol/thread_history.rs` переносят тот же
+  `preview_size` через цепочку устаревающего события;
 - сгенерированный `ThreadItem.ts` сохраняет все варианты upstream, а вариант
   `imageView` дополнительно содержит `previewSize`;
 - `HyperlinkLine` сохраняет актуальную upstream-семантику графемно-корректного

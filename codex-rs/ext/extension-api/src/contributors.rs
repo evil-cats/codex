@@ -58,6 +58,7 @@ pub use turn_lifecycle::TurnStopInput;
 pub use world_state::PreviousWorldStateSection;
 pub use world_state::RenderedWorldStateFragment;
 pub use world_state::WorldStateContributionInput;
+pub use world_state::WorldStateHostCapabilities;
 pub use world_state::WorldStateSectionContribution;
 
 /// Boxed, sendable future returned by asynchronous extension contributors.

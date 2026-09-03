@@ -46,7 +46,11 @@ impl Session {
                 }
 
                 loop {
-                    session.refresh_mcp_if_dirty().await;
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => break 'worker,
+                        _ = session.refresh_mcp_if_dirty() => {},
+                    }
                     let reused_pending_startup_failed = tokio::select! {
                         biased;
                         _ = shutdown.cancelled() => break 'worker,

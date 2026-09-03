@@ -129,7 +129,7 @@ impl TerminalPermissions {
             return Ok(None);
         }
 
-        let reason = self.approval_reason(
+        let reason = self.approval_reason_for_operation(
             sandbox_permissions,
             "Send initial input while launching this command.",
         )?;
@@ -187,20 +187,30 @@ impl TerminalPermissions {
     fn approval_reason(
         &self,
         sandbox_permissions: SandboxPermissions,
+    ) -> Result<String, serde_json::Error> {
+        self.approval_reason_for_operation(
+            sandbox_permissions,
+            "Send input to an existing terminal.",
+        )
+    }
+
+    fn approval_reason_for_operation(
+        &self,
+        sandbox_permissions: SandboxPermissions,
         operation: &str,
     ) -> Result<String, serde_json::Error> {
         let authority = if self.launch_permissions.requires_escalated_permissions() {
-            "This terminal runs outside the sandbox and can bypass the managed network proxy."
+            "This terminal was launched outside the sandbox, bypassing any managed network proxy."
         } else if self.policy.sandbox.permissions == ExecPermissionProfile::Disabled {
             "This terminal runs without a filesystem sandbox."
         } else {
             match sandbox_permissions {
-                SandboxPermissions::UseDefault => "It uses the current permissions.",
+                SandboxPermissions::UseDefault => "This terminal uses the current permissions.",
                 SandboxPermissions::WithAdditionalPermissions => {
-                    "It retains additional permissions."
+                    "This terminal retains additional permissions."
                 }
                 SandboxPermissions::RequireEscalated => {
-                    "It retains sandbox or network settings that differ from the current permissions."
+                    "This terminal retains sandbox or network settings that differ from the current permissions."
                 }
             }
         };
@@ -208,10 +218,10 @@ impl TerminalPermissions {
         if self.internal_permissions.is_some() {
             reason.push_str(" It also has an internal plugin metrics write grant.");
         }
-        reason.push_str(
-            " The cwd is the launch directory; the terminal's current directory and state may differ.",
-        );
+        reason.push_str(" The cwd is its launch directory; the terminal's current directory and state may have changed.");
         if let Some(grants) = &self.additional_permissions {
+            // Stable reason text also reaches clients that strip the experimental
+            // additionalPermissions field. Internal paths never enter this text.
             reason.push_str(&format!(
                 " Retained grants: {}.",
                 serde_json::to_string(grants)?
@@ -258,7 +268,7 @@ impl ProcessEntry {
             return Ok(None);
         }
         let reason = permissions
-            .approval_reason(sandbox_permissions, "Send input to an existing terminal.")
+            .approval_reason(sandbox_permissions)
             .map_err(approval_error)?;
         let action = ApprovalAction::WriteStdin {
             id: self.call_id.clone(),

@@ -46,6 +46,7 @@ class RecordingLogSession:
         self.steps = []
         self.capture_steps = []
         self.env_overrides = []
+        self.env_removals = []
         self.output = []
         self.ok_extra = None
         RecordingLogSession.instances.append(self)
@@ -62,9 +63,12 @@ class RecordingLogSession:
         argv: list[str],
         *,
         env_overrides: dict[str, str] | None = None,
+        env_removals: tuple[str, ...] = (),
     ) -> int:
+        """Запоминает шаг и изменения окружения без запуска дочернего процесса."""
         self.steps.append((label, argv))
         self.env_overrides.append(env_overrides)
+        self.env_removals.append(env_removals)
         return RecordingLogSession.step_responses.get(label, 0)
 
     def run_capture(
@@ -100,6 +104,37 @@ class RecordingLogSession:
     def ok(self, extra: list[str] | None = None) -> int:
         self.ok_extra = extra
         return 0
+
+
+class LogSessionEnvironmentTests(unittest.TestCase):
+    """Проверяет изоляцию окружения запускаемых workflow-шагов."""
+
+    def test_run_step_removes_selected_variable_from_child_environment(self) -> None:
+        """Удаление действует на копию окружения и не меняет исходный словарь."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = fork_cli.LogSession(
+                repo_root=Path(temp_dir), log_kind="test", mode="environment"
+            )
+            source_env = {"NO_COLOR": "1", "PRESERVED": "value"}
+            completed = unittest.mock.Mock(returncode=0)
+
+            with (
+                unittest.mock.patch.object(
+                    fork_cli, "command_env", side_effect=lambda: dict(source_env)
+                ),
+                unittest.mock.patch.object(
+                    fork_cli.subprocess, "run", return_value=completed
+                ) as run,
+            ):
+                result = session.run_step(
+                    "environment isolation",
+                    ["test-command"],
+                    env_removals=("NO_COLOR",),
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(run.call_args.kwargs["env"], {"PRESERVED": "value"})
+            self.assertEqual(source_env, {"NO_COLOR": "1", "PRESERVED": "value"})
 
 
 FORK_TESTS_BLOCK = textwrap.dedent(
@@ -1400,6 +1435,7 @@ class CardTestPlatformTests(unittest.TestCase):
         )
 
     def test_cards_skip_non_matching_platform_and_report_counts(self) -> None:
+        """Запускается только подходящая запись с нормализованным окружением."""
         args = self.args(self.make_repo(), "cards")
 
         with (
@@ -1417,6 +1453,7 @@ class CardTestPlatformTests(unittest.TestCase):
             session.steps,
             [("fork-platform-tests: portable behavior", ["portable-test"])],
         )
+        self.assertEqual(session.env_removals, [fork_cli.CARD_TEST_ENV_REMOVALS])
         self.assertEqual(
             session.ok_extra,
             ["TESTS_PASSED: 1", "TESTS_SKIPPED_PLATFORM: 1"],
@@ -1427,6 +1464,7 @@ class CardTestPlatformTests(unittest.TestCase):
         )
 
     def test_cards_run_matching_platform(self) -> None:
+        """Все подходящие записи получают одинаковые удаления из окружения."""
         args = self.args(self.make_repo(), "cards")
 
         with (
@@ -1446,6 +1484,10 @@ class CardTestPlatformTests(unittest.TestCase):
                 ("fork-platform-tests: portable behavior", ["portable-test"]),
                 ("fork-platform-tests: Windows behavior", ["windows-test"]),
             ],
+        )
+        self.assertEqual(
+            session.env_removals,
+            [fork_cli.CARD_TEST_ENV_REMOVALS, fork_cli.CARD_TEST_ENV_REMOVALS],
         )
         self.assertEqual(
             session.ok_extra,

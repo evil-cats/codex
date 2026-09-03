@@ -23,18 +23,25 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
+// The oversized input fits in 8KB before JSON escaping. Neither rejected input
+// may reach the shell, including the trailing assignment.
+#[test_case::test_case(
+    format!("#{}\nREJECTED=1\n", "\"".repeat(4_100)),
+    "too large to review safely";
+    "oversized"
+)]
+#[test_case::test_case("\0REJECTED=1\n".to_string(), "NUL byte"; "nul")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exec_command_stdin_oversized_write_is_rejected_before_approval_or_execution() -> Result<()>
-{
+async fn exec_command_stdin_unreviewable_write_is_rejected_before_approval_or_execution(
+    rejected_input: String,
+    expected_error: &str,
+) -> Result<()> {
     skip_if_target_windows!(Ok(()), "uses a POSIX interactive shell");
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
     let server = start_mock_server().await;
     let mut builder = test_codex();
     let test = builder.build_with_auto_env(&server).await?;
-    // The raw input fits in 8KB, but its JSON escapes do not. None of the
-    // rejected input, including the trailing assignment, may reach the shell.
-    let oversized = format!("#{}\nREJECTED=1\n", "\"".repeat(4_100));
     let mut sequence = Vec::new();
     for (id, tool, args) in [
         (
@@ -43,9 +50,9 @@ async fn exec_command_stdin_oversized_write_is_rejected_before_approval_or_execu
             json!({"cmd":"/bin/bash --noprofile --norc", "tty":true, "yield_time_ms":200, "sandbox_permissions":"require_escalated"}),
         ),
         (
-            "oversized",
+            "rejected",
             "write_stdin",
-            json!({"session_id":1000, "chars":oversized, "yield_time_ms":1000}),
+            json!({"session_id":1000, "chars":rejected_input, "yield_time_ms":1000}),
         ),
         (
             "allowed",
@@ -102,11 +109,8 @@ async fn exec_command_stdin_oversized_write_is_rejected_before_approval_or_execu
     );
     let requests = responses.requests();
     let last = requests.last().expect("final model request");
-    let rejected = last.function_call_output("oversized");
-    assert!(
-        rejected.to_string().contains("too large to review safely"),
-        "{rejected}"
-    );
+    let rejected = last.function_call_output("rejected");
+    assert!(rejected.to_string().contains(expected_error), "{rejected}");
     let allowed = last.function_call_output("allowed");
     assert!(allowed.to_string().contains("STDIN_REVIEW_OK"), "{allowed}");
     test.codex.submit(Op::Shutdown).await?;

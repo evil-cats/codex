@@ -2,7 +2,7 @@
 id: fork-tui-successful-command-list
 status: active
 created: 2026-08-24
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Список успешных команд в компактной TUI-группе
@@ -162,6 +162,16 @@ shell-синтаксиса, переносом и ограничением пр�
         "-p",
         "codex-tui",
         "compact_command_activity_preserves_full_transcript"
+      ]
+    },
+    {
+      "purpose": "вызовы запуска unified exec сохраняют тот же компактный список успешных команд",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "compact_command_activity_groups_unified_exec_startup_commands"
       ]
     },
     {

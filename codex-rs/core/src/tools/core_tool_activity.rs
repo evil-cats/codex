@@ -14,6 +14,9 @@ use serde_json::Value as JsonValue;
 use std::path::Path;
 use std::time::Instant;
 
+const CLOCK_NAMESPACE: &str = "clock";
+const CLOCK_CURRENT_TIME_TOOL_NAME: &str = "curr_time";
+
 pub(crate) struct CoreToolActivityHandle {
     item: CoreToolActivityItem,
     started_at: Instant,
@@ -52,6 +55,8 @@ impl CoreToolActivityHandle {
     }
 }
 
+/// Строит ограниченный UI-элемент `CoreToolActivityItem` только для поддерживаемого
+/// function tool, сохраняя исходные `arguments` и диагностическое имя с namespace.
 fn core_tool_activity_item(
     invocation: &ToolInvocation,
     status: CoreToolActivityStatus,
@@ -68,12 +73,15 @@ fn core_tool_activity_item(
             invocation.turn.config.cwd.as_path(),
         ),
         CoreToolActivityKind::ThreadInfo => thread_info_detail(&arguments_json),
-        CoreToolActivityKind::SystemTime => system_time_detail(&arguments_json),
+        CoreToolActivityKind::SystemTime => {
+            system_time_detail(&invocation.tool_name, &arguments_json)
+        }
     };
+    let tool_name = core_tool_activity_tool_name(&invocation.tool_name);
 
     Some(CoreToolActivityItem {
         id: invocation.call_id.clone(),
-        tool_name: invocation.tool_name.name.clone(),
+        tool_name,
         kind,
         detail,
         arguments: arguments_json,
@@ -83,7 +91,13 @@ fn core_tool_activity_item(
     })
 }
 
+/// Сопоставляет инструменты default namespace и точную upstream-пару
+/// `clock/curr_time` с видами пользовательской activity, не захватывая остальные
+/// namespace.
 fn core_tool_activity_kind(tool_name: &ToolName) -> Option<CoreToolActivityKind> {
+    if is_clock_current_time(tool_name) {
+        return Some(CoreToolActivityKind::SystemTime);
+    }
     if !tool_name.is_default_namespace() {
         return None;
     }
@@ -92,6 +106,23 @@ fn core_tool_activity_kind(tool_name: &ToolName) -> Option<CoreToolActivityKind>
         GET_THREAD_INFO_TOOL_NAME => Some(CoreToolActivityKind::ThreadInfo),
         GET_SYSTEM_TIME_TOOL_NAME => Some(CoreToolActivityKind::SystemTime),
         _ => None,
+    }
+}
+
+/// Проверяет точную пару namespace/name для upstream-инструмента чтения времени.
+fn is_clock_current_time(tool_name: &ToolName) -> bool {
+    tool_name.namespace.as_deref() == Some(CLOCK_NAMESPACE)
+        && tool_name.name == CLOCK_CURRENT_TIME_TOOL_NAME
+}
+
+/// Сохраняет namespace в диагностическом имени, не меняя имена инструментов
+/// default namespace.
+fn core_tool_activity_tool_name(tool_name: &ToolName) -> String {
+    match tool_name.namespace.as_deref() {
+        Some(namespace) if !tool_name.is_default_namespace() => {
+            format!("{namespace}/{}", tool_name.name)
+        }
+        _ => tool_name.name.clone(),
     }
 }
 
@@ -138,7 +169,12 @@ fn thread_info_detail(arguments: &JsonValue) -> String {
     }
 }
 
-fn system_time_detail(arguments: &JsonValue) -> String {
+/// Формирует краткую деталь времени; `clock/curr_time` всегда возвращает UTC,
+/// тогда как fork-инструмент сохраняет выбранное пользователем значение `offset`.
+fn system_time_detail(tool_name: &ToolName, arguments: &JsonValue) -> String {
+    if is_clock_current_time(tool_name) {
+        return "utc".to_string();
+    }
     let Some(offset) = string_arg(arguments, "offset") else {
         return DEFAULT_SYSTEM_TIME_OFFSET.to_string();
     };

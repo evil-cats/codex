@@ -30,6 +30,7 @@ SKILL_ROOT = SCRIPT_DIR.parent
 DEFAULT_REPO_ROOT = SKILL_ROOT.parents[2]
 FORK_TESTS_SCHEMA = "fork-tests.v1"
 FORK_TEST_PLATFORMS = ("linux", "macos", "windows")
+CARD_TEST_ENV_REMOVALS = ("NO_COLOR",)
 REVISION_PREFIX = "revision "
 DEVELOPMENT_REVISION = "dev"
 FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
@@ -680,6 +681,8 @@ def check_source_like_untracked(session: "LogSession", scope: str) -> int:
 
 
 class LogSession:
+    """Запускает workflow-шаги и сохраняет их полный вывод в отдельном журнале."""
+
     def __init__(
         self,
         *,
@@ -751,7 +754,14 @@ class LogSession:
         argv: list[str],
         *,
         env_overrides: Mapping[str, str] | None = None,
+        env_removals: tuple[str, ...] = (),
     ) -> int:
+        """Запускает шаг в изолированной копии окружения и журналирует вывод.
+
+        Сначала применяются замены, затем удаления, поэтому удаление имеет
+        приоритет при пересечении имён. Окружение родительского процесса не
+        меняется; код возврата дочернего процесса становится результатом шага.
+        """
         print()
         print(f"==> {label}")
         self.log_command(label, argv)
@@ -763,6 +773,12 @@ class LogSession:
                 + "\n"
             )
             env.update(env_overrides)
+        if env_removals:
+            self.write(
+                "environment removals: " + ", ".join(sorted(env_removals)) + "\n"
+            )
+            for name in env_removals:
+                env.pop(name, None)
         with self.log_file.open("a", encoding="utf-8") as log:
             result = subprocess.run(
                 argv,
@@ -1847,6 +1863,7 @@ def cmd_build_code_mode_host(args: argparse.Namespace) -> int:
 
 
 def cmd_tests(args: argparse.Namespace) -> int:
+    """Показывает карту тестов либо запускает выбранный skill-owned test gate."""
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     version = resolved_version(args, repo_root)
     card_filters = args.card or []
@@ -1929,7 +1946,9 @@ def cmd_tests(args: argparse.Namespace) -> int:
                 skipped_platform += 1
                 continue
             result = session.run_step(
-                f"{test.card_id}: {test.purpose}", list(test.argv)
+                f"{test.card_id}: {test.purpose}",
+                list(test.argv),
+                env_removals=CARD_TEST_ENV_REMOVALS,
             )
             if result != 0:
                 return result

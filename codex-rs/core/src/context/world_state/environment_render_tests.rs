@@ -11,9 +11,6 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::permissions::project_roots_glob_pattern;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::TurnContextItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use core_test_support::test_path_buf;
@@ -63,6 +60,7 @@ fn environment_state(
     EnvironmentsState {
         environments,
         project_name: None,
+        shell_version: None,
         current_date,
         timezone,
         network,
@@ -99,6 +97,7 @@ fn serialize_workspace_write_environment_context() {
     assert_eq!(context.render(), expected);
 }
 
+/// Имя проекта должно сохранять порядок полей и проходить XML-экранирование при полном рендеринге.
 #[test]
 fn serialize_environment_context_with_project_name() {
     let mut context = environment_state(
@@ -264,168 +263,21 @@ fn serialize_environment_context_with_full_filesystem_profile() {
     assert_eq!(context.render(), expected);
 }
 
-#[test]
-fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
-    let repo = test_abs_path("/repo");
-    let other_repo = test_abs_path("/other-repo");
-    let repo_private = repo.join("private");
-    let item = TurnContextItem {
-        turn_id: None,
-        cwd: test_abs_path("/not-the-workspace"),
-        workspace_roots: Some(vec![repo.clone(), other_repo.clone()]),
-        current_date: None,
-        timezone: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: None,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        permission_profile: Some(workspace_write_permission_profile_with_private_denials()),
-        active_permission_profile: None,
-        network: None,
-        file_system_sandbox_policy: None,
-        model: "gpt-5".to_string(),
-        comp_hash: None,
-        personality: None,
-        collaboration_mode: None,
-        multi_agent_version: None,
-        multi_agent_mode: None,
-        realtime_active: None,
-        cyber_access_program: None,
-        effort: None,
-        summary: codex_protocol::config_types::ReasoningSummary::Auto,
-    };
-
-    let context = EnvironmentsState::from_turn_context_item(&item).render();
-
-    assert!(
-        context.contains(&format!(
-            "<root>{}</root><root>{}</root>",
-            repo.to_string_lossy(),
-            other_repo.to_string_lossy()
-        )),
-        "{context}"
-    );
-    assert!(
-        context.contains(&format!("<path>{}</path>", repo_private.to_string_lossy())),
-        "{context}"
-    );
-    assert!(
-        !context.contains(
-            test_abs_path("/not-the-workspace")
-                .join("private")
-                .to_string_lossy()
-                .as_ref()
-        ),
-        "{context}"
-    );
-}
-
-#[test]
-fn turn_context_item_project_name_uses_workspace_root_name() {
-    let repo = test_abs_path("/repo");
-    let item = TurnContextItem {
-        turn_id: None,
-        cwd: test_abs_path("/repo/nested"),
-        workspace_roots: Some(vec![repo]),
-        current_date: None,
-        timezone: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: None,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        permission_profile: Some(workspace_write_permission_profile_with_private_denials()),
-        active_permission_profile: None,
-        network: None,
-        file_system_sandbox_policy: None,
-        model: "gpt-5".to_string(),
-        personality: None,
-        collaboration_mode: None,
-        multi_agent_version: None,
-        multi_agent_mode: None,
-        realtime_active: None,
-        cyber_access_program: None,
-        effort: None,
-        comp_hash: None,
-        summary: codex_protocol::config_types::ReasoningSummary::Auto,
-    };
-
-    let context = EnvironmentsState::from_turn_context_item(&item).render();
-
-    assert!(
-        context.contains("<project_name>repo</project_name>"),
-        "{context}"
-    );
-}
-
-/// При восстановлении старого `TurnContextItem` без `workspace_roots` видимый модели
-/// контекст должен взять `cwd` как единый источник: его basename — для
-/// `<project_name>`, а сам путь — для единственного root в `<filesystem>`.
-#[test]
-fn turn_context_item_without_workspace_roots_uses_cwd_for_environment_context() {
-    let cwd = test_abs_path("/legacy/repo");
-    let item = TurnContextItem {
-        turn_id: None,
-        cwd: cwd.clone(),
-        workspace_roots: None,
-        current_date: None,
-        timezone: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: None,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        permission_profile: Some(PermissionProfile::Disabled),
-        active_permission_profile: None,
-        network: None,
-        file_system_sandbox_policy: None,
-        model: "gpt-5".to_string(),
-        comp_hash: None,
-        personality: None,
-        collaboration_mode: None,
-        multi_agent_version: None,
-        multi_agent_mode: None,
-        realtime_active: None,
-        cyber_access_program: None,
-        effort: None,
-        summary: codex_protocol::config_types::ReasoningSummary::Auto,
-    };
-
-    let context = EnvironmentsState::from_turn_context_item(&item).render();
-    let expected = format!(
-        r#"<environment_context>
-  <cwd>{cwd}</cwd>
-  <project_name>repo</project_name>
-  <filesystem><workspace_roots><root>{cwd}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
-</environment_context>"#,
-        cwd = cwd.to_string_lossy(),
-    );
-
-    assert_eq!(context, expected);
-}
-
+/// Смена имени проекта в сохранённом snapshot должна дать новое значение в diff.
 #[test]
 fn diff_environment_context_includes_changed_project_name() {
-    let item = TurnContextItem {
-        turn_id: None,
-        cwd: test_abs_path("/old-repo"),
-        workspace_roots: Some(vec![test_abs_path("/old-repo")]),
-        current_date: None,
-        timezone: None,
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: None,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        permission_profile: Some(workspace_write_permission_profile_with_private_denials()),
-        active_permission_profile: None,
-        network: None,
-        file_system_sandbox_policy: None,
-        model: "gpt-5".to_string(),
-        personality: None,
-        collaboration_mode: None,
-        multi_agent_version: None,
-        multi_agent_mode: None,
-        realtime_active: None,
-        cyber_access_program: None,
-        effort: None,
-        comp_hash: None,
-        summary: codex_protocol::config_types::ReasoningSummary::Auto,
-    };
-    let before = EnvironmentsState::from_turn_context_item(&item);
+    let mut before = environment_state(
+        [environment(
+            "local",
+            PathUri::from_abs_path(&test_abs_path("/old-repo")),
+            fake_shell_name(),
+        )],
+        /*current_date*/ None,
+        /*timezone*/ None,
+        /*network*/ None,
+        /*subagents*/ None,
+    );
+    before.project_name = Some("old-repo".to_string());
     let mut after = before.clone();
     after.project_name = Some("new-repo".to_string());
     let before = WorldStateSection::snapshot(&before);
@@ -564,4 +416,45 @@ fn serialize_environment_context_prefers_environment_shell_when_present() {
     );
 
     assert_eq!(context.render(), expected);
+}
+
+fn powershell_environment() -> EnvironmentsState {
+    let cwd = PathUri::from_abs_path(&test_abs_path("/repo"));
+    EnvironmentsState {
+        environments: [environment("local", cwd, "powershell")].into(),
+        shell_version: Some("5.1".to_string()),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn shell_version_diff_restates_shell_from_legacy_snapshot() {
+    let current = powershell_environment();
+    let mut previous = current.snapshot();
+    previous.shell_version = None;
+    previous.environments.get_mut("local").expect("local").shell = None;
+    let rendered = current
+        .render_diff(PreviousSectionState::Known(&previous))
+        .expect("shell version update")
+        .render();
+    assert!(
+        rendered.contains("<shell>powershell</shell>\n  <shell_version>5.1</shell_version>"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn shell_version_diff_clears_previously_visible_version() {
+    let previous = powershell_environment();
+    let current = EnvironmentsState {
+        shell_version: None,
+        ..previous.clone()
+    };
+    assert_eq!(
+        current
+            .render_diff(PreviousSectionState::Known(&previous.snapshot()))
+            .expect("removed shell version")
+            .render(),
+        "<environment_context>\n  <shell_version status=\"unavailable\" />\n</environment_context>"
+    );
 }

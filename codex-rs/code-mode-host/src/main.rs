@@ -1,6 +1,6 @@
 //! CLI-точка входа Code Mode host.
 //!
-//! Помимо выбора transport endpoint корневой help публикует Git-ревизию
+//! Помимо выбора transport endpoint корневой `--version` публикует Git-ревизию
 //! бинарника, которую проверяет общий fork workflow установки.
 
 use std::collections::BTreeMap;

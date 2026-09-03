@@ -83,7 +83,7 @@ echo "hello" | wc -c
 | `codex-rs/core/src/tools/sandboxing.rs` | Позволяет проверяемому `stdin` принудительно обойти чтение сохранённого approval, сохраняя прежний ключ команды только для записи решения `ApprovedForSession` |
 | `codex-rs/core/src/guardian/approval_request.rs` | Передаёт полный начальный `stdin` и фактические полномочия в Guardian action без усечения проверяемого хвоста |
 | `codex-rs/core/src/unified_exec/stdin_approval.rs` | Предоставляет общий обработчик политики для начального `stdin` и `write_stdin`: решение по полномочиям, `strict review`, NUL и размеру полного проверяемого действия |
-| `codex-rs/core/src/unified_exec/stdin_approval_tests.rs` | Проверяет общую границу политики для начального и последующего `stdin` без эвристики исполнимости содержимого |
+| `codex-rs/core/src/unified_exec/stdin_approval_tests.rs` | Проверяет общую границу политики для начального и последующего `stdin` без эвристики исполнимости содержимого и сохраняет upstream-проверки снимка полномочий терминала |
 | `codex-rs/core/src/unified_exec/process_manager.rs` | После положительного решения открывает stdin, передаёт начальный ввод, закрывает non-TTY-поток, сохраняет PTY открытым и публикует подтверждённое взаимодействие с терминалом |
 | `codex-rs/core/src/unified_exec/process_manager_tests.rs` | Проверяет передачу начального ввода в удалённый `ExecParams` |
 | `codex-rs/core/src/unified_exec/async_watcher_tests.rs` | Совместимо инициализирует расширенный `ProcessDriver` в существующей тестовой инфраструктуре |
@@ -102,6 +102,7 @@ echo "hello" | wc -c
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Формирует только подтверждённые сохранённые взаимодействия и восстанавливает их порядок при replay |
 | `codex-rs/app-server-protocol/schema/` | Хранит сгенерированные артефакты JSON и TypeScript нового сохраняемого `ThreadItem` |
 | `codex-rs/app-server/README.md` | Документирует публичную форму, подтверждённость и replay элемента `terminalInteraction` |
+| `codex-rs/app-server/src/notification_media.rs` | Явно сохраняет `TerminalInteraction` без изменений при удалении media payload из app-server notifications |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет полученное в текущей сессии взаимодействие с терминалом в общий жизненный цикл TUI |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает сохранённое взаимодействие с терминалом из истории thread без чтения исходных `arguments` вызова `FunctionCall` |
 | `codex-rs/tui/src/chatwidget/command_lifecycle.rs` | Добавляет подтверждённый stdin в живой транскрипт и не отображает пустой либо отклонённый ввод как состоявшуюся передачу |
@@ -188,6 +189,11 @@ PTY-драйвер находится в `codex-rs/utils/pty/src/unix_io.rs`. У
 обработчик `shell` отсутствует и не является владельцем контракта этой карточки.
 При переносе на новую версию upstream карту нужно сверять заново, если транспорт
 процесса или литералы протокола перемещены.
+
+В `rust-v0.152.0` upstream-проверки последующего `write_stdin` объединены с
+fork-политикой начального ввода: NUL и предел полного сериализованного действия
+проверяет общий `validate_terminal_input_review` в `Session::request_approval`, а
+сравнение сохранённых полномочий терминала остаётся в `TerminalPermissions`.
 
 ### Намеренно неизменяемые зоны
 

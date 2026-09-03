@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Утилитарный core tool `read_file`
@@ -62,12 +62,12 @@ Owner-файлы реализации:
 | --- | --- |
 | `codex-rs/core/src/tools/handlers/read_file.rs` | Runtime: direct-only model exposure, path, sandbox/read permissions, строки, диапазоны, content token budget, line-number rendering и ошибки |
 | `codex-rs/core/src/tools/line_utils.rs` | Общий разбор строк с сохранением завершающего `\n`; обеспечивает одинаковую семантику строк для `read_file` и exec spill |
-| `codex-rs/core/src/tools/handlers/read_file_spec.rs` | Spec Responses API tool: имя `read_file`, аргументы, model-visible description и текстовый output contract с согласованным header |
+| `codex-rs/core/src/tools/handlers/read_file_spec.rs` | Spec Responses API tool: имя `read_file`, основные аргументы, условный `environment_id` для нескольких окружений, model-visible description и текстовый output contract с согласованным header |
 | `codex-rs/core/src/tools/handlers/read_file_tests.rs` | Unit tests runtime-контракта: диапазоны, right-tail line trimming, long line, пустой файл и `line_numbers=false` |
-| `codex-rs/core/src/tools/handlers/read_file_spec_tests.rs` | Tests spec-контракта: имя tool, default `line_numbers`, отсутствие argument для token limit и описание поведения `complete=no` |
+| `codex-rs/core/src/tools/handlers/read_file_spec_tests.rs` | Tests spec-контракта: имя tool, default `line_numbers`, условный `environment_id`, отсутствие argument для token limit и описание поведения `complete=no` |
 | `codex-rs/core/src/tools/handlers/mod.rs` | Подключает handler и spec-модуль |
-| `codex-rs/core/src/tools/spec_plan.rs` | Регистрирует `ReadFileHandler` через текущий `ToolRegistry` рядом с core utility tools |
-| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет visibility для environment-backed tools и `DirectModelOnly`: `read_file` остается прямым при code mode и не входит в описание nested `exec` |
+| `codex-rs/core/src/tools/spec_plan.rs` | Регистрирует `ReadFileHandler` через текущий `ToolRegistry` рядом с core utility tools и включает `environment_id` только при нескольких доступных окружениях |
+| `codex-rs/core/src/tools/spec_plan_tests.rs` | Проверяет visibility для environment-backed tools, условный `environment_id` и `DirectModelOnly`: `read_file` остается прямым при code mode и не входит в описание nested `exec` |
 | `codex-rs/config/src/config_toml.rs` | Добавляет TOML config `[tools.read_file].content_max_tokens` |
 | `codex-rs/core/src/config/mod.rs` | Добавляет effective config field, default `10_000` и resolver для лимита `read_file` |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
@@ -76,7 +76,7 @@ Owner-файлы реализации:
 | `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконные сведения о происхождении после replay rollout; номер окна и UUID текущего окна остаются отдельными частями возвращаемого upstream-кортежа |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history последней сохранившейся compaction от вызовов в хвосте текущего окна и последовательно восстанавливает typed items через тот же `ContextManager`, что используется live path |
 | `codex-rs/core/src/session/rollout_reconstruction_tests.rs` | Проверяет маркировку вызовов, принесённых replacement-history, и replay-stable history policy при resume-реконструкции |
-| `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy`: сохраняет уже ограниченный результат `read_file` и использует `ToolOutputHistoryPolicy::ModelDefault` для остальных результатов, не изменяя upstream-поля `name`, `namespace` и внутренние метаданные history |
+| `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy` внутри текущего upstream-пути `record_items_with_metadata`: сохраняет уже ограниченный результат `read_file`, а для остальных результатов оставляет `fallback_token_limit_override`, audio-aware truncation и `review_history`; поля `name`, `namespace` и внутренние метаданные history не изменяются |
 | `codex-rs/core/src/context_manager/tool_output_history.rs` | Выбирает `ToolOutputHistoryPolicy` по typed `FunctionCall`/`FunctionCallOutput` через `call_id`, не разбирая текст output и не вводя отдельное persisted state |
 | `codex-rs/core/src/context_manager/history_tests.rs` | Проверяет пару `FunctionCall(name=read_file)`/`FunctionCallOutput`, обязательность `call_id` для обхода общего лимита, отсутствие анализа текста и общее усечение результатов других инструментов |
 | `codex-rs/core/config.schema.json` | Описывает `[tools.read_file].content_max_tokens` |
@@ -153,6 +153,7 @@ history. Политика `read_file` обрабатывает только вл
 read_file("path/to/file")
 read_file("path/to/file", 10, 100)
 read_file("path/to/file", 10, 100, line_numbers=false)
+read_file("path/to/file", environment_id="remote-env")
 ```
 
 Концептуальные аргументы:
@@ -163,6 +164,7 @@ read_file("path/to/file", 10, 100, line_numbers=false)
 | `start_line` | опционален | 1-based начало диапазона; если задан, `end_line` тоже должен быть задан |
 | `end_line` | опционален | 1-based конец диапазона включительно; если задан, `start_line` тоже должен быть задан |
 | `line_numbers` | опционален | По умолчанию `true`; при `false` возвращается raw content без префиксов строк |
+| `environment_id` | опционален | Публикуется только при нескольких доступных окружениях; если не задан, используется primary environment |
 
 `token_limit`, `max_tokens`, `budget` и похожие параметры не должны быть
 аргументами tool call. Лимит задается только config-ом.
@@ -195,6 +197,7 @@ do not assemble it from partial overlaps or multiple earlier outputs.
 | `start_line` | `Optional 1-based inclusive start line. Must be provided together with end_line. Omit both start_line and end_line to request the whole file.` |
 | `end_line` | `Optional 1-based inclusive end line. Must be provided together with start_line. Omit both start_line and end_line to request the whole file.` |
 | `line_numbers` | `Optional. Defaults to true. When true, prefixes each returned line with its source line number. Set false only when raw file content is needed for exact copying, formatting, or comparison.` |
+| `environment_id` | `Environment id from <environment_context>. Omit to use the primary environment.`; поле присутствует только при нескольких доступных окружениях |
 
 Эта справка не заменяет поиск по репозиторию: discovery остается за `rg`,
 `rg --files`, `git grep` и аналогичными командами. Shell остается для реального
@@ -469,6 +472,13 @@ prompt-equivalent history обработчик получает через `Turn
 структурированный line-based результат. Header и номера строк сознательно
 считаются допустимым overhead этого результата.
 
+В upstream `0.152.0` общий путь записи сначала клонирует
+`ResponseItemEnvelope`, затем применяет `fallback_token_limit_override` или
+model-default лимит с audio-aware оценкой и отдельно обновляет `review_history`.
+Миграция должна выбирать `ToolOutputHistoryPolicy` до этого усечения:
+`AlreadyBounded` пропускает только обработку payload `read_file`, а
+`ModelDefault` полностью сохраняет новый upstream-путь и его metadata.
+
 Разбиение исходного текста на строки выполняет общий
 `tools::line_utils::split_lines_preserving_endings()`. Оно сохраняет завершающий
 `\n` каждой строки и тем самым обеспечивает одинаковую семантику строк в
@@ -497,7 +507,8 @@ prompt-equivalent history обработчик получает через `Turn
 8. Реализовать MVP только для обычных текстовых UTF-8 файлов; binary, non-UTF-8 и
    неподдерживаемые файлы должны давать понятную ошибку.
 9. Обновить tool visibility expectations: `read_file` должен быть
-   environment-backed и не должен появляться без environment.
+   environment-backed, не появляться без environment и публиковать
+   `environment_id` только при нескольких доступных окружениях.
 10. Добавить tests по runtime, spec, config, tool visibility и integration
     flow.
 11. Обновить schema для нового config key.
@@ -546,7 +557,7 @@ prompt-equivalent history обработчик получает через `Turn
       "argv": ["just", "test", "-p", "codex-core", "read_file"]
     },
     {
-      "purpose": "read_file доступен модели напрямую и не публикуется во вложенном exec namespace",
+      "purpose": "read_file доступен модели напрямую, получает environment_id только для нескольких окружений и не публикуется во вложенном exec namespace",
       "argv": [
         "just",
         "test",

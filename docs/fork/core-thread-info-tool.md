@@ -2,7 +2,7 @@
 id: fork-core-thread-info-tool
 status: active
 created: 2026-06-16
-updated: 2026-08-31
+updated: 2026-09-02
 ---
 
 # Утилитарный core tool `get_thread_info`
@@ -51,6 +51,8 @@ updated: 2026-08-31
 | `codex-rs/core/src/tools/core_tool_activity.rs` | Отображает вызов `get_thread_info` в core tool activity как `kind = ThreadInfo` с кратким полем `detail` по текущему или указанному `thread_id` |
 | `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет, что `get_thread_info` остаётся видимым core tool activity с `kind = ThreadInfo` |
 | `codex-rs/protocol/src/items.rs` | Содержит `CoreToolActivityKind::ThreadInfo` для `CoreToolActivityItem` |
+| `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Отображает `CoreToolActivityKind::ThreadInfo` в v2 `ThreadItem::CoreToolActivity` без добавления отдельного RPC-метода |
+| `codex-rs/app-server-protocol/schema/typescript/v2/CoreToolActivityKind.ts` | Содержит сгенерированное значение протокола `threadInfo`; JSON schema ответов и уведомлений включает тот же вариант через общий enum |
 | `codex-rs/core/tests/suite/prompt_caching.rs` | Обновляет ожидаемый список prompt tools, чтобы cache-sensitive тест видел новый tool |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает integration suite `thread_info` |
 | `codex-rs/tui/src/temporary_structured_request.rs` | Явно отключает `get_thread_info` во временном structured thread, которому нужен пустой набор tools |
@@ -63,7 +65,7 @@ updated: 2026-08-31
 | Зона | Почему не меняется |
 | --- | --- |
 | `Cargo.toml` и `Cargo.lock` | Новые зависимости не нужны |
-| App-server protocol | Внешний app-server API не меняется |
+| Набор методов app-server RPC | Новые методы и поля payload не добавляются; существующий v2 `CoreToolActivityKind` только отражает новый вариант `threadInfo` |
 | TUI | Отдельная UI-поверхность не нужна: tool доступен через core tool planning |
 | Rollout filename format | Уже использует `ThreadId`; tool только раскрывает путь и id |
 | Thread/session data model | Tool использует существующие `Session`, `ThreadStore`, `StoredThread` и `SessionSource` |

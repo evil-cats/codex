@@ -88,6 +88,7 @@ pub use contributors::TurnLifecycleContributor;
 pub use contributors::TurnStartInput;
 pub use contributors::TurnStopInput;
 pub use contributors::WorldStateContributionInput;
+pub use contributors::WorldStateHostCapabilities;
 pub use contributors::WorldStateSectionContribution;
 pub use registry::ExtensionRegistry;
 pub use registry::ExtensionRegistryBuilder;

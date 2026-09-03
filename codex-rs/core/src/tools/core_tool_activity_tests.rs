@@ -1,10 +1,14 @@
 //! Регрессионные проверки пользовательских деталей core tool activity.
 
+use super::CLOCK_CURRENT_TIME_TOOL_NAME;
+use super::CLOCK_NAMESPACE;
 use super::GET_SYSTEM_TIME_TOOL_NAME;
 use super::GET_THREAD_INFO_TOOL_NAME;
 use super::READ_FILE_TOOL_NAME;
 use super::core_tool_activity_kind;
+use super::core_tool_activity_tool_name;
 use super::read_file_detail;
+use super::system_time_detail;
 use crate::config::PermissionProfileSnapshot;
 use crate::environment_selection::EnvironmentConfigOrigin;
 use crate::environment_selection::TurnEnvironmentSnapshot;
@@ -49,6 +53,40 @@ fn non_default_namespace_remains_hidden() {
         None,
         core_tool_activity_kind(&ToolName::namespaced("extension", READ_FILE_TOOL_NAME))
     );
+}
+
+/// Точная пара `clock/curr_time` создаёт activity системного времени с
+/// детерминированной деталью `utc` и сохраняет namespace в диагностическом имени.
+#[test]
+fn exact_clock_current_time_tool_is_visible_with_utc_detail() {
+    let clock_current_time = ToolName::namespaced(CLOCK_NAMESPACE, CLOCK_CURRENT_TIME_TOOL_NAME);
+
+    assert_eq!(
+        Some(CoreToolActivityKind::SystemTime),
+        core_tool_activity_kind(&clock_current_time)
+    );
+    assert_eq!(
+        "clock/curr_time",
+        core_tool_activity_tool_name(&clock_current_time)
+    );
+    assert_eq!(
+        "utc",
+        system_time_detail(&clock_current_time, &json!({ "offset": "+03:00" }))
+    );
+}
+
+/// Сходные имена вне точной пары `clock/curr_time` не расширяют видимую
+/// поверхность core tool activity.
+#[test]
+fn other_current_time_tool_names_remain_hidden() {
+    for tool_name in [
+        ToolName::namespaced(CLOCK_NAMESPACE, "sleep"),
+        ToolName::namespaced("extension", CLOCK_CURRENT_TIME_TOOL_NAME),
+        ToolName::plain(CLOCK_CURRENT_TIME_TOOL_NAME),
+        ToolName::plain(CLOCK_CURRENT_TIME_TOOL_NAME).with_default_namespace(),
+    ] {
+        assert_eq!(None, core_tool_activity_kind(&tool_name));
+    }
 }
 
 #[tokio::test]

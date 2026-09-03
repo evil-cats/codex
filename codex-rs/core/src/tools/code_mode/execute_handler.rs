@@ -32,7 +32,9 @@ impl CodeModeExecuteHandler {
         }
     }
 
-    /// Запускает JavaScript-ячейку и сохраняет идентификатор внешнего вызова до ответа модели.
+    /// Запускает JavaScript-ячейку и передаёт общему пути ответа идентификатор
+    /// внешнего вызова вместе с длительностью от хост-процесса или резервным
+    /// локальным замером.
     async fn execute(
         &self,
         session: std::sync::Arc<crate::session::session::Session>,
@@ -112,6 +114,9 @@ impl CodeModeExecuteHandler {
             .initial_response()
             .await
             .map_err(FunctionCallError::RespondToModel)?;
+        if let Some(code_mode_host_duration) = response.code_mode_host_duration() {
+            telemetry.record_code_mode_host_duration(code_mode_host_duration);
+        }
         // Record the raw runtime boundary. The model-visible custom-tool output
         // is produced by `handle_runtime_response` and later linked through
         // `CodeCell.output_item_ids` in the reduced trace.
@@ -134,15 +139,12 @@ impl CodeModeExecuteHandler {
                 });
         }
         exec.session.services.elicitations.wait_until_clear().await;
-        handle_runtime_response(
-            &exec,
-            &call_id,
-            response,
-            args.max_output_tokens,
-            started_at,
-        )
-        .await
-        .map_err(FunctionCallError::RespondToModel)
+        let wall_time = response
+            .code_mode_host_duration()
+            .unwrap_or_else(|| started_at.elapsed());
+        handle_runtime_response(&exec, &call_id, response, args.max_output_tokens, wall_time)
+            .await
+            .map_err(FunctionCallError::RespondToModel)
     }
 }
 

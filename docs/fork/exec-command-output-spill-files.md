@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Spill-файлы для длинного exec output
@@ -90,11 +90,11 @@ inline cap и spill-механику, что прямой `exec_command`.
 | `codex-rs/core/src/unified_exec/*tests.rs` | Проверить завершённую и running ветви, выбор политики по источнику, отсутствие spill для Code Mode/running process и запись файла для модели |
 | `codex-rs/core/src/config/config_tests.rs` | Проверить parsing/default/schema-facing config behavior |
 | `codex-rs/core/tests/suite/unified_exec.rs` | Сквозно проверить spill завершённого `exec_command` для модели, видимую модели ссылку на файл и отсутствие spill при большом `SandboxDenied` |
-| `codex-rs/core/src/tools/code_mode/mod.rs` | В общем `handle_runtime_response()` вызвать spill до усечения и script status; после spill сохранить метаданные целиком, а внешний лимит расходовать только на line prefix и audio |
+| `codex-rs/core/src/tools/code_mode/mod.rs` | В общем `handle_runtime_response()` принять рассчитанный вызывающей стороной `wall_time`, вызвать spill до усечения и script status; после spill сохранить метаданные целиком, а внешний лимит расходовать только на line prefix и audio |
 | `codex-rs/core/src/tools/code_mode/output_spill.rs` | Построить канонический текстовый projection, сохранить его и заменить text items единым model-visible spill body, не меняя media order |
 | `codex-rs/core/src/tools/code_mode/output_spill_tests.rs` | Проверить порядок text projection и сохранение media items при замене текста |
-| `codex-rs/core/src/tools/code_mode/execute_handler.rs` | Передать identity внешнего `exec` для безопасного имени artifact |
-| `codex-rs/core/src/tools/code_mode/wait_handler.rs` | Передать identity внешнего `wait`; использовать тот же общий spill path, что initial response |
+| `codex-rs/core/src/tools/code_mode/execute_handler.rs` | Получить `wall_time` через `code_mode_host_duration()` с резервным локальным замером и передать identity внешнего `exec` для безопасного имени artifact |
+| `codex-rs/core/src/tools/code_mode/wait_handler.rs` | Получить `wall_time` через `code_mode_host_duration()` с резервным локальным замером, передать identity внешнего `wait` и использовать тот же общий spill path, что initial response |
 | `codex-rs/core/tests/suite/code_mode.rs` | Сквозно проверить машинный nested-контракт и model-visible spill внешних `exec`/`wait` результатов |
 | `.codex/skills/fork/scripts/fork_cli.py` | Собрать отладочный `codex-code-mode-host` с каноническими V8-артефактами для тестов карточки |
 | `.codex/skills/fork/scripts/fork_cli_tests.py` | Проверить argv, V8-окружение и отказ при отсутствии ожидаемого host-бинарника |

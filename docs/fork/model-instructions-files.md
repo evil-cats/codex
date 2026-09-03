@@ -2,7 +2,7 @@
 id: fork-model-instructions-files
 status: active
 created: 2026-07-24
-updated: 2026-08-31
+updated: 2026-09-02
 ---
 
 # Model instructions files
@@ -13,8 +13,8 @@ updated: 2026-08-31
 config key `model_instructions_files`. Он позволяет разделить базовые инструкции
 модели между несколькими Markdown-файлами и собрать их в одно значение
 `Config.base_instructions`. Обычный Responses transport передаёт это значение
-через top-level поле `instructions`; Responses Lite использует свой upstream
-wire contract с одним developer item.
+через top-level поле `instructions`; Responses Lite по upstream wire contract
+передаёт его одним отдельным developer item.
 
 ## Зачем это нужно
 

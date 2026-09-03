@@ -939,6 +939,20 @@ async fn stdin_approval_preserves_the_reviewed_terminal() -> anyhow::Result<()> 
         entry.cwd = cwd.clone();
         Arc::clone(&entry.process)
     };
+    // A queued write must acquire the terminal lock before reading active strict
+    // mode: code-mode calls can enable it while another interaction is draining.
+    {
+        let interaction = original.interaction_lock().lock_owned().await;
+        let _active_turn = session.active_turn.lock().await;
+        let mut queued = Box::pin(write_stdin(
+            &session, &turn, process_id, "queued\n", /*yield_time_ms*/ 250,
+        ));
+        let mut task_context = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        assert!(queued.as_mut().poll(&mut task_context).is_pending());
+        drop(interaction);
+        assert!(queued.as_mut().poll(&mut task_context).is_pending());
+        assert!(original.interaction_lock().try_lock_owned().is_err());
+    }
     // Empty polling must complete without an approval response.
     tokio::time::timeout(
         Duration::from_secs(/*secs*/ 5),
@@ -956,6 +970,11 @@ async fn stdin_approval_preserves_the_reviewed_terminal() -> anyhow::Result<()> 
     );
     Arc::make_mut(&mut Arc::get_mut(&mut turn).unwrap().config).approvals_reviewer =
         ApprovalsReviewer::User;
+    assert!(matches!(
+        write_stdin(&session, &turn, process_id, input, /*yield_time_ms*/ 250).await,
+        Err(UnifiedExecError::StdinApproval(ToolError::Rejected(reason)))
+            if reason.contains("select it before retrying")
+    ));
     manager
         .process_store
         .lock()

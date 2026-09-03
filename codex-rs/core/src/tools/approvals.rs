@@ -522,8 +522,8 @@ impl Session {
             &ctx.review_context.turn().session_telemetry,
         )?;
 
-        // Ввод с расширенными полномочиями требует самостоятельного sandbox approval.
-        // Strict review при Never по-прежнему направляется в Guardian.
+        // Stdin that exceeds current permissions needs a fresh sandbox approval.
+        // Strict review at Never still routes through Guardian.
         let policy = ctx.review_context.turn().approval_policy();
         if (matches!(
             &action,

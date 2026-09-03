@@ -2,7 +2,7 @@
 id: fork-mcp-transport-recovery
 status: active
 created: 2026-07-30
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Восстановление транспорта MCP stdio
@@ -39,6 +39,7 @@ updated: 2026-08-30
 | --- | --- |
 | `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Хранит признак смерти процесса и отмечает запуск мёртвым после EOF транспорта или `BrokenPipe` для `LocalLegacy`, `LocalModern` и executor transport |
 | `codex-rs/rmcp-client/src/rmcp_client.rs` | Выполняет ленивое восстановление перед операцией, переподключение и однократный повтор |
+| `codex-rs/rmcp-client/src/streamable_http_retry.rs` | Ограничивает повторы инициализации HTTP-транспортом: stdio делегируется в `connect_pending_transport` без повторов |
 | `codex-rs/rmcp-client/src/bin/test_stdio_server.rs` | Даёт управляемый тестовый сервер для конкурентных закрытий, `BrokenPipe`, ошибок запуска и инициализации; завершение процесса в простое использует `MCP_TEST_EXIT_FILE` |
 | `codex-rs/rmcp-client/tests/mcp_2026_stdio.rs` | Подключает прямые интеграционные сценарии публичного `RmcpClient` |
 | `codex-rs/rmcp-client/tests/mcp_2026_stdio/stdio_transport_recovery.rs` | Наблюдает число запусков, инициализаций и вызовов операции при успешном и неуспешном восстановлении, включая отправку нового запроса `events/stream` |

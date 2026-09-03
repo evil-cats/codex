@@ -1,3 +1,5 @@
+//! Собирает, сохраняет и рендерит видимое модели состояние выбранных окружений.
+
 use super::PreviousSectionState;
 use super::WorldStateSection;
 use crate::context::ContextualUserFragment;
@@ -7,21 +9,30 @@ use crate::context::environment_context::push_xml_escaped_text;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
-use codex_exec_server::LOCAL_ENVIRONMENT_ID;
+use crate::shell::ShellType;
+use codex_features::Feature;
 use codex_protocol::models::ContentItemKind;
-use codex_protocol::protocol::TurnContextItem;
-use codex_protocol::protocol::TurnContextNetworkItem;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::PathUri;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::LazyLock;
+use std::time::Duration;
+use tokio::process::Command;
+use tokio::sync::Mutex;
+
+static POWERSHELL_VERSIONS: LazyLock<Mutex<BTreeMap<PathBuf, Option<String>>>> =
+    LazyLock::new(Mutex::default);
 
 /// Environment values visible to the model.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EnvironmentsState {
     environments: BTreeMap<String, EnvironmentState>,
     project_name: Option<String>,
+    shell_version: Option<String>,
     current_date: Option<String>,
     timezone: Option<String>,
     network: Option<NetworkContext>,
@@ -30,7 +41,8 @@ pub(crate) struct EnvironmentsState {
 }
 
 impl EnvironmentsState {
-    pub(crate) fn from_turn_context_with_environments(
+    /// Строит текущее состояние окружений и вычисляемые поля из одного снимка хода.
+    pub(crate) async fn from_turn_context_with_environments(
         turn_context: &TurnContext,
         environments: &TurnEnvironmentSnapshot,
         current_date: Option<String>,
@@ -39,9 +51,22 @@ impl EnvironmentsState {
         let workspace_roots = primary_environment
             .map(TurnEnvironment::workspace_roots)
             .unwrap_or_default();
+        let shell_version = if turn_context
+            .config
+            .features
+            .enabled(Feature::PowerShellShellVersion)
+            && let Some(environment) = environments.single_local_environment()
+            && let Some(shell) = environment.shell.as_ref()
+            && shell.shell_type == ShellType::PowerShell
+        {
+            powershell_version(&shell.shell_path).await
+        } else {
+            None
+        };
         Self {
             environments: environment_states(environments),
             project_name: project_name_from_workspace_roots(workspace_roots),
+            shell_version,
             current_date,
             timezone: turn_context.timezone.clone(),
             network: network_from_turn_context(turn_context),
@@ -51,35 +76,6 @@ impl EnvironmentsState {
                     workspace_roots,
                 )
             }),
-            subagents: None,
-        }
-    }
-
-    pub(crate) fn from_turn_context_item(turn_context_item: &TurnContextItem) -> Self {
-        let workspace_roots = workspace_roots_from_turn_context_item(turn_context_item)
-            .iter()
-            .map(PathUri::from_abs_path)
-            .collect::<Vec<_>>();
-        Self {
-            environments: [(
-                LOCAL_ENVIRONMENT_ID.to_string(),
-                EnvironmentState {
-                    cwd: PathUri::from_abs_path(&turn_context_item.cwd),
-                    status: EnvironmentStatus::Available,
-                    shell: None,
-                    is_primary: false,
-                },
-            )]
-            .into_iter()
-            .collect(),
-            project_name: project_name_from_workspace_roots(&workspace_roots),
-            current_date: turn_context_item.current_date.clone(),
-            timezone: turn_context_item.timezone.clone(),
-            network: network_from_turn_context_item(turn_context_item),
-            filesystem: Some(FileSystemContext::from_permission_profile(
-                &turn_context_item.permission_profile(),
-                &workspace_roots,
-            )),
             subagents: None,
         }
     }
@@ -103,6 +99,8 @@ impl EnvironmentsState {
             legacy_single: is_legacy_single(&self.environments),
             project_name: self.project_name.clone(),
             include_primary: self.environments.len() > 1,
+            shell_version: self.shell_version.clone(),
+            shell_version_removed: false,
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             network: self.network.clone(),
@@ -134,6 +132,7 @@ impl WorldStateSection for EnvironmentsState {
                 })
                 .collect(),
             project_name: self.project_name.clone(),
+            shell_version: self.shell_version.clone(),
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             network: self.network.as_ref().map(NetworkContext::render),
@@ -152,7 +151,10 @@ impl WorldStateSection for EnvironmentsState {
             PreviousSectionState::Known(previous) => previous,
             PreviousSectionState::Absent | PreviousSectionState::Unknown => &empty,
         };
+        let shell_version_added =
+            current.shell_version.is_some() && previous.shell_version.is_none();
         let turn_context_values_changed = current.project_name != previous.project_name
+            || current.shell_version != previous.shell_version
             || current.current_date != previous.current_date
             || current.timezone != previous.timezone
             || current.network != previous.network
@@ -166,6 +168,7 @@ impl WorldStateSection for EnvironmentsState {
                 let environment = &current.environments[*id];
                 previous.environments.get(*id).is_none_or(|previous| {
                     multiple_environments != previous_multiple_environments
+                        || (shell_version_added && previous.shell.is_none())
                         || !environment.has_same_diff_value(previous)
                 })
             })
@@ -188,6 +191,9 @@ impl WorldStateSection for EnvironmentsState {
                 legacy_single,
                 project_name: self.project_name.clone(),
                 include_primary: multiple_environments || previous_multiple_environments,
+                shell_version: self.shell_version.clone(),
+                shell_version_removed: self.shell_version.is_none()
+                    && previous.shell_version.is_some(),
                 current_date: self.current_date.clone(),
                 timezone: self.timezone.clone(),
                 network: self.network.clone(),
@@ -225,6 +231,8 @@ struct RenderedEnvironments {
     legacy_single: bool,
     project_name: Option<String>,
     include_primary: bool,
+    shell_version: Option<String>,
+    shell_version_removed: bool,
     current_date: Option<String>,
     timezone: Option<String>,
     network: Option<NetworkContext>,
@@ -255,6 +263,8 @@ impl ContextualUserFragment for RenderedEnvironments {
     }
 
     fn body(&self) -> String {
+        // Полный render и diff используют один порядок вычисляемых полей, чтобы
+        // частичное обновление оставалось самодостаточным.
         let mut rendered = "\n".to_string();
         if self.legacy_single {
             if let Some(EnvironmentUpdate::Current(environment)) = self.updates.values().next() {
@@ -287,6 +297,12 @@ impl ContextualUserFragment for RenderedEnvironments {
                 }
             }
             rendered.push_str("  </environments>\n");
+        }
+        if self.shell_version_removed {
+            rendered.push_str("  <shell_version status=\"unavailable\" />\n");
+        } else {
+            let shell_version = self.shell_version.as_deref();
+            push_optional_element(&mut rendered, "shell_version", shell_version);
         }
         push_optional_element(&mut rendered, "project_name", self.project_name.as_deref());
         push_optional_element(&mut rendered, "current_date", self.current_date.as_deref());
@@ -356,6 +372,8 @@ struct EnvironmentState {
 pub(crate) struct EnvironmentsSnapshot {
     environments: BTreeMap<String, EnvironmentSnapshot>,
     project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shell_version: Option<String>,
     current_date: Option<String>,
     timezone: Option<String>,
     network: Option<String>,
@@ -390,6 +408,46 @@ impl EnvironmentSnapshot {
 enum EnvironmentStatus {
     Starting,
     Available,
+}
+
+async fn powershell_version(shell_path: &Path) -> Option<String> {
+    if let Some(version) = {
+        let versions = POWERSHELL_VERSIONS.lock().await;
+        versions.get(shell_path).cloned()
+    } {
+        return version;
+    }
+
+    let mut command = Command::new(shell_path);
+    command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$PSVersionTable.PSVersion.ToString()",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+    let version = tokio::time::timeout(Duration::from_secs(2), command.output())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .filter(|output| output.status.success() && output.stdout.len() <= 64)
+        .and_then(|output| {
+            let mut components = std::str::from_utf8(&output.stdout).ok()?.trim().split('.');
+            let major = components.next()?.parse::<u16>().ok()?;
+            let minor = components.next()?.parse::<u16>().ok()?;
+            Some(format!("{major}.{minor}"))
+        });
+    POWERSHELL_VERSIONS
+        .lock()
+        .await
+        .insert(shell_path.to_owned(), version.clone());
+    version
 }
 
 fn environment_states(snapshot: &TurnEnvironmentSnapshot) -> BTreeMap<String, EnvironmentState> {
@@ -460,27 +518,7 @@ fn network_from_turn_context(turn_context: &TurnContext) -> Option<NetworkContex
     ))
 }
 
-fn network_from_turn_context_item(turn_context_item: &TurnContextItem) -> Option<NetworkContext> {
-    let TurnContextNetworkItem {
-        allowed_domains,
-        denied_domains,
-    } = turn_context_item.network.as_ref()?;
-    Some(NetworkContext::new(
-        allowed_domains.clone(),
-        denied_domains.clone(),
-    ))
-}
-
-fn workspace_roots_from_turn_context_item(
-    turn_context_item: &TurnContextItem,
-) -> Vec<AbsolutePathBuf> {
-    if let Some(workspace_roots) = turn_context_item.workspace_roots.as_ref() {
-        return workspace_roots.clone();
-    }
-
-    vec![turn_context_item.cwd.clone()]
-}
-
+/// Выводит имя проекта из первого рабочего корня и использует строковое представление пути как резервное.
 fn project_name_from_workspace_roots(workspace_roots: &[PathUri]) -> Option<String> {
     workspace_roots.first().map(|root| {
         root.basename()

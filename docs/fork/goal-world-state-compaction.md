@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -46,13 +46,14 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/ext/goal/src/analytics.rs` | Сохраняет turn attribution для tool-side clear |
 | `codex-rs/ext/goal/src/events.rs` | Передаёт host уведомление об очистке goal |
 | `codex-rs/ext/goal/src/runtime.rs` | Отличает внешний clear без turn attribution от model tool action |
-| `codex-rs/ext/goal/src/steering.rs` | Рендерит устойчивый active-goal context и короткие turn steering prompts |
+| `codex-rs/ext/goal/src/steering.rs` | Рендерит устойчивый active-goal context, фильтрует недоступный `update_plan` и строит короткие turn steering prompts |
 | `codex-rs/ext/goal/templates/goals/active_context.md` | Хранит objective и постоянные goal-инварианты |
 | `codex-rs/ext/goal/templates/goals/continuation.md` | Запускает автоматический continuation turn без дублирования objective |
 | `codex-rs/ext/goal/templates/goals/objective_updated.md` | Ссылается на обновлённый objective из `WorldState` |
 | `codex-rs/ext/goal/templates/goals/budget_limit.md` | Разрешает завершить либо отменить уже ограниченную по бюджету goal |
-| `codex-rs/ext/extension-api/src/contributors/world_state.rs` | Помечает diff fragment как предназначенный только для ближайшего sampling |
+| `codex-rs/ext/extension-api/src/contributors/world_state.rs` | Описывает request-scoped `WorldStateHostCapabilities` и помечает diff fragment как предназначенный только для ближайшего sampling |
 | `codex-rs/ext/extension-api/src/contributors.rs` | Даёт extension способ распознать собственный model-context fragment при замене истории |
+| `codex-rs/ext/extension-api/src/lib.rs` | Экспортирует `WorldStateHostCapabilities` из корня `codex-extension-api` для host и goal extension |
 | `codex-rs/ext/extension-api/src/capabilities/events.rs` | Даёт extension host-owned канал уведомления об очищенной goal |
 | `codex-rs/core/src/compact.rs` | Не переносит extension context в local summary как пользовательское сообщение |
 | `codex-rs/core/src/compact_tests.rs` | Проверяет отбор реальных user messages с сохранением metadata без extension prompt state |
@@ -67,9 +68,10 @@ Compaction summary не является authoritative goal storage и може�
 | `codex-rs/core/src/session/mod.rs` | Возвращает одноразовые WorldState items вызывающему sampling path |
 | `codex-rs/core/src/session/rollout_reconstruction.rs` | Не восстанавливает extension prompt state как user message в legacy replacement path |
 | `codex-rs/core/src/session/turn.rs` | Добавляет одноразовые items только в ближайший Responses request |
-| `codex-rs/core/src/session/world_state.rs` | Строит актуальный extension-owned WorldState для sampling и replacement history |
+| `codex-rs/core/src/session/world_state.rs` | Строит актуальный extension-owned WorldState для sampling и replacement history из request-scoped `StepContext` |
 | `codex-rs/app-server/src/extensions.rs` | Преобразует tool-side clear в `thread/goal/cleared` |
 | `codex-rs/ext/goal/tests/goal_extension_backend.rs` | Проверяет немедленное удаление goal и clear event |
+| `codex-rs/ext/goal/tests/steering.rs` | Проверяет capability-фильтрацию active-goal context без изменения objective |
 | `codex-rs/app-server/tests/suite/v2/compaction.rs` | Проверяет active, never-active и terminal goal context до и после compaction |
 
 Намеренно не меняются:
@@ -123,6 +125,8 @@ Extension-owned section использует стабильный section ID и 
 
 - неизменившаяся goal не добавляет новый fragment перед каждым sampling;
 - изменение objective или `token_budget` добавляет полный актуальный fragment;
+- изменение доступности `update_plan` меняет body и добавляет полный актуальный
+  fragment без инструкций по `update_plan`, когда tool отключён;
 - переход из `Active` в другой status добавляет clearing fragment, запрещающий
   продолжать прежнюю goal как активную;
 - clearing fragment не записывается в conversation history: он добавляется
@@ -204,6 +208,11 @@ goal feature или её XML tags.
 
 Постоянные goal-инварианты и objective принадлежат
 `templates/goals/active_context.md`.
+
+Если `update_plan` отсутствует или отключён в request-scoped конфигурации
+текущего sampling, goal contributor рендерит этот шаблон через upstream
+`without_update_plan_instructions`: секция `Progress visibility` исчезает, а
+objective и остальные постоянные goal-инварианты сохраняются.
 
 `templates/goals/continuation.md` остаётся turn trigger и содержит только:
 
@@ -290,7 +299,8 @@ attached notice не отделяется от удалённого source item.
    steering, не допуская двойного objective. При конфликте с upstream-расширением
    `continuation.md` переносить новые постоянные инварианты, включая проверку
    отсутствия прогресса, в `active_context.md`, а в continuation оставлять только
-   turn trigger и динамический бюджет.
+   turn trigger и динамический бюджет. Capability-фильтрацию `update_plan`
+   переносить к `active_context.md` вместе с принадлежащей ей секцией.
 7. Проверить local summary compaction и context-window reset, при которых
    compaction output не содержит objective.
 8. Проверить terminal transition в model step, который сам запускает
@@ -313,7 +323,7 @@ attached notice не отделяется от удалённого source item.
       "argv": ["just", "test", "-p", "codex-core", "collect_annotated_user_messages_excluding_preserves_retained_metadata"]
     },
     {
-      "purpose": "goal lifecycle, persistence, unavailable read failure и world-state contributor extension",
+      "purpose": "goal lifecycle, persistence, unavailable read failure, world-state contributor и фильтрация active context по доступности update_plan",
       "argv": ["just", "test", "-p", "codex-goal-extension"]
     },
     {

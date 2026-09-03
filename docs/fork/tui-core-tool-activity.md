@@ -50,8 +50,8 @@ thread и чтение текущего времени host через fork-ин
 | --- | --- |
 | `codex-rs/protocol/src/items.rs` | Добавляет `TurnItem::CoreToolActivity`, `CoreToolActivityItem`, `CoreToolActivityKind` и `CoreToolActivityStatus` как ограниченную структурированную поверхность activity |
 | `codex-rs/protocol/src/legacy_events.rs` | Старый слой совместимости с legacy-событиями явно не материализует `CoreToolActivity` в `EventMsg`, чтобы новая UI-поверхность activity не меняла legacy/model-visible поток |
-| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace и точного upstream-инструмента `clock/curr_time` с activity item, компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
-| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, включение точной пары `clock/curr_time`, исключение остальных инструментов из других namespaces, `clock/curr_time -> System time utc` и выбор `environment_id`/path convention для `read_file detail`; тестовые данные оставляют разрешённые `workspace_roots` пустыми, чтобы изолировать разрешение пути через выбранный `cwd` |
+| `codex-rs/core/src/tools/core_tool_activity.rs` | Определяет сопоставление выбранных function tools из default namespace и точного upstream-инструмента `clock/curr_time` через `is_clock_current_time`, сохраняет `tool_name` с namespace как `clock/curr_time`, формирует компактный `detail`, включая разрешение пути `read_file` через выбранную step environment, raw `arguments`, lifecycle started/completed и status |
+| `codex-rs/core/src/tools/core_tool_activity_tests.rs` | Проверяет нормализованный default namespace, включение точной пары `clock/curr_time`, исключение `clock/sleep`, одноимённых инструментов из других namespace и из default namespace, `clock/curr_time -> System time utc` независимо от `arguments` и выбор `environment_id`/path convention для `read_file detail`; тестовые данные оставляют разрешённые `workspace_roots` пустыми, чтобы изолировать разрешение пути через выбранный `cwd` |
 | `codex-rs/core/tests/suite/core_tool_activity.rs` | Через настоящий function call Responses API проверяет согласованную пару `ItemStarted`/`ItemCompleted` для успешного `read_file` и итоговый `CoreToolActivityStatus::Completed` |
 | `codex-rs/core/tests/suite/mod.rs` | Подключает интеграционный тест core tool activity к общему core test binary |
 | `codex-rs/core/src/tools/registry.rs` | Оборачивает текущий путь выполнения, возвращающий `AnyToolResult`, событиями `emit_turn_item_started` и `emit_turn_item_completed` для подходящих core function tools без отдельной ячейки передачи результата и без изменения model-visible `FunctionCallOutput` |
@@ -59,6 +59,7 @@ thread и чтение текущего времени host через fork-ин
 | `codex-rs/app-server-protocol/src/protocol/v2/item.rs` | Экспортирует v2 `ThreadItem::CoreToolActivity`, wire enums, `id()` и conversion из core `TurnItem` |
 | `codex-rs/app-server-protocol/src/protocol/thread_history.rs` | Восстанавливает `CoreToolActivity` из `ItemStarted`/`ItemCompleted` при replay сохраненной thread history |
 | `codex-rs/app-server-protocol/schema/` | Хранит сгенерированные JSON, TypeScript и precomputed schema artifacts для v2 `CoreToolActivity` |
+| `codex-rs/app-server/src/notification_media.rs` | Явно сохраняет `CoreToolActivity` без изменений при удалении media payload из app-server notifications |
 | `codex-rs/analytics/src/reducer.rs` | Явно игнорирует `CoreToolActivity` в analytics reducer, чтобы новый UI/history item не расширял telemetry contract этой карточкой |
 | `codex-rs/rollout/src/persistence_metrics.rs` | Классифицирует вложенный `CoreToolActivity` как отдельный тип сохраняемого item без изменения решения о сохранении legacy history |
 | `codex-rs/rollout/src/persistence_metrics_tests.rs` | Проверяет тип вложенного completed item и сохранение действующего решения о фильтрации |
@@ -68,7 +69,7 @@ thread и чтение текущего времени host через fork-ин
 | `codex-rs/tui/src/exec_cell/model.rs` | Хранит core `File` как отдельную запись внутри существующего exploration cell, не маскируя `read_file` под shell command |
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует смешанные exploration-блоки `Search`/`List`/`Read` + `File`, включая active `Exploring` и completed `Explored` |
 | `codex-rs/tui/src/history_cell/mod.rs` | Экспортирует новый renderer history cell |
-| `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file` и completed inspect tools |
+| `codex-rs/tui/src/history_cell/tests.rs` | Содержит `insta` snapshot-покрытие для active `read_file`, завершённых действий `Thread info` и `System time`, включая отдельную строку `clock/curr_time -> System time utc` |
 | `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет группировку последовательных `File`, явный `Search -> direct File -> Search`, перенос pending `File`, completed-only replay, interleaving с завершением `exec` и очистку без `ItemCompleted` |
 | `codex-rs/tui/src/chatwidget/protocol.rs` | Направляет live `ItemStarted` для core activity в TUI lifecycle |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Восстанавливает active/completed core activity при replay turn items |

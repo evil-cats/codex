@@ -2,7 +2,7 @@
 id: fork-terminal-title-session-label
 status: active
 created: 2026-06-08
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # Terminal title: `session-label`
@@ -40,6 +40,7 @@ items вроде project name, current dir или run state не всегда п
 | `codex-rs/tui/src/chatwidget/status_surfaces.rs` | Рендерит label в preview и terminal title |
 | `codex-rs/tui/src/chatwidget.rs` | Добавляет унаследованный кэш заголовка терминала в `ChatWidgetInit` |
 | `codex-rs/tui/src/chatwidget/constructor.rs` | Заполняет кэш до первого обновления поверхностей состояния |
+| `codex-rs/tui/src/app/startup.rs` | Задаёт `inherited_terminal_title: None` при первоначальном создании `ChatWidget`, когда наследовать кэш ещё неоткуда |
 | `codex-rs/tui/src/terminal_title.rs` | Добавляет тестам task-local recorder логических I/O-запросов поверх upstream set/clear пути |
 | `codex-rs/tui/src/chatwidget/tests/terminal_title.rs` | Проверяет terminal title с configured session label |
 | `codex-rs/tui/src/app/tests.rs` | Проверяет upstream fallback и реальные пути новой, возобновлённой и ответвлённой сессии, а также однократную очистку отключённого заголовка |
@@ -237,6 +238,10 @@ TerminalTitleItem::SessionLabel => {
 конфигурацией заголовок очищается немедленно. Поздний upstream-перенос в
 `App::replace_chat_widget` из `codex-rs/tui/src/app/session_lifecycle.rs` остаётся
 резервным путём для остальных мест создания.
+
+Первоначальные пути создания `ChatWidget` в `codex-rs/tui/src/app/startup.rs`
+передают `inherited_terminal_title: None`, поскольку до первого виджета нет
+управляемого заголовка, кэш которого можно было бы унаследовать.
 
 Пути нового, возобновлённого и ответвлённого потока структурно сходятся в
 `replace_chat_widget_with_app_server_thread`. Тест
