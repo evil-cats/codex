@@ -54,6 +54,7 @@ Hermione не принимает этот переход: она сохраня�
 | `codex-rs/tui/src/exec_cell/render.rs` | Рисует заголовок компактной группы, список команд без вывода, перенос длинных команд и неизменённые отдельные строки для остальных вызовов |
 | `codex-rs/tui/src/exec_cell/model.rs` | Сохраняет fork-правила объединения успешных команд и границу `MAX_GROUPED_COMMANDS`, удалённые в upstream 0.153.0 |
 | `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет видимый список команд, отсутствие вывода в компактной истории, полный `transcript` и смешанный жизненный цикл |
+| `codex-rs/tui/src/chatwidget/tests/helpers.rs` | Предоставляет общий test-only harness; upstream фиксирует модель для стабильности UI-снимков без изменения видимого поведения TUI |
 | `codex-rs/tui/src/chatwidget/tests/permissions.rs` | Проверяет сохранение завершённой группы перед историей смены профиля разрешений |
 | `codex-rs/tui/src/history_cell/tests.rs` | Проверяет список непосредственно на уровне `ExecCell` |
 | `codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__exploring_step4_finish_cat_foo.snap` | Фиксирует компактный список из двух команд |
@@ -224,6 +225,16 @@ shell-синтаксиса, переносом и ограничением пр�
         "-p",
         "codex-tui",
         "compact_command_activity_preserves_non_success_calls"
+      ]
+    },
+    {
+      "purpose": "отклонённые, пользовательские и интерактивные вызовы остаются отдельными от успешной группы",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-tui",
+        "compact_command_activity_keeps_failures_and_manual_shell_commands_visible"
       ]
     },
     {

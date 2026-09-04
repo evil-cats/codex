@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-09-03
+updated: 2026-09-04
 ---
 
 # Утилитарный core tool `read_file`
@@ -474,7 +474,7 @@ prompt-equivalent history обработчик получает через
 структурированный line-based результат. Header и номера строк сознательно
 считаются допустимым overhead этого результата.
 
-В upstream `0.153.0` общий путь записи сначала клонирует
+В upstream `0.153.2` общий путь записи сначала клонирует
 `ResponseItemEnvelope`, затем применяет `fallback_token_limit_override` или
 model-default лимит с audio-aware оценкой и отдельно обновляет `review_history`.
 Миграция должна выбирать `ToolOutputHistoryPolicy` до этого усечения:
