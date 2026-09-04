@@ -796,17 +796,31 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
 }
 
 #[test]
-fn terminal_interaction_cell_renders_input() {
-    let cell = new_unified_exec_interaction(Some("echo hello".to_string()), "ls\npwd".to_string());
-    let lines = render_transcript(&cell);
-    assert_eq!(
-        lines,
-        vec![
-            "↳ Interacted with terminal · echo hello",
-            "  └ ls",
-            "    pwd",
-        ],
-    );
+// Проверяет, что ячейка текущей сессии не усекает подтверждённый многострочный ввод.
+fn terminal_interaction_cell_renders_full_input() {
+    let input = (1..=16).map(|line| format!("line {line}\n")).collect();
+    let cell = new_unified_exec_interaction(Some("cat".to_string()), input);
+    let lines = render_lines(&cell.display_lines(/*width*/ 80));
+    assert_eq!(lines, render_transcript(&cell));
+    insta::assert_snapshot!(lines.join("\n"), @"
+    ↳ Interacted with terminal · cat
+      └ line 1
+        line 2
+        line 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+        line 11
+        line 12
+        line 13
+        line 14
+        line 15
+        line 16
+    ");
 }
 
 #[test]
@@ -1467,6 +1481,17 @@ fn standalone_windows_update_available_history_cell_snapshot() {
 fn pnpm_update_available_history_cell_snapshot() {
     let cell =
         UpdateAvailableHistoryCell::new("9.9.9".to_string(), Some(UpdateAction::PnpmGlobalLatest));
+    let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
+
+    insta::assert_snapshot!(rendered);
+}
+
+#[test]
+fn vite_plus_update_available_history_cell_snapshot() {
+    let cell = UpdateAvailableHistoryCell::new(
+        "9.9.9".to_string(),
+        Some(UpdateAction::VitePlusGlobalLatest),
+    );
     let rendered = render_lines(&cell.display_lines(/*width*/ 110)).join("\n");
 
     insta::assert_snapshot!(rendered);

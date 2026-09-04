@@ -1,0 +1,136 @@
+{
+  "schema": "fork-migration.v1",
+  "migration": {
+    "version": "0.153.0",
+    "upstreamTag": "rust-v0.153.0",
+    "branch": "hermione-0.153.0",
+    "status": "completed"
+  },
+  "cards": [
+    {
+      "id": "fork-codex-agent-env-var",
+      "path": "docs/fork/codex-agent-env-var.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-core-read-file-tool",
+      "path": "docs/fork/core-read-file-tool.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-core-system-time-tool",
+      "path": "docs/fork/core-system-time-tool.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-core-thread-info-tool",
+      "path": "docs/fork/core-thread-info-tool.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-developer-instructions-files",
+      "path": "docs/fork/developer-instructions-files.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-environment-context-project-name",
+      "path": "docs/fork/environment-context-project-name.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-exec-command-output-spill-files",
+      "path": "docs/fork/exec-command-output-spill-files.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-exec-command-stdin",
+      "path": "docs/fork/exec-command-stdin.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-goal-world-state-compaction",
+      "path": "docs/fork/goal-world-state-compaction.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-hermione-version-metadata",
+      "path": "docs/fork/hermione-version-metadata.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-linux-sandbox-compact-reaper-argv",
+      "path": "docs/fork/linux-sandbox-compact-reaper-argv.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-mcp-startup-refresh-serialization",
+      "path": "docs/fork/mcp-startup-refresh-serialization.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-mcp-transport-recovery",
+      "path": "docs/fork/mcp-transport-recovery.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-memory-read-template-path",
+      "path": "docs/fork/memory-read-template-path.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-model-instructions-files",
+      "path": "docs/fork/model-instructions-files.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-release-fast-build-profile",
+      "path": "docs/fork/release-fast-build-profile.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-resume-profile-startup-latency",
+      "path": "docs/fork/resume-profile-startup-latency.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-terminal-title-session-label",
+      "path": "docs/fork/terminal-title-session-label.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-tui-core-tool-activity",
+      "path": "docs/fork/tui-core-tool-activity.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-tui-diff-preview-budget",
+      "path": "docs/fork/tui-diff-preview-budget.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-tui-history-image-previews",
+      "path": "docs/fork/tui-history-image-previews.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-tui-successful-command-list",
+      "path": "docs/fork/tui-successful-command-list.md",
+      "status": "migrated"
+    },
+    {
+      "id": "fork-tui-thread-runtime-unload",
+      "path": "docs/fork/tui-thread-runtime-unload.md",
+      "status": "migrated"
+    }
+  ],
+  "gates": {
+    "preflight": "passed",
+    "format": "passed",
+    "generators": "passed",
+    "cardsValidate": "passed",
+    "cardTests": "passed",
+    "fullTests": "skipped",
+    "buildFast": "passed",
+    "install": "skipped"
+  }
+}

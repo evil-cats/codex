@@ -65,13 +65,9 @@ SKILL_MARKDOWN = (
     "assets/templates/parent-subagent-prompt.md",
 )
 
-TRANSFER_SECTION_ALIASES = (
-    "Порядок повторения при переносе",
-)
+TRANSFER_SECTION_ALIASES = ("Порядок повторения при переносе",)
 
-CHECKS_SECTION_ALIASES = (
-    "Проверки",
-)
+CHECKS_SECTION_ALIASES = ("Проверки",)
 
 NORMATIVE_COMMAND_SECTION_GROUPS = (
     ("Порядок повторения при переносе", TRANSFER_SECTION_ALIASES),
@@ -382,9 +378,7 @@ def card_tests_from_payload(
                 )
             else:
                 platforms = tuple(raw_platforms)
-                unknown_platforms = sorted(
-                    set(platforms) - set(FORK_TEST_PLATFORMS)
-                )
+                unknown_platforms = sorted(set(platforms) - set(FORK_TEST_PLATFORMS))
                 if unknown_platforms:
                     entry_errors.append(
                         f"{entry_label}: unsupported platforms: "
@@ -561,7 +555,9 @@ def resolve_remote_install_target(value: str | None) -> PurePosixPath:
     if raw_target.startswith("~/"):
         raw_target = raw_target[2:]
     if not raw_target or any(character.isspace() for character in raw_target):
-        raise ValueError("remote install target must be a non-empty path without whitespace")
+        raise ValueError(
+            "remote install target must be a non-empty path without whitespace"
+        )
     target = PurePosixPath(raw_target)
     if target.name in {"", ".", ".."}:
         raise ValueError("remote install target must name the main binary")
@@ -569,7 +565,11 @@ def resolve_remote_install_target(value: str | None) -> PurePosixPath:
 
 
 def validate_remote_install_host(host: str) -> None:
-    if not host or host.startswith("-") or any(character.isspace() for character in host):
+    if (
+        not host
+        or host.startswith("-")
+        or any(character.isspace() for character in host)
+    ):
         raise ValueError(f"invalid SSH host: {host!r}")
 
 
@@ -768,9 +768,7 @@ class LogSession:
         env = command_env()
         if env_overrides:
             self.write(
-                "environment overrides: "
-                + ", ".join(sorted(env_overrides))
-                + "\n"
+                "environment overrides: " + ", ".join(sorted(env_overrides)) + "\n"
             )
             env.update(env_overrides)
         if env_removals:
@@ -842,8 +840,10 @@ def parse_binary_revision(version_output: str, command_name: str) -> str:
 
     version_prefix = f"{command_name} "
     version = lines[0].removeprefix(version_prefix)
-    if not lines[0].startswith(version_prefix) or not version or any(
-        character.isspace() for character in version
+    if (
+        not lines[0].startswith(version_prefix)
+        or not version
+        or any(character.isspace() for character in version)
     ):
         raise ValueError(
             f"первая строка версии должна иметь формат {command_name} <version>"
@@ -915,9 +915,7 @@ def verify_revision_probes(
 
     revision = revisions[0]
     if expected_revision is not None and revision != expected_revision:
-        session.write(
-            f"ожидалась ревизия {expected_revision}, получена {revision}\n"
-        )
+        session.write(f"ожидалась ревизия {expected_revision}, получена {revision}\n")
         return session.fail(label="binary revision expected"), None
     return 0, revision
 
@@ -1355,11 +1353,7 @@ def card_test_exceptions_for_filters(
         for raw_filter in card_filters
         if (value := raw_filter.strip()) in aliases
     }
-    return [
-        exception
-        for exception in exceptions
-        if exception.card_id in requested_ids
-    ]
+    return [exception for exception in exceptions if exception.card_id in requested_ids]
 
 
 def card_tests_for_filters(
@@ -1406,10 +1400,7 @@ def card_tests_for_filters(
     tests = [test for test in all_tests if test.card_id in requested_ids]
     tested_ids = {test.card_id for test in tests}
     exception_ids = (
-        {
-            exception.card_id
-            for exception in active_card_test_exceptions(repo_root)
-        }
+        {exception.card_id for exception in active_card_test_exceptions(repo_root)}
         if allow_exceptions
         else set()
     )
@@ -1908,9 +1899,7 @@ def cmd_tests(args: argparse.Namespace) -> int:
                 f"{shell_quote(test.argv)}{platform_note}"
             )
         for exception in card_test_exceptions_for_filters(repo_root, card_filters):
-            print(
-                f"{exception.card_id:<36} {exception.kind:<18} {exception.reason}"
-            )
+            print(f"{exception.card_id:<36} {exception.kind:<18} {exception.reason}")
         return 0
 
     session = LogSession(
@@ -2120,9 +2109,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     if result != 0:
         return result
 
-    result, final_head = read_clean_git_head(
-        session, git, phase="after release build"
-    )
+    result, final_head = read_clean_git_head(session, git, phase="after release build")
     if result != 0:
         return result
     if final_head != expected_revision:
@@ -2139,9 +2126,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             session.write(f"{label} source binary not found: {artifact.path}\n")
             return session.fail(label=f"{label} source binary exists")
         if not os.access(artifact.path, os.X_OK):
-            session.write(
-                f"{label} source binary is not executable: {artifact.path}\n"
-            )
+            session.write(f"{label} source binary is not executable: {artifact.path}\n")
             return session.fail(label=f"{label} source binary executable")
         for step_label, argv in (
             (f"{label} source binary metadata", [file_cmd, str(artifact.path)]),
@@ -2284,9 +2269,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             )
             result, _installed_revision = verify_revision_probes(
                 session,
-                revision_probes_for_artifacts(
-                    installed_binary_artifacts, "installed"
-                ),
+                revision_probes_for_artifacts(installed_binary_artifacts, "installed"),
                 expected_revision=expected_revision,
             )
             if result != 0:
@@ -2326,9 +2309,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         )
         for host in hosts:
             session.write(f"remote host: {host}\n")
-            for artifact, target in zip(
-                staging_artifacts, remote_targets, strict=True
-            ):
+            for artifact, target in zip(staging_artifacts, remote_targets, strict=True):
                 session.write(f"{host} {artifact.contract.label} target: {target}\n")
             result = session.run_step(
                 f"{host} create install directory",
@@ -2362,9 +2343,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                 return result
             remote_revision_probes = tuple(
                 RevisionProbe(
-                    label=(
-                        f"{host} {artifact.contract.label} installed revision"
-                    ),
+                    label=(f"{host} {artifact.contract.label} installed revision"),
                     command_name=artifact.contract.binary_name,
                     argv=(
                         ssh_cmd,

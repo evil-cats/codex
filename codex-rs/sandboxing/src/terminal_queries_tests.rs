@@ -26,6 +26,7 @@ async fn driver_backed_terminal_queries_are_answered() -> anyhow::Result<()> {
     let (exit_tx, exit_rx) = oneshot::channel();
     let spawned = respond_to_terminal_queries(spawn_from_driver(ProcessDriver {
         writer_tx,
+        initial_stdin_tx: None,
         stdout_rx,
         stderr_rx: None,
         exit_rx,

@@ -165,9 +165,52 @@ async fn compact_command_activity_preserves_non_success_calls() {
 ");
 }
 
+// Проверяет подписи завершённого и активного хвоста смешанной компактной группы.
+#[tokio::test]
+async fn completed_failure_is_not_labeled_running_when_sibling_call_is_active() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    let seed = begin_exec(&mut chat, "call-seed", "printf seed");
+    end_exec(
+        &mut chat,
+        seed,
+        "hidden seed output\n",
+        "",
+        /*exit_code*/ 0,
+    );
+
+    let failed = begin_exec(&mut chat, "call-failed-read", "cat failed.txt");
+    let running = begin_exec(&mut chat, "call-running-read", "cat running.txt");
+    end_exec(
+        &mut chat,
+        failed,
+        "",
+        "failure output\n",
+        /*exit_code*/ 7,
+    );
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    insta::assert_snapshot!(active_blob(&chat), @r"• Ran 1 command · ctrl + t to view transcript
+  └ printf seed
+• Ran cat failed.txt
+  └ failure output
+• Running cat running.txt
+");
+
+    end_exec(
+        &mut chat,
+        running,
+        "running output\n",
+        "",
+        /*exit_code*/ 0,
+    );
+    assert_eq!(drain_insert_history(&mut rx).len(), 1);
+}
+
 #[tokio::test]
 async fn replayed_command_completion_preserves_tracking_without_duplicate_starts() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
     let mut item =
         begin_unified_exec_startup(&mut chat, "call-replay", "process-replay", "cat replay");
@@ -187,10 +230,14 @@ async fn replayed_command_completion_preserves_tracking_without_duplicate_starts
 
     assert!(chat.running_commands.is_empty());
     assert!(chat.unified_exec_processes.is_empty());
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "replayed successful startup command should remain available for grouping"
+    );
     let transcript = lines_to_single_string(
         &chat
             .active_cell_transcript_lines(/*width*/ 80)
-            .expect("completed command remains visible"),
+            .expect("completed command remains active"),
     );
     assert_eq!(transcript.matches("$ cat replay").count(), 1);
 }
@@ -362,6 +409,13 @@ async fn compact_command_activity_keeps_overlapping_commands_active_after_failur
     assert!(history.contains("Ran ls missing"));
     assert!(history.contains("Ran cat foo.txt"));
     assert!(history.contains("Ran cat bar.txt"));
+
+    let later = begin_exec(&mut chat, "call-after-failure", "cat later.txt");
+    end_exec(&mut chat, later, "later\n", "", /*exit_code*/ 0);
+    insta::assert_snapshot!(active_blob(&chat), @r"
+• Explored
+  └ Read later.txt
+");
 }
 
 // Проверяет одинаковое восстановление списка успешных команд и отдельное отображение отказов.
@@ -558,7 +612,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
     let command = begin_exec(&mut chat, "call-during-approval", "printf waiting");
     end_exec(&mut chat, command, "waiting\n", "", /*exit_code*/ 0);
 
-    // Approve via keyboard and verify the preceding command stays before the decision.
+    // Подтверждение через modal сохраняет завершённую команду перед строкой решения.
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
     let mut cells = drain_insert_history(&mut rx).into_iter();
     assert!(
@@ -835,7 +889,7 @@ async fn exec_history_cell_shows_working_then_completed() {
     let cells = drain_insert_history(&mut rx);
     assert!(
         cells.is_empty(),
-        "successful commands wait for the next boundary"
+        "successful commands wait in the active cell for the next grouping boundary"
     );
     let blob = active_blob(&chat);
     assert!(
@@ -959,7 +1013,7 @@ async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell(
     );
 }
 
-// Проверяет, что orphan completion присоединяется к совместимому успешному префиксу.
+// Проверяет присоединение завершения без отслеженного начала к успешному префиксу.
 #[tokio::test]
 async fn exec_end_without_begin_groups_completed_agent_and_unified_commands() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -1038,7 +1092,7 @@ async fn exec_history_shows_unified_exec_startup_commands() {
 
     assert!(
         drain_insert_history(&mut rx).is_empty(),
-        "successful startup commands wait for the next boundary"
+        "successful startup commands wait in the active cell for the next grouping boundary"
     );
     let blob = active_blob(&chat);
     assert!(
@@ -1180,35 +1234,43 @@ async fn unified_exec_wait_before_streamed_agent_message_snapshot() {
 
 #[tokio::test]
 async fn final_worked_for_uses_cumulative_turn_duration_snapshot() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    handle_turn_started(&mut chat, "turn-1");
+    for duration_ms in [Some(125_000), None] {
+        let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        handle_turn_started(&mut chat, "turn-1");
 
-    let exec = begin_exec_with_source(
-        &mut chat,
-        "call-1",
-        "echo preparing",
-        ExecCommandSource::Agent,
-    );
-    end_exec(&mut chat, exec, "preparing\n", "", /*exit_code*/ 0);
+        let exec = begin_exec_with_source(
+            &mut chat,
+            "call-1",
+            "echo preparing",
+            ExecCommandSource::Agent,
+        );
+        end_exec(&mut chat, exec, "preparing\n", "", /*exit_code*/ 0);
 
-    complete_assistant_message(
-        &mut chat,
-        "msg-final",
-        "Final response.",
-        Some(MessagePhase::FinalAnswer),
-    );
-    handle_turn_completed(&mut chat, "turn-1", Some(125_000));
+        chat.bottom_pane
+            .reset_status_timer(Duration::from_secs(/*secs*/ 125));
+        handle_agent_message_delta(&mut chat, "Final response.\n");
+        chat.on_commit_tick();
+        assert!(!chat.bottom_pane.status_indicator_visible());
 
-    let cells = drain_insert_history(&mut rx);
-    let combined = cells
-        .iter()
-        .map(|lines| lines_to_single_string(lines))
-        .collect::<String>();
-    assert!(
-        combined.contains("Worked for 2m 05s"),
-        "expected final separator to use cumulative turn duration, got:\n{combined}"
-    );
-    assert_chatwidget_snapshot!("final_worked_for_uses_cumulative_turn_duration", combined);
+        complete_assistant_message(
+            &mut chat,
+            "msg-final",
+            "Final response.",
+            Some(MessagePhase::FinalAnswer),
+        );
+        handle_turn_completed(&mut chat, "turn-1", duration_ms);
+
+        let cells = drain_insert_history(&mut rx);
+        let combined = cells
+            .iter()
+            .map(|lines| lines_to_single_string(lines))
+            .collect::<String>();
+        assert!(
+            combined.contains("Worked for 2m 05s"),
+            "expected final separator to use cumulative turn duration, got:\n{combined}"
+        );
+        assert_chatwidget_snapshot!("final_worked_for_uses_cumulative_turn_duration", combined);
+    }
 }
 
 #[tokio::test]
@@ -2309,7 +2371,7 @@ async fn apply_patch_events_emit_history_cells() {
     changes.insert(
         PathBuf::from("foo.txt"),
         FileChange::Add {
-            content: "hello\n".to_string(),
+            content: (1..=16).map(|line| format!("line {line}\n")).collect(),
         },
     );
     let ev = ApplyPatchApprovalRequestEvent {
@@ -2330,24 +2392,39 @@ async fn apply_patch_events_emit_history_cells() {
     changes2.insert(
         PathBuf::from("foo.txt"),
         FileChange::Add {
-            content: "hello\n".to_string(),
+            content: (1..=16).map(|line| format!("line {line}\n")).collect(),
         },
     );
     handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes2);
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
     let blob = lines_to_single_string(cells.last().unwrap());
-    assert!(
-        blob.contains("Added foo.txt") || blob.contains("Edited foo.txt"),
-        "expected single-file header with filename (Added/Edited): {blob:?}"
-    );
+    insta::assert_snapshot!(blob, @"
+    • Added foo.txt (+16 -0)
+         1 +line 1
+         2 +line 2
+         3 +line 3
+         4 +line 4
+         5 +line 5
+         6 +line 6
+         7 +line 7
+         8 +line 8
+         9 +line 9
+        10 +line 10
+        11 +line 11
+        12 +line 12
+        13 +line 13
+        14 +line 14
+        15 +line 15
+        16 +line 16
+    ");
 
     // 3) End apply success -> success cell
     let mut end_changes = HashMap::new();
     end_changes.insert(
         PathBuf::from("foo.txt"),
         FileChange::Add {
-            content: "hello\n".to_string(),
+            content: (1..=16).map(|line| format!("line {line}\n")).collect(),
         },
     );
     handle_patch_apply_end(

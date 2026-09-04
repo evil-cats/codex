@@ -2,7 +2,7 @@
 id: fork-tui-thread-runtime-unload
 status: active
 created: 2026-07-09
-updated: 2026-08-30
+updated: 2026-09-04
 ---
 
 # Выгрузка live-runtime при переключении TUI thread
@@ -75,6 +75,7 @@ TUI переключается на другой primary thread
 | `codex-rs/app-server/tests/common/test_app_server.rs` | Добавлен вспомогательный метод тестового клиента для `thread/unload` |
 | `codex-rs/app-server/tests/suite/v2/mod.rs` | Зарегистрирован app-server regression module `thread_unload` |
 | `codex-rs/app-server/tests/suite/v2/thread_unload.rs` | Добавлено регрессионное покрытие unload без удаления persisted session |
+| `codex-rs/app-server/tests/suite/v2/mcp_event_stream.rs` | Проверяет, что явный `thread/unload` закрывает поток событий MCP текущего подключения к app-server |
 | `codex-rs/tui/src/app/tests.rs` | Добавлено наблюдаемое TUI-покрытие для `/resume`, `/clear`, реального `NewSession`, `/fork`, prompt backtrack, attach failure, shutdown-first, синхронного side close и фоновой очистки после переключения |
 | `codex-rs/tui/src/app/tests/safety_buffering.rs` | Проверяет успешный safety-buffering retry и сохранение старого runtime с черновиком при ранней ошибке fork |
 | `docs/fork/tui-thread-runtime-unload.md` | Владеющий handoff-артефакт этой fork-доработки |
@@ -126,6 +127,12 @@ map и очистки app-server state. Ошибки отправки shutdown, 
 primary thread и синхронная очистка side conversation сохраняют прежнее локальное
 state при ошибке; фоновая очистка после уже состоявшегося переключения описана
 отдельно ниже.
+
+Upstream-механизм позволяет подпискам на события переживать обычный shutdown или
+замену `McpRuntime`: владелец подписки удерживает независимый MCP client. Это не
+меняет семантику явного app-server `thread/unload`: после успешной выгрузки
+`McpEventStreams::stop_thread` закрывает потоки событий этого thread в том
+подключении app-server, из которого пришёл запрос.
 
 ### TUI primary transitions
 
@@ -284,6 +291,16 @@ subscription.
         "-p",
         "codex-app-server",
         "thread_unload_shuts_down_loaded_runtime_without_deleting_session"
+      ]
+    },
+    {
+      "purpose": "app-server thread/unload закрывает поток событий MCP текущего подключения",
+      "argv": [
+        "just",
+        "test",
+        "-p",
+        "codex-app-server",
+        "thread_unload_stops_mcp_event_stream_for_connection"
       ]
     },
     {

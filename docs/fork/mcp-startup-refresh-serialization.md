@@ -2,7 +2,7 @@
 id: fork-mcp-startup-refresh-serialization
 status: active
 created: 2026-08-14
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Согласование MCP при незавершённом запуске
@@ -76,7 +76,7 @@ refresh и замене после его первого отказа. Восс�
 готовности соединения не заменяет готовый клиент.
 
 Идентичность включает `auth`, `transport`, `environment_id`, `host_plugin_root`,
-`oauth_store`, `oauth_credentials`, `resolved_environment`,
+`oauth_store`, `oauth_refresh_mode`, `oauth_credentials`, `resolved_environment`,
 `local_stdio_fallback_cwd`, `referenced_environment_variables`, `runtime_auth`,
 `runtime_auth_token`, `codex_apps_cache_identity`,
 `client_elicitation_capability`, `client_mcp_extensions` и `agent_plugin`.

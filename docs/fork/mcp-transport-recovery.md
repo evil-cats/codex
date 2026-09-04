@@ -2,7 +2,7 @@
 id: fork-mcp-transport-recovery
 status: active
 created: 2026-07-30
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Восстановление транспорта MCP stdio
@@ -37,7 +37,7 @@ updated: 2026-09-02
 
 | Файл | Роль |
 | --- | --- |
-| `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Хранит признак смерти процесса и отмечает запуск мёртвым после EOF транспорта или `BrokenPipe` для `LocalLegacy`, `LocalModern` и executor transport |
+| `codex-rs/rmcp-client/src/stdio_server_launcher.rs` | Хранит признак смерти процесса и отмечает запуск мёртвым после EOF транспорта или `BrokenPipe` для вариантов `Local` и `Executor` |
 | `codex-rs/rmcp-client/src/rmcp_client.rs` | Выполняет ленивое восстановление перед операцией, переподключение и однократный повтор |
 | `codex-rs/rmcp-client/src/streamable_http_retry.rs` | Ограничивает повторы инициализации HTTP-транспортом: stdio делегируется в `connect_pending_transport` без повторов |
 | `codex-rs/rmcp-client/src/bin/test_stdio_server.rs` | Даёт управляемый тестовый сервер для конкурентных закрытий, `BrokenPipe`, ошибок запуска и инициализации; завершение процесса в простое использует `MCP_TEST_EXIT_FILE` |
@@ -95,10 +95,11 @@ legacy lifecycle и к явно включённому MCP `2026-07-28`: пов�
 усиленная очистка процессов не заменяет сигнал для ленивого восстановления
 транспорта.
 
-Для локальных `LocalLegacy` и `LocalModern`, а также запускаемого через executor
-stdio используется один `StdioServerTransport`, поэтому признак не требует
-отдельной подсистемы журналирования процессов. Различие локальных transport
-сохраняется только во внутреннем dispatch `send`/`receive`/`close`.
+Для единого локального варианта `Local(LocalStdioTransport)`, сохраняющего
+выбранный `McpProtocolMode`, и варианта `Executor(ExecutorProcessTransport)`
+используется один `StdioServerTransport`, поэтому признак не требует отдельной
+подсистемы журналирования процессов. Различие вариантов сохраняется только во
+внутренней диспетчеризации `send`/`receive`/`close`.
 
 ### Ленивое восстановление после смерти в простое
 
@@ -219,8 +220,8 @@ stdio, но оба варианта сходятся в `StdioServerTransport`. 
    дескриптора должна исчерпывающе возвращать `None` для всех вариантов
    `PendingTransport`, кроме `Stdio`.
 3. Добавить минимальный признак смерти к дескриптору процесса и выставлять его
-   при EOF, `BrokenPipe` и вызове `terminate`; оборачивать этим признаком все
-   актуальные варианты `LocalLegacy`, `LocalModern` и executor transport.
+   при EOF, `BrokenPipe` и вызове `terminate`; оборачивать этим признаком варианты
+   `Local` и `Executor`, сохраняя выбранный `McpProtocolMode` локального запуска.
 4. Перед операцией выполнять ленивое восстановление мёртвого запуска.
 5. Направить `TransportClosed` и stdio `BrokenPipe` в существующую
    границу сериализованной повторной инициализации, повторно используя

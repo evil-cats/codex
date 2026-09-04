@@ -71,9 +71,7 @@ class RecordingLogSession:
         self.env_removals.append(env_removals)
         return RecordingLogSession.step_responses.get(label, 0)
 
-    def run_capture(
-        self, label: str, argv: list[str]
-    ) -> tuple[int, str, str]:
+    def run_capture(self, label: str, argv: list[str]) -> tuple[int, str, str]:
         """Записывает вызов и имитирует ответы Git либо проверки версии."""
         self.capture_steps.append((label, argv))
         if label in RecordingLogSession.capture_responses:
@@ -190,12 +188,9 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         """Парсер принимает точный двухстрочный формат и допустимую ревизию."""
         self.assertEqual(
             (
+                fork_cli.parse_binary_revision("codex 0.0.0\nrevision dev\n", "codex"),
                 fork_cli.parse_binary_revision(
-                    "codex 0.0.0\nrevision dev\n", "codex"
-                ),
-                fork_cli.parse_binary_revision(
-                    "codex-code-mode-host 0.0.0\n"
-                    f"revision {TEST_GIT_REVISION}\n",
+                    f"codex-code-mode-host 0.0.0\nrevision {TEST_GIT_REVISION}\n",
                     "codex-code-mode-host",
                 ),
             ),
@@ -242,9 +237,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ]
             )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli, "run_preconditions", return_value=0
                 ),
@@ -407,9 +400,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ]
             )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -453,9 +444,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         )
         for _label, argv in stamp_steps:
             self.assertEqual(argv[1], "--update-section")
-            self.assertTrue(
-                argv[2].startswith(f"{fork_cli.REVISION_ELF_SECTION}=")
-            )
+            self.assertTrue(argv[2].startswith(f"{fork_cli.REVISION_ELF_SECTION}="))
         self.assertIn(f"REVISION: {TEST_GIT_REVISION}", session.ok_extra)
 
     def test_default_install_rejects_head_change_during_build(self) -> None:
@@ -480,9 +469,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 "",
             )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -520,9 +507,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "",
                 )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -559,9 +544,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "",
                 )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -596,9 +579,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 binary_version_output("Codex source revision", "dev"),
                 "",
             )
-            RecordingLogSession.capture_responses[
-                "Code Mode host source revision"
-            ] = (
+            RecordingLogSession.capture_responses["Code Mode host source revision"] = (
                 0,
                 binary_version_output(
                     "Code Mode host source revision", OTHER_GIT_REVISION
@@ -606,9 +587,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 "",
             )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -700,9 +679,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ]
             )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -714,9 +691,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             self.assertEqual(result, 0)
             session = RecordingLogSession.instances[0]
             sync_steps = [
-                argv
-                for label, argv in session.steps
-                if label == "sync local binaries"
+                argv for label, argv in session.steps if label == "sync local binaries"
             ]
             self.assertEqual(len(sync_steps), 1)
             sync_command = sync_steps[0]
@@ -754,9 +729,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
 
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -806,9 +779,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
             RecordingLogSession.step_responses["Codex stamp staged binary"] = 1
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -844,9 +815,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     "",
                 )
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -878,9 +847,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
 
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -900,20 +867,22 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                     f"{host} Codex installed revision",
                     [
                         label
-                        for label, _argv in RecordingLogSession.instances[0].capture_steps
+                        for label, _argv in RecordingLogSession.instances[
+                            0
+                        ].capture_steps
                     ],
                 )
                 self.assertIn(
                     f"{host} Code Mode host installed revision",
                     [
                         label
-                        for label, _argv in RecordingLogSession.instances[0].capture_steps
+                        for label, _argv in RecordingLogSession.instances[
+                            0
+                        ].capture_steps
                     ],
                 )
             sync_commands = [
-                argv
-                for label, argv in steps
-                if label.endswith("sync binaries")
+                argv for label, argv in steps if label.endswith("sync binaries")
             ]
             self.assertEqual(len(sync_commands), 2)
             for command, host in zip(
@@ -944,9 +913,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             )
 
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -1012,9 +979,7 @@ class FixCommandTests(unittest.TestCase):
         args = unittest.mock.Mock(repo_root="/repo", package=None)
 
         with (
-            unittest.mock.patch.object(
-                fork_cli, "LogSession", RecordingLogSession
-            ),
+            unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
             unittest.mock.patch.object(
                 fork_cli,
                 "resolve_codex_v8_cargo_env_for_host",
@@ -1059,9 +1024,7 @@ class CodeModeHostBuildTests(unittest.TestCase):
             )
 
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     RecordingLogSession,
                     "check_command",
@@ -1114,9 +1077,7 @@ class CodeModeHostBuildTests(unittest.TestCase):
             )
 
             with (
-                unittest.mock.patch.object(
-                    fork_cli, "LogSession", RecordingLogSession
-                ),
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
                 unittest.mock.patch.object(
                     fork_cli,
                     "resolve_codex_v8_cargo_env_for_host",
@@ -1288,8 +1249,7 @@ class CardTestFilterTests(unittest.TestCase):
             normalized_lines,
         )
         self.assertIn(
-            "fork-not-applicable-only not-applicable "
-            "Отдельного card-level test нет.",
+            "fork-not-applicable-only not-applicable Отдельного card-level test нет.",
             normalized_lines,
         )
 
@@ -1971,9 +1931,7 @@ class CardValidationTests(unittest.TestCase):
         for alias in aliases:
             with self.subTest(alias=alias):
                 errors = fork_cli.strict_card_validation_errors(
-                    self.write_card(
-                        extra_sections=f"{alias}\n\nНеканонический раздел."
-                    )
+                    self.write_card(extra_sections=f"{alias}\n\nНеканонический раздел.")
                 )
 
                 self.assertTrue(
@@ -2025,8 +1983,7 @@ class CardValidationTests(unittest.TestCase):
         errors = fork_cli.strict_card_validation_errors(
             self.write_card(
                 checks_intro=(
-                    "Wrapper-log: "
-                    "`target/fork-migration/build-logs/build-fast.log`."
+                    "Wrapper-log: `target/fork-migration/build-logs/build-fast.log`."
                 )
             )
         )
@@ -2119,17 +2076,13 @@ class CardValidationTests(unittest.TestCase):
         errors = fork_cli.strict_card_validation_errors(
             self.write_card(
                 checks_intro=(
-                    "Запусти "
-                    "`fork tests --mode cards --card fork-core-read-file-tool`."
+                    "Запусти `fork tests --mode cards --card fork-core-read-file-tool`."
                 )
             )
         )
 
         self.assertTrue(
-            any(
-                "runbook command leakage in `Проверки`" in error
-                for error in errors
-            ),
+            any("runbook command leakage in `Проверки`" in error for error in errors),
             errors,
         )
 

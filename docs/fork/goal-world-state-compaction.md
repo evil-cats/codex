@@ -2,7 +2,7 @@
 id: fork-goal-world-state-compaction
 status: active
 created: 2026-07-29
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Thread goal в `WorldState` после compaction и terminal transition
@@ -181,6 +181,9 @@ step.
   группу extension-owned source item вместе с attached notice и затем добавляет
   только свежий full `WorldState`;
 - `TokenBudget` reset получает fragment через `start_new_context_window`;
+- upstream feature `ContextManagement` может включить `TokenBudget` и history notes,
+  но не заменяет goal-owned `WorldState`, его reinjection через
+  `start_new_context_window` или одноразовую доставку terminal transition;
 - если goal создана или изменена в model step, который сам вызвал compaction,
   следующий step заново строит `WorldState` перед sampling и добавляет свежий
   fragment;

@@ -2,7 +2,7 @@
 id: fork-exec-command-output-spill-files
 status: active
 created: 2026-06-21
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Spill-файлы для длинного exec output
@@ -245,6 +245,12 @@ Mode либо `output_omitted_bytes` показывает потерю данн�
 сформировать более узкую команду. Сейчас отклонение `Promise` может содержать
 строку, поэтому надежная нормализация ошибки в JavaScript имеет вид
 `error?.message ?? String(error)`.
+
+`ExecCommandHandler` передает `CodeModeOutputLimitExceeded` и
+`CodeModeOutputCaptureIncomplete` напрямую в существующий канал
+`RespondToModel`, чтобы JavaScript получил полное диагностическое сообщение.
+Остальные отказы unified exec сохраняют общий предел
+`EXEC_COMMAND_REJECTION_MAX_BYTES`; он не меняет этот машинный контракт.
 
 Обычная ошибка команды, отмена и отказ sandbox сохраняют существующую семантику
 ошибок. Новая ошибка превышения лимита результата не должна маскировать

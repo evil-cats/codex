@@ -2,7 +2,7 @@
 id: fork-tui-history-image-previews
 status: active
 created: 2026-06-08
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Preview локальных изображений в истории TUI
@@ -53,7 +53,8 @@ config/API, проверки, ограничения и известные ри�
 | Файл | Роль |
 | --- | --- |
 | `codex-rs/tui/src/app_event.rs` | `AppEvent::InsertLocalImage { path, caption, preview_size }` |
-| `codex-rs/tui/src/app/event_dispatch.rs` | Проверка обычного файла и декодирование через crate `image` |
+| `codex-rs/tui/src/app/event_dispatch.rs` | Проверка обычного файла, декодирование через crate `image` и сохранение `InsertLocalImage` при replay в состоянии `offline` |
+| `codex-rs/tui/src/app/tests/disconnect_tests.rs` | Регрессия обработки `InsertLocalImage` через `App::handle_event` в состоянии `offline` с резервным текстом и типизированным маркером |
 | `codex-rs/tui/src/chatwidget/tool_lifecycle.rs` | `on_view_image_tool_call`, `on_image_generation_end`, `insert_local_image_history` |
 | `codex-rs/tui/src/chatwidget/replay.rs` | Повторное воспроизведение `ThreadItem::ImageView` через `on_view_image_tool_call` |
 | `codex-rs/tui/src/session_log.rs` | Запись варианта `InsertLocalImage` и наличия подписи в журнал сессии |
@@ -239,6 +240,9 @@ InsertLocalImage {
 
 - проверить, что путь указывает на обычный файл;
 - проверить, что crate `image` может его декодировать;
+- не отбрасывать `InsertLocalImage` новым upstream-фильтром для состояния
+  `offline`, поскольку replay-границы и обычные ячейки истории разрешены в том
+  же состоянии;
 - при успехе создать `LocalImageHistoryCell`;
 - при ошибке добавить предупреждение с резервным текстом, не создавая маркер
   растрового изображения.
@@ -397,7 +401,7 @@ fork-поля и типизированные маркеры:
       ]
     },
     {
-      "purpose": "графические изображения в истории, replay, reflow и вставка в терминал TUI",
+      "purpose": "графические изображения в истории, обработка в состоянии offline, replay, reflow и вставка в терминал TUI",
       "argv": [
         "just",
         "test",

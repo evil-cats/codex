@@ -133,12 +133,12 @@ impl ReadFileHandler {
     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
         let ToolInvocation {
             session,
-            turn,
             step_context,
             call_id,
             payload,
             ..
         } = invocation;
+        let turn = &step_context.turn;
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {

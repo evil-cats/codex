@@ -24,6 +24,9 @@ use codex_app_server_protocol::McpServerEventStreamStopResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
+use codex_app_server_protocol::ThreadUnloadParams;
+use codex_app_server_protocol::ThreadUnloadResponse;
+use codex_app_server_protocol::ThreadUnloadStatus;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_features::Feature;
 use core_test_support::responses;
@@ -36,14 +39,39 @@ use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> Result<()> {
-    let responses_server = responses::start_mock_server().await;
+/// Передаёт тесту запрос потока событий и наблюдаемый сигнал закрытия HTTP-потока.
+struct StartedEventStream {
+    request: Value,
+    closed: oneshot::Receiver<()>,
+}
+
+/// Отправляет сигнал, когда app-server освобождает удерживаемый HTTP-поток.
+struct EventStreamLifetime(Option<oneshot::Sender<()>>);
+
+impl Drop for EventStreamLifetime {
+    fn drop(&mut self) {
+        if let Some(closed) = self.0.take() {
+            let _ = closed.send(());
+        }
+    }
+}
+
+/// Предоставляет тесту endpoint и средства наблюдения жизненного цикла потока.
+struct EventStreamServer {
+    apps_url: String,
+    started: mpsc::UnboundedReceiver<StartedEventStream>,
+    allow_activation: Arc<Notify>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+/// Запускает endpoint `hosted Apps` MCP для наблюдения запросов и отмены потока событий.
+async fn start_event_stream_server() -> Result<EventStreamServer> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let apps_url = format!("http://{}", listener.local_addr()?);
-    let (stream_started_tx, mut stream_started_rx) = mpsc::unbounded_channel::<Value>();
+    let (stream_started_tx, stream_started_rx) = mpsc::unbounded_channel();
     let allow_activation = Arc::new(Notify::new());
     let activation_gate = Arc::clone(&allow_activation);
     let router = Router::new().route(
@@ -78,8 +106,12 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
                     }))
                     .into_response(),
                     Some("events/stream") => {
+                        let (stream_lifetime, stream_closed) = oneshot::channel();
                         stream_started_tx
-                            .send(message.clone())
+                            .send(StartedEventStream {
+                                request: message.clone(),
+                                closed: stream_closed,
+                            })
                             .expect("stream-start receiver must remain open");
                         let metadata = json!({
                             "io.modelcontextprotocol/subscriptionId": message["id"],
@@ -99,6 +131,7 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
                                 "data": { "issue": 42 },
                             },
                         });
+                        let stream_lifetime = EventStreamLifetime(Some(stream_lifetime));
                         let events = stream::once(async move {
                             allow_activation.notified().await;
                             Ok::<_, Infallible>(
@@ -110,7 +143,10 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
                                 Event::default().event("message").data(event.to_string()),
                             )
                         }))
-                        .chain(stream::pending());
+                        .chain(stream::pending().map(move |event| {
+                            let _ = &stream_lifetime;
+                            event
+                        }));
 
                         Sse::new(events).into_response()
                     }
@@ -119,9 +155,23 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
             }
         }),
     );
-    let mcp_server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let task = tokio::spawn(async move { axum::serve(listener, router).await });
+    Ok(EventStreamServer {
+        apps_url,
+        started: stream_started_rx,
+        allow_activation,
+        task,
+    })
+}
+
+/// Проверяет активацию, передачу уведомлений, запрет дубликата и явную остановку потока.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> Result<()> {
+    let responses_server = responses::start_mock_server().await;
+    let mut mcp_server = start_event_stream_server().await?;
 
     let codex_home = TempDir::new()?;
+    let apps_url = &mcp_server.apps_url;
     MockResponsesConfig::new(&responses_server.uri())
         .with_root_config(&format!("chatgpt_base_url = \"{apps_url}\""))
         .enable_feature(Feature::Apps)
@@ -152,9 +202,10 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
     let start_request_id = app_server
         .send_raw_request("mcpServer/event/stream/start", Some(start_params.clone()))
         .await?;
-    let stream_request = timeout(Duration::from_secs(5), stream_started_rx.recv())
+    let started_stream = timeout(Duration::from_secs(5), mcp_server.started.recv())
         .await?
         .context("MCP event stream was not requested")?;
+    let stream_request = started_stream.request;
 
     assert_eq!(
         stream_request["params"],
@@ -186,7 +237,7 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
         "subscription start must not complete before the active notification"
     );
 
-    allow_activation.notify_one();
+    mcp_server.allow_activation.notify_one();
     let _: McpServerEventStreamStartResponse = timeout(
         Duration::from_secs(5),
         app_server.read_response(start_request_id),
@@ -240,7 +291,76 @@ async fn mcp_event_stream_waits_for_activation_forwards_events_and_cancels() -> 
         })
         .await?;
 
-    mcp_server.abort();
-    let _ = mcp_server.await;
+    mcp_server.task.abort();
+    let _ = mcp_server.task.await;
+    Ok(())
+}
+
+/// Проверяет, что явная выгрузка thread завершает поток событий MCP текущего подключения.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_unload_stops_mcp_event_stream_for_connection() -> Result<()> {
+    let responses_server = responses::start_mock_server().await;
+    let mut mcp_server = start_event_stream_server().await?;
+    let codex_home = TempDir::new()?;
+    let apps_url = &mcp_server.apps_url;
+    MockResponsesConfig::new(&responses_server.uri())
+        .with_root_config(&format!("chatgpt_base_url = \"{apps_url}\""))
+        .enable_feature(Feature::Apps)
+        .write(codex_home.path())?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-token")
+            .account_id("account-123")
+            .chatgpt_user_id("user-123")
+            .chatgpt_account_id("account-123"),
+        AuthCredentialsStoreMode::File,
+    )?;
+    let mut app_server = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+    let ThreadStartResponse { thread, .. } = app_server
+        .start_thread(ThreadStartParams::default())
+        .await?;
+    let start_request_id = app_server
+        .send_raw_request(
+            "mcpServer/event/stream/start",
+            Some(json!({
+                "threadId": thread.id,
+                "server": "codex_apps",
+                "subscriptionId": "subscription-unload",
+                "name": "issue.updated",
+                "arguments": { "project": "codex" },
+            })),
+        )
+        .await?;
+    let started_stream = timeout(Duration::from_secs(5), mcp_server.started.recv())
+        .await?
+        .context("MCP event stream was not requested")?;
+
+    mcp_server.allow_activation.notify_one();
+    let _: McpServerEventStreamStartResponse = timeout(
+        Duration::from_secs(5),
+        app_server.read_response(start_request_id),
+    )
+    .await??;
+
+    let unload_id = app_server
+        .send_thread_unload_request(ThreadUnloadParams {
+            thread_id: thread.id,
+        })
+        .await?;
+    let unload: ThreadUnloadResponse =
+        timeout(Duration::from_secs(5), app_server.read_response(unload_id)).await??;
+    assert_eq!(
+        unload,
+        ThreadUnloadResponse {
+            status: ThreadUnloadStatus::Unloaded,
+        }
+    );
+    timeout(Duration::from_secs(5), started_stream.closed).await??;
+
+    mcp_server.task.abort();
+    let _ = mcp_server.task.await;
     Ok(())
 }

@@ -391,7 +391,8 @@ impl ChatWidget {
         let retain_untracked_unified_exec = !was_running
             && source == ExecCommandSource::UnifiedExecStartup
             && self.transcript.active_cell.is_none();
-        // Unified exec skips unknown start events, so group their successful completions here.
+        // `unified exec` может пропустить неизвестное событие начала, поэтому успешное завершение
+        // присоединяется к совместимой неактивной группе до выбора маршрута завершения.
         if !was_running
             && source == ExecCommandSource::UnifiedExecStartup
             && let Some(cell) = self

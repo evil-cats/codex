@@ -2,7 +2,7 @@
 id: fork-core-read-file-tool
 status: active
 created: 2026-07-03
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Утилитарный core tool `read_file`
@@ -73,8 +73,8 @@ Owner-файлы реализации:
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет deserialization, default и rejection невалидного лимита |
 | `codex-rs/core/tests/suite/tools.rs` | Интеграционное покрытие: tool доступен при local environment, отсутствует без environment, следует environment выбранного шага и возвращает line metadata для UTF-8 fixture |
 | `codex-rs/core/tests/suite/code_mode.rs` | Интеграционно проверяет фактический Responses request: `read_file` остается отдельным tool в code-mode-only surface и отсутствует в описании `exec` |
-| `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и восстанавливает оконные сведения о происхождении после replay rollout; номер окна и UUID текущего окна остаются отдельными частями возвращаемого upstream-кортежа |
-| `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history последней сохранившейся compaction от вызовов в хвосте текущего окна и последовательно восстанавливает typed items через тот же `ContextManager`, что используется live path |
+| `codex-rs/core/src/session/mod.rs` | Проецирует логический ключ `<thread_id>:<window_number>` из `Session::current_window()`, передаёт его обработчику через `Session::current_window_id()`, последовательно записывает пары `FunctionCall`/`FunctionCallOutput` через `ContextManager` и после replay rollout восстанавливает как оконные сведения о происхождении, так и upstream `guardian_history`; номер окна и UUID текущего окна остаются отдельными частями возвращаемого upstream-кортежа |
+| `codex-rs/core/src/session/rollout_reconstruction.rs` | Отделяет call IDs из replacement-history выбранного upstream `ReplayCheckpoint` от вызовов в хвосте текущего окна, последовательно восстанавливает typed items через тот же `ContextManager`, что используется live path, и вместе с ними возвращает upstream `guardian_history` |
 | `codex-rs/core/src/session/rollout_reconstruction_tests.rs` | Проверяет маркировку вызовов, принесённых replacement-history, и replay-stable history policy при resume-реконструкции |
 | `codex-rs/core/src/context_manager/history.rs` | Применяет выбранный `ToolOutputHistoryPolicy` внутри текущего upstream-пути `record_items_with_metadata`: сохраняет уже ограниченный результат `read_file`, а для остальных результатов оставляет `fallback_token_limit_override`, audio-aware truncation и `review_history`; поля `name`, `namespace` и внутренние метаданные history не изменяются |
 | `codex-rs/core/src/context_manager/tool_output_history.rs` | Выбирает `ToolOutputHistoryPolicy` по typed `FunctionCall`/`FunctionCallOutput` через `call_id`, не разбирая текст output и не вводя отдельное persisted state |
@@ -450,9 +450,11 @@ host-side подтверждение доступности точного те�
 
 `ReadFileHandler` должен следовать текущей upstream-сигнатуре
 `ToolExecutor::handle<'a>` с `ToolInvocation: 'a`. Метаданные модели для
-prompt-equivalent history обработчик получает через `TurnContext::model_info()`.
-При следующем переносе оба API-якоря нужно сверять с текущим upstream, не
-возвращаясь к прежнему полевому доступу или сигнатуре со скрытым lifetime.
+prompt-equivalent history обработчик получает через
+`ToolInvocation::step_context.turn` и `TurnContext::model_info()`, не используя
+оставленное upstream поле совместимости `ToolInvocation::turn`. При следующем
+переносе оба API-якоря нужно сверять с текущим upstream, не возвращаясь к
+прежнему полевому доступу или сигнатуре со скрытым lifetime.
 
 Причины:
 
@@ -472,7 +474,7 @@ prompt-equivalent history обработчик получает через `Turn
 структурированный line-based результат. Header и номера строк сознательно
 считаются допустимым overhead этого результата.
 
-В upstream `0.152.0` общий путь записи сначала клонирует
+В upstream `0.153.0` общий путь записи сначала клонирует
 `ResponseItemEnvelope`, затем применяет `fallback_token_limit_override` или
 model-default лимит с audio-aware оценкой и отдельно обновляет `review_history`.
 Миграция должна выбирать `ToolOutputHistoryPolicy` до этого усечения:

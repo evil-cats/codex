@@ -2,7 +2,7 @@
 id: fork-exec-command-stdin
 status: active
 created: 2026-08-06
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Начальный `stdin` для `exec_command`
@@ -109,7 +109,7 @@ echo "hello" | wc -c
 | `codex-rs/tui/src/chatwidget/tests/exec_flow.rs` | Проверяет живой транскрипт для непустой передачи и пустого poll в обоих порядках |
 | `codex-rs/tui/src/chatwidget/tests/history_replay.rs` | Проверяет многострочное подтверждённое взаимодействие после replay |
 | `codex-rs/tui/src/chatwidget/snapshots/` | Фиксирует визуальный контракт живого и восстановленного взаимодействия с терминалом |
-| `codex-rs/tui/src/history_cell/exec.rs` | Рисует начальный `stdin` и `write_stdin` в единой пользовательской ячейке взаимодействия |
+| `codex-rs/tui/src/history_cell/exec.rs` | Рисует полный подтверждённый начальный `stdin` и `write_stdin` в единой пользовательской ячейке взаимодействия |
 | `codex-rs/tui/src/history_cell/tests.rs` | Проверяет точный заголовок и содержимое ячейки взаимодействия |
 | `codex-rs/tui/src/thread_transcript.rs` | Рендерит сохранённые взаимодействия с терминалом в транскрипте и истории после `resume` |
 | `codex-rs/tui/src/dynamic_tools.rs` | Сохраняет отдельный тип элемента в явной сводке thread, но включает `stdin` только при запрошенных outputs и не выдаёт его за активный tool marker |
@@ -194,6 +194,14 @@ PTY-драйвер находится в `codex-rs/utils/pty/src/unix_io.rs`. У
 fork-политикой начального ввода: NUL и предел полного сериализованного действия
 проверяет общий `validate_terminal_input_review` в `Session::request_approval`, а
 сравнение сохранённых полномочий терминала остаётся в `TerminalPermissions`.
+
+В `rust-v0.153.0` upstream сам показывает в TUI полный переданный ввод в текущей
+сессии. Fork использует это полное отображение, но сохраняет прежний точный
+заголовок `Interacted with terminal`, начальный `exec_command.stdin`, отдельную
+проверку до запуска, подтверждаемую полную передачу, отдельную сохраняемую
+rollout-запись, `ThreadItem::TerminalInteraction` и восстановление
+подтверждённого ввода при `resume`; исходные `FunctionCall.arguments` по-прежнему
+не считаются доказательством передачи.
 
 ### Намеренно неизменяемые зоны
 

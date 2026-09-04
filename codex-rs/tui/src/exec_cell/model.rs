@@ -1,9 +1,8 @@
-//! Data model for grouped exec-call history cells in the TUI transcript.
+//! Хранит одиночные вызовы, компактные успешные группы и группы `Exploring` в `ExecCell`.
 //!
-//! An `ExecCell` can represent either a single command or an "exploring" group of related read/
-//! list/search commands. The chat widget relies on stable `call_id` matching to route progress and
-//! end events into the right cell, and it treats "call id not found" as a real signal (for
-//! example, an orphan end that should render as a separate history entry).
+//! `ChatWidget` сопоставляет события по устойчивому `call_id`; отсутствие вызова означает
+//! настоящий разрыв маршрутизации, при котором завершение без отслеженного начала должно стать
+//! отдельной ячейкой.
 
 use std::borrow::Cow;
 use std::time::Duration;
@@ -102,6 +101,7 @@ impl ExecCell {
         }
     }
 
+    /// Присоединяет совместимый вызов к активной группе `Exploring` или компактной группе.
     pub(crate) fn add_call(
         &mut self,
         call_id: String,
@@ -233,6 +233,7 @@ impl ExecCell {
         true
     }
 
+    /// Определяет, завершена ли ячейка вместо сохранения успешной компактной группы активной.
     pub(crate) fn should_flush(&self) -> bool {
         if self.calls.iter().any(|call| {
             !Self::is_groupable_source(call.source)

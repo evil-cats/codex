@@ -2,7 +2,7 @@
 id: fork-resume-profile-startup-latency
 status: active
 created: 2026-08-25
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Ускорение `resume` с расширенной filesystem policy
@@ -104,7 +104,7 @@ profile с расширенной filesystem policy.
 индексов по precedence. Пакетные проверки и построение writable roots после этого
 не перечитывают исходную policy и не повторяют разрешение путей в filesystem.
 
-Upstream-модель 0.152.0 на `PathUri` и `FileSystemSandboxPolicyContext` остаётся
+Upstream-модель 0.153.0 на `PathUri` и `FileSystemSandboxPolicyContext` остаётся
 источником семантики одиночных access checks, metadata denial и deny-read globs.
 Fork-snapshot не заменяет этот API и не вмешивается в unrelated permission
 semantics.
