@@ -127,6 +127,24 @@ pub(super) async fn handle_message_string_tool(
         .await
         .map_err(|err| collab_agent_error(receiver_thread_id, err));
     result?;
+    if mode == MessageDeliveryMode::TriggerTurn {
+        let root_turn_id = turn
+            .turn_metadata_state
+            .root_turn_id()
+            .unwrap_or_else(|| turn.sub_id.clone());
+        let model = session
+            .services
+            .agent_control
+            .get_agent_config_snapshot(receiver_thread_id)
+            .await
+            .map(|snapshot| snapshot.model);
+        session.services.agent_control.register_agent_token_usage(
+            &root_turn_id,
+            receiver_thread_id,
+            receiver_agent_path.clone(),
+            model,
+        );
+    }
     emit_sub_agent_activity(
         &session,
         &turn,
@@ -135,6 +153,7 @@ pub(super) async fn handle_message_string_tool(
             agent_thread_id: receiver_thread_id,
             agent_path: receiver_agent_path,
             kind: SubAgentActivityKind::Interacted,
+            token_usage: None,
         },
     )
     .await;

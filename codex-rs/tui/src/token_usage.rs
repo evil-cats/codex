@@ -2,7 +2,10 @@
 
 use std::fmt;
 
+use codex_app_server_protocol::ModelTokenUsageSnapshot;
+use codex_app_server_protocol::TokenUsageSnapshot;
 use codex_protocol::num_format::format_with_separators;
+use codex_protocol::protocol::compare_model_slugs;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -86,4 +89,48 @@ impl fmt::Display for TokenUsage {
             }
         )
     }
+}
+
+/// Formats an immutable model map without ever adding counters across different model slugs.
+pub(crate) fn format_token_usage_snapshot(snapshot: &TokenUsageSnapshot) -> String {
+    if snapshot.models.is_empty() {
+        return "unavailable".to_string();
+    }
+    let mut models = snapshot.models.iter().collect::<Vec<_>>();
+    models.sort_by(|left, right| match (&left.model, &right.model) {
+        (Some(left), Some(right)) => compare_model_slugs(left, right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    models
+        .into_iter()
+        .map(format_model_token_usage)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_model_token_usage(model_usage: &ModelTokenUsageSnapshot) -> String {
+    let Some(model) = model_usage.model.as_deref() else {
+        return "unavailable".to_string();
+    };
+    let Some(usage) = &model_usage.usage else {
+        return format!("[{model}] unavailable");
+    };
+    let cached = usage.cached_input_tokens.max(0);
+    let non_cached = usage.input_tokens.saturating_sub(cached).max(0);
+    let output = usage.output_tokens.max(0);
+    let reasoning = usage.reasoning_output_tokens.max(0);
+    let partial = if model_usage.incomplete {
+        ", partial"
+    } else {
+        ""
+    };
+    format!(
+        "[{model}] {} in, {} cached, {} ({}) out{partial}",
+        format_with_separators(non_cached),
+        format_with_separators(cached),
+        format_with_separators(output),
+        format_with_separators(reasoning),
+    )
 }

@@ -356,6 +356,9 @@ pub struct SubAgentActivityItem {
     pub kind: SubAgentActivityKind,
     pub agent_thread_id: ThreadId,
     pub agent_path: AgentPath,
+    /// Immutable direct usage of this agent in the current root turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<crate::protocol::TokenUsageSnapshot>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq)]

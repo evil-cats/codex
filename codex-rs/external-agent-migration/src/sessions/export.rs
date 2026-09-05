@@ -212,6 +212,7 @@ fn turn_complete_item(
         completed_at,
         duration_ms: None,
         time_to_first_token_ms: None,
+        token_usage: None,
     }))
 }
 

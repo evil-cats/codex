@@ -159,6 +159,130 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const CODEX_5_2_INSTRUCTIONS_TEMPLATE_DEFAULT: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
 
 #[tokio::test]
+async fn thread_resume_raw_events_for_separator_token_usage() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    mock_responses_config(&server.uri()).write(codex_home.path())?;
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Saved user message",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: conversation_id,
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .await?;
+    let ThreadResumeResponse { thread, .. } =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "Continue".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let _: TurnStartResponse = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(turn_id)).await??;
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("rawResponse/completed"),
+    )
+    .await??;
+
+    assert_eq!(
+        notification
+            .params
+            .as_ref()
+            .and_then(|params| params.get("threadId"))
+            .and_then(serde_json::Value::as_str),
+        Some(thread.id.as_str())
+    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn running_thread_resume_raw_events_for_separator_token_usage() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    mock_responses_config(&server.uri()).write(codex_home.path())?;
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+
+    let ThreadStartResponse { thread, .. } = mcp.start_thread(ThreadStartParams::default()).await?;
+    mcp.start_turn_and_wait_for_completion(TurnStartParams {
+        thread_id: thread.id.clone(),
+        input: vec![UserInput::Text {
+            text: "Prime the persistent thread".to_string(),
+            text_elements: Vec::new(),
+        }],
+        ..Default::default()
+    })
+    .await?;
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread.id.clone(),
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .await?;
+    let _: ThreadResumeResponse =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "Continue".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let _: TurnStartResponse = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(turn_id)).await??;
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("rawResponse/completed"),
+    )
+    .await??;
+
+    assert_eq!(
+        notification
+            .params
+            .as_ref()
+            .and_then(|params| params.get("threadId"))
+            .and_then(serde_json::Value::as_str),
+        Some(thread.id.as_str())
+    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_resume_paginated_model_context_preserves_original_metadata() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;

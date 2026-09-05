@@ -1056,6 +1056,7 @@ pub(super) fn handle_turn_completed(
                 duration_ms,
                 /*error*/ None,
             ),
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );
@@ -1071,6 +1072,7 @@ pub(super) fn handle_turn_interrupted(chat: &mut ChatWidget, turn_id: &str) {
                 /*duration_ms*/ None,
                 /*error*/ None,
             ),
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );

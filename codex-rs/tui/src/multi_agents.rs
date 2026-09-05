@@ -296,7 +296,9 @@ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentAc
     let is_running_hint = match kind {
         SubAgentActivityKind::Started => true,
         SubAgentActivityKind::Interacted => return None,
-        SubAgentActivityKind::Interrupted | SubAgentActivityKind::Completed => false,
+        SubAgentActivityKind::Interrupted
+        | SubAgentActivityKind::Errored
+        | SubAgentActivityKind::Completed => false,
     };
     Some(SubAgentActivityDisplay {
         thread_id: parse_thread_id(agent_thread_id)?,
@@ -307,14 +309,26 @@ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentAc
 
 pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
     let ThreadItem::SubAgentActivity {
-        kind, agent_path, ..
+        kind,
+        agent_path,
+        token_usage,
+        ..
     } = item
     else {
         return None;
     };
+    let details = token_usage
+        .as_ref()
+        .map(|snapshot| {
+            vec![Line::from(format!(
+                "Tokens: {}",
+                crate::token_usage::format_token_usage_snapshot(snapshot)
+            ))]
+        })
+        .unwrap_or_default();
     Some(collab_event(
         sub_agent_activity_title(*kind, agent_path),
-        Vec::new(),
+        details,
     ))
 }
 
@@ -323,6 +337,7 @@ pub(crate) fn sub_agent_activity_summary(kind: SubAgentActivityKind, agent_path:
         SubAgentActivityKind::Started => format!("Started `{agent_path}`"),
         SubAgentActivityKind::Interacted => format!("Interacted with `{agent_path}`"),
         SubAgentActivityKind::Interrupted => format!("Interrupted `{agent_path}`"),
+        SubAgentActivityKind::Errored => format!("Errored `{agent_path}`"),
         SubAgentActivityKind::Completed => format!("Completed `{agent_path}`"),
     }
 }
@@ -332,6 +347,7 @@ fn sub_agent_activity_title(kind: SubAgentActivityKind, agent_path: &str) -> Lin
         SubAgentActivityKind::Started => ("Started ", agent_path),
         SubAgentActivityKind::Interacted => ("Interacted with ", agent_path),
         SubAgentActivityKind::Interrupted => ("Interrupted ", agent_path),
+        SubAgentActivityKind::Errored => ("Errored ", agent_path),
         SubAgentActivityKind::Completed => ("Completed ", agent_path),
     };
     title_spans_line(vec![
@@ -676,6 +692,9 @@ fn error_summary_spans(error: &str) -> Vec<Span<'static>> {
 mod tests {
     use super::*;
     use crate::history_cell::HistoryCell;
+    use codex_app_server_protocol::ModelTokenUsageSnapshot;
+    use codex_app_server_protocol::TokenUsageBreakdown;
+    use codex_app_server_protocol::TokenUsageSnapshot;
     #[cfg(target_os = "macos")]
     use crossterm::event::KeyEvent;
     #[cfg(target_os = "macos")]
@@ -693,6 +712,7 @@ mod tests {
             kind: SubAgentActivityKind::Interacted,
             agent_thread_id: ThreadId::new().to_string(),
             agent_path: "/root/child".to_string(),
+            token_usage: None,
         };
 
         assert_eq!(sub_agent_activity_display(&item), None);
@@ -706,6 +726,7 @@ mod tests {
             kind: SubAgentActivityKind::Completed,
             agent_thread_id: thread_id.to_string(),
             agent_path: "/root/child".to_string(),
+            token_usage: None,
         };
 
         assert_eq!(
@@ -716,6 +737,91 @@ mod tests {
                 is_running_hint: false,
             })
         );
+    }
+
+    #[test]
+    /// A terminal activity renders the agent's cumulative root-turn snapshot as one detail row.
+    fn completed_sub_agent_activity_renders_token_usage() {
+        let item = ThreadItem::SubAgentActivity {
+            id: "activity-token-usage".to_string(),
+            kind: SubAgentActivityKind::Completed,
+            agent_thread_id: ThreadId::new().to_string(),
+            agent_path: "/root/worker".to_string(),
+            token_usage: Some(TokenUsageSnapshot {
+                models: vec![ModelTokenUsageSnapshot {
+                    model: Some("gpt-5.6-luna".to_string()),
+                    usage: Some(TokenUsageBreakdown {
+                        total_tokens: 101_560,
+                        input_tokens: 94_560,
+                        cached_input_tokens: 92_800,
+                        cache_write_input_tokens: 0,
+                        output_tokens: 7_000,
+                        reasoning_output_tokens: 3_310,
+                    }),
+                    incomplete: false,
+                }],
+            }),
+        };
+        let cell = sub_agent_activity_history_cell(&item).expect("terminal activity cell");
+
+        assert_snapshot!(cell_to_text(&cell), @r"
+        • Completed `/root/worker`
+          └ Tokens: [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out
+        ");
+    }
+
+    #[test]
+    /// Failed terminal states keep observed counters and never turn missing usage into zero.
+    fn terminal_sub_agent_activity_renders_partial_and_unavailable_token_usage() {
+        let errored = ThreadItem::SubAgentActivity {
+            id: "activity-errored".to_string(),
+            kind: SubAgentActivityKind::Errored,
+            agent_thread_id: ThreadId::new().to_string(),
+            agent_path: "/root/reviewer".to_string(),
+            token_usage: Some(TokenUsageSnapshot {
+                models: vec![ModelTokenUsageSnapshot {
+                    model: Some("gpt-5.6-terra".to_string()),
+                    usage: Some(TokenUsageBreakdown {
+                        total_tokens: 43_720,
+                        input_tokens: 40_920,
+                        cached_input_tokens: 40_000,
+                        cache_write_input_tokens: 0,
+                        output_tokens: 2_800,
+                        reasoning_output_tokens: 1_100,
+                    }),
+                    incomplete: true,
+                }],
+            }),
+        };
+        let interrupted = ThreadItem::SubAgentActivity {
+            id: "activity-interrupted".to_string(),
+            kind: SubAgentActivityKind::Interrupted,
+            agent_thread_id: ThreadId::new().to_string(),
+            agent_path: "/root/scout".to_string(),
+            token_usage: Some(TokenUsageSnapshot {
+                models: vec![ModelTokenUsageSnapshot {
+                    model: Some("gpt-5.5".to_string()),
+                    usage: None,
+                    incomplete: true,
+                }],
+            }),
+        };
+        let rendered = [errored, interrupted]
+            .iter()
+            .map(|item| {
+                cell_to_text(
+                    &sub_agent_activity_history_cell(item).expect("terminal activity cell"),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_snapshot!(rendered, @r"
+        • Errored `/root/reviewer`
+          └ Tokens: [gpt-5.6-terra] 920 in, 40,000 cached, 2,800 (1,100) out, partial
+        • Interrupted `/root/scout`
+          └ Tokens: [gpt-5.5] unavailable
+        ");
     }
 
     #[test]

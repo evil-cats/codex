@@ -2,6 +2,8 @@
 
 use super::HistoryCell;
 use super::HistoryRenderMode;
+use super::token_usage::SeparatorTokenUsage;
+use codex_app_server_protocol::RootTurnTokenUsageSnapshot;
 use std::cell::Cell;
 
 /// Identifies the render state that determines an active cell's viewport height.
@@ -45,6 +47,10 @@ pub(super) struct TranscriptState {
     pub(super) needs_final_message_separator: bool,
     /// Whether the current turn performed "work" (exec commands, MCP tool calls, patch applications).
     pub(super) had_work_activity: bool,
+    /// Response-level delta for the next divider in this visible thread.
+    pub(super) separator_token_usage: SeparatorTokenUsage,
+    /// Root-turn totals supplied by core for the next terminal divider.
+    pub(super) root_turn_token_usage: Option<RootTurnTokenUsageSnapshot>,
     /// Whether the current turn emitted a plan update.
     pub(super) saw_plan_update_this_turn: bool,
     /// Whether the current turn emitted a proposed plan item that has not been superseded by a

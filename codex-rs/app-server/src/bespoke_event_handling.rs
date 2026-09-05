@@ -1187,6 +1187,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id,
                 response_id: raw_response_completed_event.response_id,
+                model: raw_response_completed_event.model,
                 usage: raw_response_completed_event.token_usage.map(Into::into),
                 usage_metadata: raw_response_completed_event.usage_metadata.map(Into::into),
             };
@@ -1387,6 +1388,7 @@ struct TurnCompletionMetadata {
     started_at: Option<i64>,
     completed_at: Option<i64>,
     duration_ms: Option<i64>,
+    token_usage: Option<codex_app_server_protocol::RootTurnTokenUsageSnapshot>,
 }
 
 async fn emit_turn_completed_with_status(
@@ -1411,6 +1413,7 @@ async fn emit_turn_completed_with_status(
             completed_at: turn_completion_metadata.completed_at,
             duration_ms: turn_completion_metadata.duration_ms,
         },
+        token_usage: turn_completion_metadata.token_usage,
     };
     outgoing
         .send_server_notification(ServerNotification::TurnCompleted(notification))
@@ -1590,6 +1593,7 @@ async fn handle_turn_complete(
             started_at: turn_summary.started_at,
             completed_at: turn_complete_event.completed_at,
             duration_ms: turn_complete_event.duration_ms,
+            token_usage: turn_complete_event.token_usage.map(Into::into),
         },
         outgoing,
     )
@@ -1615,6 +1619,7 @@ async fn handle_turn_interrupted(
             started_at: turn_summary.started_at,
             completed_at: turn_aborted_event.completed_at,
             duration_ms: turn_aborted_event.duration_ms,
+            token_usage: None,
         },
         outgoing,
     )
@@ -2361,6 +2366,7 @@ mod tests {
             completed_at: Some(TEST_TURN_COMPLETED_AT),
             duration_ms: Some(TEST_TURN_DURATION_MS),
             time_to_first_token_ms: None,
+            token_usage: None,
         }
     }
 
@@ -3411,6 +3417,7 @@ mod tests {
                         agent_thread_id: child_thread_id,
                         agent_path: AgentPath::try_from("/root/worker")
                             .expect("agent path should parse"),
+                        token_usage: None,
                     }),
                     started_at_ms: Some(42),
                     completed_at_ms: 42,
@@ -3446,6 +3453,7 @@ mod tests {
                     kind: codex_app_server_protocol::SubAgentActivityKind::Interrupted,
                     agent_thread_id: child_thread_id_string,
                     agent_path: "/root/worker".to_string(),
+                    token_usage: None,
                 },
                 thread_id: conversation_id.to_string(),
                 turn_id: "turn-1".to_string(),

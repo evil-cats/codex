@@ -234,6 +234,18 @@ async fn handle_spawn_agent(
         .agent_control
         .get_agent_config_snapshot(new_thread_id)
         .await;
+    let root_turn_id = turn
+        .turn_metadata_state
+        .root_turn_id()
+        .unwrap_or_else(|| turn.sub_id.clone());
+    session.services.agent_control.register_agent_token_usage(
+        &root_turn_id,
+        new_thread_id,
+        new_agent_path.clone(),
+        agent_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.model.clone()),
+    );
     let nickname = agent_snapshot
         .as_ref()
         .and_then(|snapshot| snapshot.session_source.get_nickname())
@@ -246,6 +258,7 @@ async fn handle_spawn_agent(
             agent_thread_id: new_thread_id,
             agent_path: new_agent_path.clone(),
             kind: SubAgentActivityKind::Started,
+            token_usage: None,
         },
     )
     .await;

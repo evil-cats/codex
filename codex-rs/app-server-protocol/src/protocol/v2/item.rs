@@ -412,6 +412,7 @@ pub enum ThreadItem {
         kind: SubAgentActivityKind,
         agent_thread_id: String,
         agent_path: String,
+        token_usage: Option<super::TokenUsageSnapshot>,
     },
     WebSearch(WebSearchItem),
     #[serde(rename_all = "camelCase")]
@@ -997,6 +998,7 @@ impl From<CoreTurnItem> for ThreadItem {
                 kind: activity.kind.into(),
                 agent_thread_id: activity.agent_thread_id.to_string(),
                 agent_path: String::from(activity.agent_path),
+                token_usage: activity.token_usage.map(Into::into),
             },
             CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch(WebSearchItem {
                 id: search.id,
@@ -1329,6 +1331,7 @@ pub enum SubAgentActivityKind {
     Started,
     Interacted,
     Interrupted,
+    Errored,
     Completed,
 }
 
@@ -1338,6 +1341,7 @@ impl From<CoreSubAgentActivityKind> for SubAgentActivityKind {
             CoreSubAgentActivityKind::Started => SubAgentActivityKind::Started,
             CoreSubAgentActivityKind::Interacted => SubAgentActivityKind::Interacted,
             CoreSubAgentActivityKind::Interrupted => SubAgentActivityKind::Interrupted,
+            CoreSubAgentActivityKind::Errored => SubAgentActivityKind::Errored,
             CoreSubAgentActivityKind::Completed => SubAgentActivityKind::Completed,
         }
     }

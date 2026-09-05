@@ -1138,6 +1138,7 @@ fn plan_update_emits_started_then_updated_then_completed() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
     assert_eq!(
@@ -1198,6 +1199,7 @@ fn plan_update_after_completion_starts_new_todo_list_with_new_id() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1283,6 +1285,7 @@ fn token_usage_update_is_emitted_on_turn_completion() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
     assert_eq!(
@@ -1326,6 +1329,7 @@ fn turn_completion_recovers_final_message_from_turn_items() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1409,6 +1413,7 @@ fn turn_completion_reconciles_started_items_from_turn_items() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1475,6 +1480,7 @@ fn turn_completion_overwrites_stale_final_message_from_turn_items() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1522,6 +1528,7 @@ fn turn_completion_preserves_streamed_final_message_when_turn_items_are_empty() 
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1578,6 +1585,7 @@ fn failed_turn_clears_stale_final_message() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1605,6 +1613,7 @@ fn turn_completion_falls_back_to_final_plan_text() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 
@@ -1658,6 +1667,7 @@ fn turn_failure_prefers_structured_error_message() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
     assert_eq!(

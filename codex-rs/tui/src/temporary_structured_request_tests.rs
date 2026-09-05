@@ -42,6 +42,7 @@ fn turn_completed_notification(turn_id: &str, status: TurnStatus) -> ServerNotif
             completed_at: None,
             duration_ms: None,
         },
+        token_usage: None,
     })
 }
 

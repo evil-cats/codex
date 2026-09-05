@@ -505,6 +505,7 @@ async fn on_event_updates_status_from_task_complete() {
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         }));
         assert_eq!(status, Some(expected));
     }
@@ -1450,6 +1451,7 @@ async fn spawn_agent_fork_drops_inherited_token_usage_state() {
         .record_observed_response_completed(
             turn_context.as_ref(),
             "child-response",
+            "gpt-5.6-luna",
             Some(&child_usage),
             /*usage_metadata*/ None,
         )
@@ -3281,6 +3283,7 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         )
         .await;
@@ -3363,6 +3366,7 @@ async fn multi_agent_v2_completion_queues_message_for_direct_parent() {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         )
         .await;

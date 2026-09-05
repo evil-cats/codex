@@ -131,6 +131,7 @@ async fn timeline_pages_mix_items_and_resolve_the_opening_realtime_session() -> 
                     completed_at: Some(12),
                     duration_ms: Some(2000),
                     time_to_first_token_ms: None,
+                    token_usage: None,
                 })),
             ],
         })

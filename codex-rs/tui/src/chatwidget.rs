@@ -429,6 +429,7 @@ use self::status_state::TerminalTitleStatusKind;
 mod status_controls;
 mod status_surfaces;
 mod streaming;
+mod token_usage;
 use self::status_surfaces::CachedProjectRootName;
 mod thread_usage;
 pub(crate) use self::thread_usage::ThreadUsageOutcome;

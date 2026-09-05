@@ -1523,9 +1523,11 @@ fn turn_summary(turn: &Turn, include_outputs: bool, output_chars: usize) -> Valu
                 kind,
                 agent_thread_id,
                 agent_path,
+                token_usage,
             } => json!({
                 "type": "subAgentActivity", "id": id, "kind": kind,
-                "agentThreadId": agent_thread_id, "agentPath": agent_path
+                "agentThreadId": agent_thread_id, "agentPath": agent_path,
+                "tokenUsage": token_usage
             }),
             ThreadItem::WebSearch(item) => json!({
                 "type": "webSearch", "id": item.id,

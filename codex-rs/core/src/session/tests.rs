@@ -2359,6 +2359,7 @@ async fn subagent_activity_emits_matching_start_and_completion() {
         kind: codex_protocol::protocol::SubAgentActivityKind::Started,
         agent_thread_id: ThreadId::new(),
         agent_path: AgentPath::root(),
+        token_usage: None,
     };
 
     crate::tools::handlers::multi_agents_v2::emit_sub_agent_activity(&session, &turn_context, item)
@@ -3822,6 +3823,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             },
         )),
     ];
@@ -4030,6 +4032,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
@@ -4061,6 +4064,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
     ])
     .await;
@@ -4152,6 +4156,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
@@ -4188,6 +4193,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
@@ -4222,6 +4228,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
     ])
     .await;
@@ -4300,6 +4307,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
@@ -4329,6 +4337,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
@@ -4358,6 +4367,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
             completed_at: None,
             duration_ms: None,
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
     ])
     .await;

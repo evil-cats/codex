@@ -387,8 +387,19 @@ async fn run_remote_compaction_request_v2(
         .info()
         .stream_max_retries()
         .min(MAX_REMOTE_COMPACTION_V2_STREAM_RETRIES);
+    let root_turn_id = turn_context
+        .turn_metadata_state
+        .root_turn_id()
+        .unwrap_or_else(|| turn_context.sub_id.clone());
+    let requested_model = turn_context.model_info().slug.clone();
     let mut retry_state = ResponsesStreamRetryState::default();
     loop {
+        sess.services.agent_control.begin_model_call_token_usage(
+            &root_turn_id,
+            sess.thread_id,
+            &turn_context.sub_id,
+            &requested_model,
+        );
         let result = match client_session
             .stream(
                 prompt,
@@ -430,6 +441,11 @@ async fn collect_compaction_output(
     turn_context: &TurnContext,
     mut stream: ResponseStream,
 ) -> CodexResult<RemoteCompactionV2Output> {
+    let root_turn_id = turn_context
+        .turn_metadata_state
+        .root_turn_id()
+        .unwrap_or_else(|| turn_context.sub_id.clone());
+    let mut response_model = turn_context.model_info().slug.clone();
     let mut output_item_count = 0usize;
     let mut compaction_count = 0usize;
     let mut compaction_output = None;
@@ -446,6 +462,15 @@ async fn collect_compaction_output(
                     }
                 }
             }
+            ResponseEvent::ServerModel(server_model) => {
+                response_model = server_model;
+                sess.services.agent_control.update_model_call_token_usage(
+                    &root_turn_id,
+                    sess.thread_id,
+                    &turn_context.sub_id,
+                    &response_model,
+                );
+            }
             ResponseEvent::Completed {
                 response_id,
                 token_usage,
@@ -455,6 +480,7 @@ async fn collect_compaction_output(
                 sess.record_observed_response_completed(
                     turn_context,
                     &response_id,
+                    &response_model,
                     token_usage.as_ref(),
                     usage_metadata.as_ref(),
                 )

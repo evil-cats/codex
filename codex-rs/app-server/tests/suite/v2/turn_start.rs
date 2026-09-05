@@ -34,10 +34,12 @@ use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::ModelTokenUsageSnapshot;
 use codex_app_server_protocol::PatchApplyStatus;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_app_server_protocol::RawResponseCompletedNotification;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::RootTurnTokenUsageSnapshot;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ServerRequestResolvedNotification;
 use codex_app_server_protocol::SubAgentActivityKind;
@@ -57,6 +59,7 @@ use codex_app_server_protocol::ThreadSource;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TokenUsageBreakdown;
+use codex_app_server_protocol::TokenUsageSnapshot;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_app_server_protocol::TurnItemsView;
@@ -904,24 +907,26 @@ async fn turn_start_sends_service_tier_id_to_model_request() -> Result<()> {
     Ok(())
 }
 
-#[test_case(None, None, None; "without_usage_metadata")]
-#[test_case(Some(json!({})), None, None; "without_amount")]
-#[test_case(Some(json!({ "amount": null })), None, None; "null_amount")]
-#[test_case(Some(json!({ "amount": "0" })), Some("0"), None; "zero_amount")]
+#[test_case(None, None, None, None; "without_usage_metadata")]
+#[test_case(Some(json!({})), None, None, None; "without_amount")]
+#[test_case(Some(json!({ "amount": null })), None, None, None; "null_amount")]
+#[test_case(Some(json!({ "amount": "0" })), Some("0"), None, None; "zero_amount")]
 #[test_case(
     Some(json!({ "amount": "0.12345678901234567890" })),
     Some("0.12345678901234567890"),
-    Some(json!({ "label": "example", "items": [0, null, true] }));
+    Some(json!({ "label": "example", "items": [0, null, true] })),
+    Some("gpt-5.6-terra");
     "exact_amount"
 )]
-#[test_case(None, None, Some(json!(null)); "null_extra")]
-#[test_case(None, None, Some(json!(0)); "zero_extra")]
-#[test_case(None, None, Some(json!({ "label": "example" })); "nested_extra")]
+#[test_case(None, None, Some(json!(null)), None; "null_extra")]
+#[test_case(None, None, Some(json!(0)), None; "zero_extra")]
+#[test_case(None, None, Some(json!({ "label": "example" })), None; "nested_extra")]
 #[tokio::test]
 async fn turn_start_emits_raw_response_completed_with_upstream_usage(
     upstream_metadata: Option<Value>,
     expected_amount: Option<&str>,
     extra: Option<Value>,
+    server_model: Option<&str>,
 ) -> Result<()> {
     let server = responses::start_mock_server().await;
     let mut completed = json!({
@@ -952,7 +957,13 @@ async fn turn_start_emits_raw_response_completed_with_upstream_usage(
         responses::ev_assistant_message("msg-1", "Done"),
         completed,
     ]);
-    let response_mock = responses::mount_sse_once(&server, body).await;
+    let response = responses::sse_response(body);
+    let response = if let Some(server_model) = server_model {
+        response.insert_header("openai-model", server_model)
+    } else {
+        response
+    };
+    let response_mock = responses::mount_response_once(&server, response).await;
 
     let codex_home = TempDir::new()?;
     MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
@@ -963,12 +974,13 @@ async fn turn_start_emits_raw_response_completed_with_upstream_usage(
         .build_initialized()
         .await?;
 
-    let ThreadStartResponse { thread, .. } = mcp
+    let ThreadStartResponse { thread, model, .. } = mcp
         .start_thread(ThreadStartParams {
             experimental_raw_events: true,
             ..Default::default()
         })
         .await?;
+    let response_model = server_model.unwrap_or(&model).to_string();
 
     let TurnStartResponse { turn } = mcp
         .request(|request_id| ClientRequest::TurnStart {
@@ -1006,9 +1018,10 @@ async fn turn_start_emits_raw_response_completed_with_upstream_usage(
     assert_eq!(
         notification,
         RawResponseCompletedNotification {
-            thread_id: thread.id,
-            turn_id: turn.id,
+            thread_id: thread.id.clone(),
+            turn_id: turn.id.clone(),
             response_id: "resp-1".to_string(),
+            model: response_model.clone(),
             usage_metadata: serde_json::from_value(expected_metadata)?,
             usage: Some(TokenUsageBreakdown {
                 total_tokens: 37,
@@ -1019,6 +1032,44 @@ async fn turn_start_emits_raw_response_completed_with_upstream_usage(
                 reasoning_output_tokens: 3,
             }),
         }
+    );
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    let notification: codex_app_server_protocol::ServerNotification = notification.try_into()?;
+    let codex_app_server_protocol::ServerNotification::TurnCompleted(TurnCompletedNotification {
+        token_usage,
+        ..
+    }) = notification
+    else {
+        anyhow::bail!("expected turn/completed notification");
+    };
+    let total = TokenUsageSnapshot {
+        models: vec![ModelTokenUsageSnapshot {
+            model: Some(response_model),
+            usage: Some(TokenUsageBreakdown {
+                total_tokens: 37,
+                input_tokens: 30,
+                cached_input_tokens: 11,
+                cache_write_input_tokens: 0,
+                output_tokens: 7,
+                reasoning_output_tokens: 3,
+            }),
+            incomplete: false,
+        }],
+    };
+    assert_eq!(
+        token_usage,
+        Some(RootTurnTokenUsageSnapshot {
+            turn: total.clone(),
+            agents: TokenUsageSnapshot::default(),
+            total,
+            agent_count: 0,
+            running_agent_count: 0,
+        })
     );
 
     response_mock.single_request();

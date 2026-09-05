@@ -6322,6 +6322,7 @@ fn turn_completed_notification(
             duration_ms: Some(1),
             ..test_turn(turn_id, status, Vec::new())
         },
+        token_usage: None,
     })
 }
 
@@ -7340,6 +7341,7 @@ async fn prompt_edit_forks_before_selected_prompt_and_preserves_source() -> Resu
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ] {
             codex_rollout::append_rollout_item_to_path(&source_path, &item).await?;

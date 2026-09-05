@@ -182,11 +182,14 @@ impl ChatWidget {
                 } else {
                     None
                 };
-                self.add_to_history(history_cell::FinalMessageSeparator::new(
-                    elapsed_seconds,
-                    runtime_metrics,
-                ));
+                let mut separator =
+                    history_cell::FinalMessageSeparator::new(elapsed_seconds, runtime_metrics);
+                if let Some(token_usage) = self.transcript.root_turn_token_usage.take() {
+                    separator = separator.with_root_turn_token_usage(token_usage);
+                }
+                self.add_to_history(separator);
             }
+            self.transcript.root_turn_token_usage = None;
             self.turn_runtime_metrics = RuntimeMetricsSummary::default();
             self.transcript.needs_final_message_separator = false;
             self.transcript.had_work_activity = false;

@@ -2260,6 +2260,17 @@ async fn try_run_sampling_request(
     cancellation_token: CancellationToken,
 ) -> CodexResult<SamplingRequestResult> {
     let turn_context = Arc::clone(&step_context.turn);
+    let root_turn_id = turn_context
+        .turn_metadata_state
+        .root_turn_id()
+        .unwrap_or_else(|| turn_context.sub_id.clone());
+    let mut response_model = step_context.settings.model_info.slug.clone();
+    sess.services.agent_control.begin_model_call_token_usage(
+        &root_turn_id,
+        sess.thread_id,
+        &turn_context.sub_id,
+        &response_model,
+    );
     feedback_tags!(
         model = step_context.settings.model_info.slug.clone(),
         approval_policy = turn_context.approval_policy(),
@@ -2557,6 +2568,13 @@ async fn try_run_sampling_request(
                 }
             }
             ResponseEvent::ServerModel(server_model) => {
+                response_model.clone_from(&server_model);
+                sess.services.agent_control.update_model_call_token_usage(
+                    &root_turn_id,
+                    sess.thread_id,
+                    &turn_context.sub_id,
+                    &response_model,
+                );
                 if !turn_context
                     .server_model_warning_emitted
                     .load(Ordering::Relaxed)
@@ -2637,6 +2655,7 @@ async fn try_run_sampling_request(
                 sess.record_observed_response_completed(
                     &turn_context,
                     &response_id,
+                    &response_model,
                     token_usage.as_ref(),
                     usage_metadata.as_ref(),
                 )

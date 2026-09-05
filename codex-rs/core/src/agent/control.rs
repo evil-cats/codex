@@ -7,6 +7,7 @@ use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
+use crate::agent::token_usage::RootTurnUsageLedger;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::codex_thread::ThreadConfigSnapshot;
@@ -48,10 +49,13 @@ use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ItemStartedEvent;
 use codex_protocol::protocol::MultiAgentVersion;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::RootTurnTokenUsageSnapshot;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadHistoryMode;
 use codex_protocol::protocol::ThreadSource;
+use codex_protocol::protocol::TokenUsage;
+use codex_protocol::protocol::TokenUsageSnapshot;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::turn_input::CyberAccessProgram;
 use codex_protocol::user_input::UserInput;
@@ -61,6 +65,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::Weak;
 use tokio::sync::watch;
 use tracing::warn;
@@ -131,6 +136,8 @@ pub(crate) struct AgentControl {
     rollout_budget: Arc<RolloutBudget>,
     /// The user-selected root routing tier, shared by the entire agent tree.
     root_service_tier: Arc<ArcSwapOption<String>>,
+    /// Live per-root-turn accounting shared by the root and every descendant session.
+    token_usage_ledger: Arc<Mutex<RootTurnUsageLedger>>,
 }
 
 impl Default for AgentControl {
@@ -159,6 +166,7 @@ impl AgentControl {
             agent_execution_limiter: Arc::default(),
             rollout_budget: Arc::default(),
             root_service_tier: Arc::new(ArcSwapOption::from(None)),
+            token_usage_ledger: Arc::default(),
         };
         if let Some(rollout_budget) = rollout_budget {
             control.rollout_budget.configure(rollout_budget);
@@ -182,6 +190,125 @@ impl AgentControl {
 
     pub(crate) fn rollout_budget(&self) -> &RolloutBudget {
         self.rollout_budget.as_ref()
+    }
+
+    /// Registers an agent immediately after a successful spawn or follow-up dispatch.
+    pub(crate) fn register_agent_token_usage(
+        &self,
+        root_turn_id: &str,
+        agent_thread_id: ThreadId,
+        agent_path: AgentPath,
+        model: Option<String>,
+    ) {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .register_agent(
+                root_turn_id,
+                self.session_id.into(),
+                agent_thread_id,
+                agent_path,
+                model,
+            );
+    }
+
+    /// Marks a model response as in flight so interruption cannot silently become zero usage.
+    pub(crate) fn begin_model_call_token_usage(
+        &self,
+        root_turn_id: &str,
+        thread_id: ThreadId,
+        turn_id: &str,
+        model: &str,
+    ) {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .begin_model_call(
+                root_turn_id,
+                self.session_id.into(),
+                thread_id,
+                turn_id,
+                model,
+            );
+    }
+
+    /// Replaces the requested model of an open call with the server-reported model slug.
+    pub(crate) fn update_model_call_token_usage(
+        &self,
+        root_turn_id: &str,
+        thread_id: ThreadId,
+        turn_id: &str,
+        model: &str,
+    ) {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update_model_call(
+                root_turn_id,
+                self.session_id.into(),
+                thread_id,
+                turn_id,
+                model,
+            );
+    }
+
+    /// Records one completed upstream response, deduplicated within its root turn.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_response_token_usage(
+        &self,
+        root_turn_id: &str,
+        thread_id: ThreadId,
+        turn_id: &str,
+        response_id: &str,
+        model: &str,
+        usage: Option<&TokenUsage>,
+    ) {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_response(
+                root_turn_id,
+                self.session_id.into(),
+                thread_id,
+                turn_id,
+                response_id,
+                model,
+                usage,
+            );
+    }
+
+    /// Returns one cumulative agent snapshot and suppresses duplicate terminal events.
+    pub(crate) fn complete_agent_turn_token_usage(
+        &self,
+        root_turn_id: &str,
+        agent_thread_id: ThreadId,
+        agent_path: AgentPath,
+        agent_turn_id: &str,
+        fallback_model: Option<String>,
+    ) -> Option<TokenUsageSnapshot> {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .complete_agent_turn(
+                root_turn_id,
+                self.session_id.into(),
+                agent_thread_id,
+                agent_path,
+                agent_turn_id,
+                fallback_model,
+            )
+    }
+
+    /// Freezes the per-model root, agent, and combined totals for a root terminal event.
+    pub(crate) fn complete_root_turn_token_usage(
+        &self,
+        root_turn_id: &str,
+        root_turn_run_id: &str,
+    ) -> RootTurnTokenUsageSnapshot {
+        self.token_usage_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .complete_root_turn(root_turn_id, self.session_id.into(), root_turn_run_id)
     }
 
     /// Send rich user input items to an existing agent thread.

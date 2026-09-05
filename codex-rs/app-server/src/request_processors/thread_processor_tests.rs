@@ -675,6 +675,7 @@ mod thread_processor_behavior_tests {
             personality: None,
             exclude_turns: false,
             initial_turns_page: None,
+            experimental_raw_events: false,
         };
         let config_snapshot = ThreadConfigSnapshot {
             model: "gpt-5".to_string(),
@@ -1327,8 +1328,11 @@ mod thread_processor_behavior_tests {
         let attach_connection = async {
             tokio::task::yield_now().await;
             manager
-                .try_add_connection_to_thread(thread_id, connection)
+                .try_ensure_connection_subscribed(
+                    thread_id, connection, /*experimental_raw_events*/ false,
+                )
                 .await
+                .is_some()
         };
         let ((), attached) = tokio::time::timeout(Duration::from_secs(1), async {
             tokio::join!(wait_for_subscriber, attach_connection)

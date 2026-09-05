@@ -11317,6 +11317,34 @@
       ],
       "type": "object"
     },
+    "ModelTokenUsageSnapshot": {
+      "description": "Token usage attributed to one exact model inside an immutable lifecycle snapshot.",
+      "properties": {
+        "incomplete": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TokenUsageBreakdown"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "incomplete"
+      ],
+      "type": "object"
+    },
     "ModelUpgradeInfo": {
       "properties": {
         "migrationMarkdown": {
@@ -13630,6 +13658,9 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Internal-only notification containing the exact usage from one upstream Responses API completion.",
       "properties": {
+        "model": {
+          "type": "string"
+        },
         "responseId": {
           "type": "string"
         },
@@ -13661,6 +13692,7 @@
         }
       },
       "required": [
+        "model",
         "responseId",
         "threadId",
         "turnId"
@@ -15164,6 +15196,38 @@
           "type": "object"
         }
       ]
+    },
+    "RootTurnTokenUsageSnapshot": {
+      "description": "Root, agent, and combined per-model totals frozen at root-turn completion.",
+      "properties": {
+        "agentCount": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "agents": {
+          "$ref": "#/definitions/TokenUsageSnapshot"
+        },
+        "runningAgentCount": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "total": {
+          "$ref": "#/definitions/TokenUsageSnapshot"
+        },
+        "turn": {
+          "$ref": "#/definitions/TokenUsageSnapshot"
+        }
+      },
+      "required": [
+        "agentCount",
+        "agents",
+        "runningAgentCount",
+        "total",
+        "turn"
+      ],
+      "type": "object"
     },
     "SandboxMode": {
       "enum": [
@@ -17722,6 +17786,7 @@
         "started",
         "interacted",
         "interrupted",
+        "errored",
         "completed"
       ],
       "type": "string"
@@ -19341,6 +19406,16 @@
             },
             "kind": {
               "$ref": "#/definitions/SubAgentActivityKind"
+            },
+            "tokenUsage": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TokenUsageSnapshot"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": {
               "enum": [
@@ -22135,6 +22210,21 @@
       ],
       "type": "object"
     },
+    "TokenUsageSnapshot": {
+      "description": "Per-model token totals captured at one display or lifecycle boundary.",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/definitions/ModelTokenUsageSnapshot"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "models"
+      ],
+      "type": "object"
+    },
     "Tool": {
       "description": "Definition for a tool the client can call.",
       "properties": {
@@ -22259,6 +22349,16 @@
       "properties": {
         "threadId": {
           "type": "string"
+        },
+        "tokenUsage": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RootTurnTokenUsageSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "turn": {
           "$ref": "#/definitions/Turn"

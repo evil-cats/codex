@@ -12,6 +12,10 @@ use crate::session_state::ThreadSessionState;
 use crate::wrapping::word_wrap_lines;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::McpAuthStatus;
+use codex_app_server_protocol::ModelTokenUsageSnapshot;
+use codex_app_server_protocol::RootTurnTokenUsageSnapshot;
+use codex_app_server_protocol::TokenUsageBreakdown;
+use codex_app_server_protocol::TokenUsageSnapshot;
 use codex_config::types::McpServerConfig;
 use codex_otel::RuntimeMetricTotals;
 use codex_otel::RuntimeMetricsSummary;
@@ -896,6 +900,170 @@ fn final_message_separator_includes_worked_label_after_one_minute() {
 
     assert_eq!(rendered.len(), 1);
     assert!(rendered[0].contains("Worked for"));
+}
+
+fn separator_usage(
+    model: &str,
+    input: i64,
+    cached: i64,
+    output: i64,
+    reasoning: i64,
+) -> ModelTokenUsageSnapshot {
+    ModelTokenUsageSnapshot {
+        model: Some(model.to_string()),
+        usage: Some(TokenUsageBreakdown {
+            total_tokens: input.saturating_add(output),
+            input_tokens: input,
+            cached_input_tokens: cached,
+            cache_write_input_tokens: 0,
+            output_tokens: output,
+            reasoning_output_tokens: reasoning,
+        }),
+        incomplete: false,
+    }
+}
+
+#[test]
+/// An ordinary divider owns one immutable interval and keeps its full label in transcript output.
+fn separator_token_usage_renders_interval() {
+    let cell =
+        FinalMessageSeparator::new(/*elapsed_seconds*/ None, /*runtime_metrics*/ None)
+            .with_interval_token_usage(TokenUsageSnapshot {
+                models: vec![separator_usage(
+                    "gpt-5.6-sol",
+                    139_830,
+                    137_600,
+                    10_000,
+                    5_135,
+                )],
+            });
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 120)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out ───────────────────────────────────────────────────");
+    assert_eq!(
+        render_lines(&cell.raw_lines()),
+        vec!["Tokens: [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out"]
+    );
+}
+
+#[test]
+/// Narrow display truncation never mutates the full model list retained for transcript output.
+fn separator_token_usage_preserves_full_raw_line_when_display_is_truncated() {
+    let snapshot = TokenUsageSnapshot {
+        models: vec![
+            separator_usage("gpt-5.6-sol", 139_830, 137_600, 10_000, 5_135),
+            separator_usage("gpt-5.6-luna", 93_920, 92_800, 4_900, 2_410),
+        ],
+    };
+    let cell =
+        FinalMessageSeparator::new(/*elapsed_seconds*/ None, /*runtime_metrics*/ None)
+            .with_interval_token_usage(snapshot);
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 48)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 2,230 in, 137,600 cached");
+    assert_eq!(
+        render_lines(&cell.raw_lines()),
+        vec![
+            "Tokens: [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out; [gpt-5.6-luna] 1,120 in, 92,800 cached, 4,900 (2,410) out"
+        ]
+    );
+}
+
+#[test]
+/// The final token report stays above the unchanged elapsed-time divider and preserves models.
+fn final_separator_token_usage_renders_turn_agents_and_total_before_worked_label() {
+    let turn = TokenUsageSnapshot {
+        models: vec![separator_usage(
+            "gpt-5.6-sol",
+            139_830,
+            137_600,
+            10_000,
+            5_135,
+        )],
+    };
+    let agents = TokenUsageSnapshot {
+        models: vec![separator_usage(
+            "gpt-5.6-luna",
+            94_560,
+            92_800,
+            7_000,
+            3_310,
+        )],
+    };
+    let total = TokenUsageSnapshot {
+        models: turn.models.iter().chain(&agents.models).cloned().collect(),
+    };
+    let cell = FinalMessageSeparator::new(Some(477), /*runtime_metrics*/ None)
+        .with_root_turn_token_usage(RootTurnTokenUsageSnapshot {
+            turn,
+            agents,
+            total,
+            agent_count: 1,
+            running_agent_count: 0,
+        });
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 240)).join("\n"), @r"
+      Turn:   [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out
+      Agents: [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out
+      Total:  [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out; [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out
+    ─ Worked for 7m 57s ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    ");
+}
+
+#[test]
+/// Without participating agents the final report deliberately collapses to the `Total` row.
+fn final_separator_token_usage_renders_only_total_without_agents() {
+    let total = TokenUsageSnapshot {
+        models: vec![separator_usage(
+            "gpt-5.6-sol",
+            139_830,
+            137_600,
+            10_000,
+            5_135,
+        )],
+    };
+    let cell = FinalMessageSeparator::new(Some(477), /*runtime_metrics*/ None)
+        .with_root_turn_token_usage(RootTurnTokenUsageSnapshot {
+            turn: total.clone(),
+            agents: TokenUsageSnapshot::default(),
+            total,
+            agent_count: 0,
+            running_agent_count: 0,
+        });
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"
+      Total: [gpt-5.6-sol] 2,230 in, 137,600 cached, 10,000 (5,135) out
+    ─ Worked for 7m 57s ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    ");
+}
+
+#[test]
+fn final_separator_token_usage_reports_running_agents_on_frozen_totals() {
+    let agents = TokenUsageSnapshot {
+        models: vec![separator_usage(
+            "gpt-5.6-luna",
+            94_560,
+            92_800,
+            7_000,
+            3_310,
+        )],
+    };
+    let cell =
+        FinalMessageSeparator::new(/*elapsed_seconds*/ None, /*runtime_metrics*/ None)
+            .with_root_turn_token_usage(RootTurnTokenUsageSnapshot {
+                turn: TokenUsageSnapshot::default(),
+                agents: agents.clone(),
+                total: agents,
+                agent_count: 1,
+                running_agent_count: 1,
+            });
+
+    assert_eq!(
+        render_lines(&cell.raw_lines()),
+        vec![
+            "  Turn:   unavailable",
+            "  Agents: [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out · 1 agent running",
+            "  Total:  [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out · 1 agent running",
+        ]
+    );
 }
 
 #[test]

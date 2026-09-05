@@ -104,7 +104,12 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
                 || matches!(
                     &event.item,
                     TurnItem::SubAgentActivity(item)
-                        if item.kind == SubAgentActivityKind::Completed
+                        if matches!(
+                            item.kind,
+                            SubAgentActivityKind::Completed
+                                | SubAgentActivityKind::Errored
+                                | SubAgentActivityKind::Interrupted
+                        )
                 )
         }
         EventMsg::TerminalInteraction(codex_protocol::protocol::TerminalInteractionEvent {
@@ -136,7 +141,10 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode) 
         }
         EventMsg::SubAgentActivity(event) => {
             matches!(history_mode, ThreadHistoryMode::Legacy)
-                && event.kind != SubAgentActivityKind::Completed
+                && matches!(
+                    event.kind,
+                    SubAgentActivityKind::Started | SubAgentActivityKind::Interacted
+                )
         }
 
         // Transient, non-durable events.

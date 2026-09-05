@@ -1271,6 +1271,7 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
                     completed_at: None,
                     duration_ms: None,
                 },
+                token_usage: None,
             },
         ),
         /*replay_kind*/ None,

@@ -60,6 +60,10 @@ impl ChatWidget {
                 self.on_thread_settings_updated(notification);
             }
             ServerNotification::TurnStarted(notification) => {
+                self.transcript
+                    .separator_token_usage
+                    .start_turn(notification.turn.id.clone());
+                self.transcript.root_turn_token_usage = None;
                 self.turn_lifecycle.last_turn_id = Some(notification.turn.id);
                 self.last_non_retry_error = None;
                 if !matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages)) {
@@ -68,6 +72,13 @@ impl ChatWidget {
             }
             ServerNotification::TurnCompleted(notification) => {
                 self.handle_turn_completed_notification(notification, replay_kind);
+            }
+            ServerNotification::RawResponseCompleted(notification) => {
+                if !from_replay {
+                    self.transcript
+                        .separator_token_usage
+                        .record_response(&notification);
+                }
             }
             ServerNotification::ItemStarted(notification) => {
                 self.handle_item_started_notification(notification, replay_kind.is_some());
@@ -226,7 +237,6 @@ impl ChatWidget {
             | ServerNotification::ThreadDeleted(_)
             | ServerNotification::ThreadUnarchived(_)
             | ServerNotification::RawResponseItemCompleted(_)
-            | ServerNotification::RawResponseCompleted(_)
             | ServerNotification::CommandExecOutputDelta(_)
             | ServerNotification::ProcessOutputDelta(_)
             | ServerNotification::ProcessExited(_)
@@ -276,6 +286,9 @@ impl ChatWidget {
         self.last_rendered_user_message_display = None;
         let was_replaying_turn_completion = self.thread_usage.replaying_turn_completion;
         self.thread_usage.replaying_turn_completion = replay_kind.is_some();
+        if replay_kind.is_none() {
+            self.transcript.root_turn_token_usage = notification.token_usage;
+        }
         match notification.turn.status {
             TurnStatus::Completed => {
                 let last_agent_message =

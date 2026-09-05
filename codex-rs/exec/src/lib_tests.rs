@@ -442,6 +442,7 @@ fn should_backfill_turn_completed_items_backfills_persisted_summaries_only() {
                 completed_at: None,
                 duration_ms: None,
             },
+            token_usage: None,
         });
 
     assert!(!should_backfill_turn_completed_items(

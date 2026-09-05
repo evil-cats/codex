@@ -82,6 +82,7 @@ async fn misalignment_policy_failure_stops_the_thread_and_renders_once() {
                     additional_details: None,
                 }),
             ),
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );

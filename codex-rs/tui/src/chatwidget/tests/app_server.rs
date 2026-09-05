@@ -655,6 +655,7 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
                 completed_at: Some(0),
                 duration_ms: None,
             },
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );
@@ -996,6 +997,7 @@ async fn live_app_server_sub_agent_activity_renders_once() {
         kind: codex_app_server_protocol::SubAgentActivityKind::Completed,
         agent_thread_id: ThreadId::new().to_string(),
         agent_path: "/root/researcher".to_string(),
+        token_usage: None,
     };
 
     chat.handle_server_notification(
@@ -1234,6 +1236,7 @@ async fn live_app_server_failed_turn_does_not_duplicate_error_history() {
                 completed_at: Some(0),
                 duration_ms: None,
             },
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );
@@ -1309,6 +1312,7 @@ async fn live_app_server_turn_completion_repairs_dropped_message_deltas() {
         ServerNotification::TurnCompleted(TurnCompletedNotification {
             thread_id: "thread-1".to_string(),
             turn: completed_turn,
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );

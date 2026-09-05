@@ -47,6 +47,7 @@ use codex_otel::TURN_NETWORK_PROXY_METRIC;
 use codex_otel::TURN_TOKEN_USAGE_METRIC;
 use codex_otel::TURN_TOOL_CALL_METRIC;
 use codex_otel::TURN_UNIFIED_EXEC_RUNNING_PROCESSES_METRIC;
+use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::MultiAgentVersion;
@@ -804,6 +805,17 @@ impl Session {
         } else {
             ThreadIdleCause::Completed
         };
+        let root_turn_id = turn_context
+            .turn_metadata_state
+            .root_turn_id()
+            .unwrap_or_else(|| turn_context.sub_id.clone());
+        let root_token_usage = (self.thread_id
+            == ThreadId::from(self.services.agent_control.session_id()))
+        .then(|| {
+            self.services
+                .agent_control
+                .complete_root_turn_token_usage(&root_turn_id, &turn_context.sub_id)
+        });
         let event = if let Some(reason) = abort_reason {
             if reason == TurnAbortReason::Interrupted {
                 run_turn_interrupt_hooks(self, &turn_context, &turn_state).await;
@@ -833,6 +845,7 @@ impl Session {
                 completed_at,
                 duration_ms,
                 time_to_first_token_ms,
+                token_usage: root_token_usage,
             })
         };
         self.send_event(turn_context.as_ref(), event).await;

@@ -190,6 +190,7 @@ fn activity_summary(item: &ThreadItem) -> Option<String> {
                 SubAgentActivityKind::Started => "Started",
                 SubAgentActivityKind::Interacted => "Contacted",
                 SubAgentActivityKind::Interrupted => "Interrupted",
+                SubAgentActivityKind::Errored => "Errored",
                 SubAgentActivityKind::Completed => "Completed",
             };
             return bounded_summary(&format!("{action} {agent_path}"));

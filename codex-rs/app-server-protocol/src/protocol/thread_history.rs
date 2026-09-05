@@ -1003,6 +1003,7 @@ impl ThreadHistoryBuilder {
             kind: payload.kind.into(),
             agent_thread_id: payload.agent_thread_id.to_string(),
             agent_path: String::from(payload.agent_path.clone()),
+            token_usage: None,
         });
     }
 
@@ -1915,6 +1916,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -1977,6 +1979,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -2090,6 +2093,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -2144,6 +2148,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -2224,6 +2229,7 @@ mod tests {
                 duration_ms: None,
                 time_to_first_token_ms: None,
                 error: None,
+                token_usage: None,
             }),
         ];
 
@@ -2313,6 +2319,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
         let items = events
@@ -2426,6 +2433,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -2524,6 +2532,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -2625,6 +2634,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ];
 
@@ -3011,6 +3021,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -3626,6 +3637,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-b".into(),
@@ -3672,6 +3684,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -3732,6 +3745,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-b".into(),
@@ -3778,6 +3792,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -3968,6 +3983,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-b".into(),
@@ -3992,6 +4008,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::AgentMessage(AgentMessageEvent {
                 message: "still in b".into(),
@@ -4008,6 +4025,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -4067,6 +4085,7 @@ mod tests {
                 completed_at: Some(20),
                 duration_ms: Some(10_000),
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -4150,6 +4169,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::TurnStarted(TurnStartedEvent {
                 turn_id: "turn-b".into(),
@@ -4224,6 +4244,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ];
 
@@ -4491,6 +4512,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
             EventMsg::Error(ErrorEvent {
                 misalignment: None,
@@ -4560,6 +4582,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -4616,6 +4639,7 @@ mod tests {
                 completed_at: Some(20),
                 duration_ms: Some(10_000),
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ];
 
@@ -4683,6 +4707,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ];
 
@@ -4762,6 +4787,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
             RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
                 thread_id: ThreadId::new(),
@@ -4771,6 +4797,7 @@ mod tests {
                     kind: CoreSubAgentActivityKind::Completed,
                     agent_thread_id: child_thread_id,
                     agent_path: child_path,
+                    token_usage: None,
                 }),
                 started_at_ms: None,
                 completed_at_ms: 0,
@@ -4787,6 +4814,7 @@ mod tests {
                 kind: crate::protocol::v2::SubAgentActivityKind::Completed,
                 agent_thread_id: child_thread_id.to_string(),
                 agent_path: "/root/worker".into(),
+                token_usage: None,
             }]
         );
     }
@@ -4821,6 +4849,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ];
 
@@ -4996,6 +5025,7 @@ mod tests {
                 completed_at: Some(20),
                 duration_ms: Some(123),
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         ));
 
@@ -5082,6 +5112,7 @@ mod tests {
                 completed_at: Some(20),
                 duration_ms: Some(123),
                 time_to_first_token_ms: None,
+                token_usage: None,
             })),
         ]);
 

@@ -13,7 +13,6 @@ use std::time::UNIX_EPOCH;
 use crate::agent::AgentControl;
 use crate::agent::AgentStatus;
 use crate::agent::agent_status_from_event;
-use crate::agent::status::is_final;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::attestation::AttestationProvider;
@@ -2185,15 +2184,33 @@ impl Session {
                 status
             }
         };
-        if !is_final(&status) {
+        if !matches!(
+            &status,
+            AgentStatus::Completed(_) | AgentStatus::Errored(_) | AgentStatus::Interrupted
+        ) {
             return;
         }
+
+        let root_turn_id = turn_context
+            .turn_metadata_state
+            .root_turn_id()
+            .unwrap_or_else(|| turn_context.sub_id.clone());
+        let Some(token_usage) = self.services.agent_control.complete_agent_turn_token_usage(
+            &root_turn_id,
+            self.thread_id,
+            child_agent_path.clone(),
+            &turn_context.sub_id,
+            Some(turn_context.model_info().slug.clone()),
+        ) else {
+            return;
+        };
 
         self.forward_child_completion_to_parent(
             turn_context,
             *parent_thread_id,
             child_agent_path,
             status,
+            token_usage,
         )
         .await;
     }
@@ -2205,6 +2222,7 @@ impl Session {
         parent_thread_id: ThreadId,
         child_agent_path: &codex_protocol::AgentPath,
         status: AgentStatus,
+        token_usage: codex_protocol::protocol::TokenUsageSnapshot,
     ) {
         let Some(parent_agent_path) = child_agent_path
             .as_str()
@@ -2214,9 +2232,7 @@ impl Session {
             return;
         };
 
-        if matches!(status, AgentStatus::Completed(_))
-            && let Some(parent_turn_id) = turn_context.turn_metadata_state.parent_turn_id()
-        {
+        if let Some(parent_turn_id) = turn_context.turn_metadata_state.parent_turn_id() {
             let initiating_thread_id = match turn_context
                 .turn_metadata_state
                 .initiating_agent_path()
@@ -2246,10 +2262,15 @@ impl Session {
                         initiating_thread_id,
                         parent_turn_id,
                         SubAgentActivityItem {
-                            id: format!("subagent-completed-{}", turn_context.sub_id),
-                            kind: SubAgentActivityKind::Completed,
+                            id: format!(
+                                "subagent-{}-{}",
+                                sub_agent_terminal_kind_name(&status),
+                                turn_context.sub_id
+                            ),
+                            kind: sub_agent_activity_kind(&status),
                             agent_thread_id: self.thread_id,
                             agent_path: child_agent_path.clone(),
+                            token_usage: Some(token_usage),
                         },
                     )
                     .await
@@ -4409,13 +4430,27 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         response_id: &str,
+        model: &str,
         usage: Option<&TokenUsage>,
         usage_metadata: Option<&ResponseUsageMetadata>,
     ) {
+        let root_turn_id = turn_context
+            .turn_metadata_state
+            .root_turn_id()
+            .unwrap_or_else(|| turn_context.sub_id.clone());
+        self.services.agent_control.record_response_token_usage(
+            &root_turn_id,
+            self.thread_id,
+            &turn_context.sub_id,
+            response_id,
+            model,
+            usage,
+        );
         self.send_event(
             turn_context,
             EventMsg::RawResponseCompleted(RawResponseCompletedEvent {
                 response_id: response_id.to_string(),
+                model: model.to_string(),
                 token_usage: usage.cloned(),
                 usage_metadata: usage_metadata.cloned(),
             }),
@@ -4721,6 +4756,34 @@ pub(crate) fn emit_subagent_session_started(
         subagent_source,
         created_at,
     });
+}
+
+fn sub_agent_activity_kind(status: &AgentStatus) -> SubAgentActivityKind {
+    match status {
+        AgentStatus::Completed(_) => SubAgentActivityKind::Completed,
+        AgentStatus::Errored(_) => SubAgentActivityKind::Errored,
+        AgentStatus::Interrupted => SubAgentActivityKind::Interrupted,
+        AgentStatus::PendingInit
+        | AgentStatus::Running
+        | AgentStatus::Shutdown
+        | AgentStatus::NotFound => {
+            unreachable!("only terminal turn statuses are forwarded as sub-agent activity")
+        }
+    }
+}
+
+fn sub_agent_terminal_kind_name(status: &AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Completed(_) => "completed",
+        AgentStatus::Errored(_) => "errored",
+        AgentStatus::Interrupted => "interrupted",
+        AgentStatus::PendingInit
+        | AgentStatus::Running
+        | AgentStatus::Shutdown
+        | AgentStatus::NotFound => {
+            unreachable!("only terminal turn statuses receive activity identifiers")
+        }
+    }
 }
 
 /// Builds hook configuration for one config snapshot, including any enabled plugin hooks.

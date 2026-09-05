@@ -37,7 +37,6 @@ async fn handle_interrupt_agent(
         session,
         turn,
         payload,
-        call_id,
         ..
     } = invocation;
     let arguments = function_arguments(payload)?;
@@ -64,7 +63,7 @@ async fn handle_interrupt_agent(
                 .to_string(),
         ));
     }
-    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+    let _receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
         FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
     })?;
     let status = session.services.agent_control.get_status(agent_id).await;
@@ -86,17 +85,6 @@ async fn handle_interrupt_agent(
         Err(err) => Err(collab_agent_error(agent_id, err)),
     };
     result?;
-    emit_sub_agent_activity(
-        &session,
-        &turn,
-        SubAgentActivityItem {
-            id: call_id,
-            agent_thread_id: agent_id,
-            agent_path: receiver_agent_path,
-            kind: SubAgentActivityKind::Interrupted,
-        },
-    )
-    .await;
 
     Ok(InterruptAgentResult {
         previous_status: status,

@@ -1928,6 +1928,7 @@ pub(crate) fn thread_start_params_from_config(
         developer_instructions: with_terminal_visualization_instructions(
             config, /*control_instructions*/ None,
         ),
+        experimental_raw_events: true,
         ..ThreadStartParams::default()
     }
 }
@@ -1942,6 +1943,7 @@ fn thread_resume_params_from_config(
     if model_settings == ResumeModelSettings::PreserveExistingThread {
         return ThreadResumeParams {
             thread_id: thread_id.to_string(),
+            experimental_raw_events: true,
             ..ThreadResumeParams::default()
         };
     }
@@ -1988,6 +1990,7 @@ fn thread_resume_params_from_config(
         developer_instructions: with_terminal_visualization_instructions(
             &config, /*control_instructions*/ None,
         ),
+        experimental_raw_events: true,
         ..ThreadResumeParams::default()
     }
 }
@@ -2032,6 +2035,7 @@ fn thread_fork_params_from_config(
         ),
         ephemeral: config.ephemeral,
         thread_source: Some(ThreadSource::User),
+        experimental_raw_events: true,
         ..ThreadForkParams::default()
     }
 }
@@ -2942,6 +2946,50 @@ mod tests {
 
         assert_eq!(sandbox_policy, None);
         assert_eq!(permissions, Some(expected_permissions));
+    }
+
+    #[tokio::test]
+    async fn thread_lifecycle_enables_raw_events_for_separator_token_usage() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let thread_id = ThreadId::new();
+
+        let start = thread_start_params_from_config(
+            &config,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+            /*session_start_source*/ None,
+        );
+        let resume = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+            ResumeModelSettings::OverrideFromCurrentConfig,
+        );
+        let rejoin = thread_resume_params_from_config(
+            config.clone(),
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+            ResumeModelSettings::PreserveExistingThread,
+        );
+        let fork = thread_fork_params_from_config(
+            config,
+            thread_id,
+            ThreadParamsMode::Embedded,
+            /*remote_cwd_override*/ None,
+        );
+
+        assert_eq!(
+            [
+                start.experimental_raw_events,
+                resume.experimental_raw_events,
+                rejoin.experimental_raw_events,
+                fork.experimental_raw_events,
+            ],
+            [true; 4]
+        );
     }
 
     #[tokio::test]

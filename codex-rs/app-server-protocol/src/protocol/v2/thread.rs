@@ -32,9 +32,12 @@ pub use codex_protocol::dynamic_tools::DynamicToolNamespaceTool;
 pub use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::ModelTokenUsageSnapshot as CoreModelTokenUsageSnapshot;
+use codex_protocol::protocol::RootTurnTokenUsageSnapshot as CoreRootTurnTokenUsageSnapshot;
 use codex_protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
 use codex_protocol::protocol::TokenUsage as CoreTokenUsage;
 use codex_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
+use codex_protocol::protocol::TokenUsageSnapshot as CoreTokenUsageSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path_uri::LegacyAppPathString;
 use codex_utils_path_uri::PathUri;
@@ -152,7 +155,7 @@ pub struct ThreadStartParams {
     #[ts(optional = nullable)]
     pub mock_experimental_field: Option<String>,
     /// If true, opt into emitting raw Responses API items on the event stream.
-    /// This is for internal use only (e.g. Codex Cloud).
+    /// This is for internal use only (e.g. the Codex TUI).
     #[experimental("thread/start.experimentalRawEvents")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub experimental_raw_events: bool,
@@ -407,6 +410,11 @@ pub struct ThreadResumeParams {
     #[experimental("thread/resume.initialTurnsPage")]
     #[ts(optional = nullable)]
     pub initial_turns_page: Option<ThreadResumeInitialTurnsPageParams>,
+    /// If true, opt into emitting raw Responses API items on the event stream.
+    /// This is for internal use only (e.g. the Codex TUI).
+    #[experimental("thread/resume.experimentalRawEvents")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub experimental_raw_events: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
@@ -598,6 +606,11 @@ pub struct ThreadForkParams {
     #[experimental("thread/fork.deferGoalContinuation")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub defer_goal_continuation: bool,
+    /// If true, opt into emitting raw Responses API items on the event stream.
+    /// This is for internal use only (e.g. the Codex TUI).
+    #[experimental("thread/fork.experimentalRawEvents")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub experimental_raw_events: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS, ExperimentalApi)]
@@ -1868,6 +1881,7 @@ pub struct RawResponseCompletedNotification {
     pub thread_id: String,
     pub turn_id: String,
     pub response_id: String,
+    pub model: String,
     pub usage: Option<TokenUsageBreakdown>,
     pub usage_metadata: Option<ResponseUsageMetadata>,
 }
@@ -1911,7 +1925,7 @@ impl From<CoreTokenUsageInfo> for ThreadTokenUsage {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct TokenUsageBreakdown {
@@ -1939,6 +1953,68 @@ impl From<CoreTokenUsage> for TokenUsageBreakdown {
             cache_write_input_tokens: value.cache_write_input_tokens,
             output_tokens: value.output_tokens,
             reasoning_output_tokens: value.reasoning_output_tokens,
+        }
+    }
+}
+
+/// Token usage attributed to one exact model inside an immutable lifecycle snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ModelTokenUsageSnapshot {
+    pub model: Option<String>,
+    pub usage: Option<TokenUsageBreakdown>,
+    pub incomplete: bool,
+}
+
+impl From<CoreModelTokenUsageSnapshot> for ModelTokenUsageSnapshot {
+    fn from(value: CoreModelTokenUsageSnapshot) -> Self {
+        Self {
+            model: value.model,
+            usage: value.usage.map(Into::into),
+            incomplete: value.incomplete,
+        }
+    }
+}
+
+/// Per-model token totals captured at one display or lifecycle boundary.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct TokenUsageSnapshot {
+    pub models: Vec<ModelTokenUsageSnapshot>,
+}
+
+impl From<CoreTokenUsageSnapshot> for TokenUsageSnapshot {
+    fn from(value: CoreTokenUsageSnapshot) -> Self {
+        Self {
+            models: value.models.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Root, agent, and combined per-model totals frozen at root-turn completion.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct RootTurnTokenUsageSnapshot {
+    pub turn: TokenUsageSnapshot,
+    pub agents: TokenUsageSnapshot,
+    pub total: TokenUsageSnapshot,
+    #[ts(type = "number")]
+    pub agent_count: u64,
+    #[ts(type = "number")]
+    pub running_agent_count: u64,
+}
+
+impl From<CoreRootTurnTokenUsageSnapshot> for RootTurnTokenUsageSnapshot {
+    fn from(value: CoreRootTurnTokenUsageSnapshot) -> Self {
+        Self {
+            turn: value.turn.into(),
+            agents: value.agents.into(),
+            total: value.total.into(),
+            agent_count: value.agent_count,
+            running_agent_count: value.running_agent_count,
         }
     }
 }

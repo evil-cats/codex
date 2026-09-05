@@ -780,6 +780,7 @@ fn session_event_to_analytics_notification(
                     duration_ms: completed.duration_ms,
                     ..analytics_turn(&completed.turn_id, status)
                 },
+                token_usage: completed.token_usage.clone().map(Into::into),
             })
         }
         EventMsg::TurnAborted(aborted) => {
@@ -794,6 +795,7 @@ fn session_event_to_analytics_notification(
                         TurnStatus::Interrupted,
                     )
                 },
+                token_usage: None,
             })
         }
         // Legacy tool events accompany canonical items. Messages, reasoning, and review

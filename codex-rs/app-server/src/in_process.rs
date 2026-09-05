@@ -1008,6 +1008,7 @@ mod tests {
                     completed_at: Some(0),
                     duration_ms: None,
                 },
+                token_usage: None,
             })
         ));
         assert!(server_notification_requires_delivery(

@@ -1227,6 +1227,7 @@ async fn submit_user_message_queues_while_compaction_turn_is_running() {
                 completed_at: Some(0),
                 duration_ms: None,
             },
+            token_usage: None,
         }),
         /*replay_kind*/ None,
     );

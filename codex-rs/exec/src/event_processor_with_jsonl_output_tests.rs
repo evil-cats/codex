@@ -48,6 +48,7 @@ fn failed_turn_does_not_overwrite_output_last_message_file() {
                 completed_at: Some(0),
                 duration_ms: None,
             },
+            token_usage: None,
         },
     ));
 

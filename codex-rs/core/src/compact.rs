@@ -763,6 +763,17 @@ async fn drain_to_completed(
     responses_metadata: &CodexResponsesMetadata,
     prompt: &Prompt,
 ) -> CodexResult<String> {
+    let root_turn_id = turn_context
+        .turn_metadata_state
+        .root_turn_id()
+        .unwrap_or_else(|| turn_context.sub_id.clone());
+    let mut response_model = turn_context.model_info().slug.clone();
+    sess.services.agent_control.begin_model_call_token_usage(
+        &root_turn_id,
+        sess.thread_id,
+        &turn_context.sub_id,
+        &response_model,
+    );
     let mut stream = client_session
         .stream(
             prompt,
@@ -792,6 +803,15 @@ async fn drain_to_completed(
             Ok(ResponseEvent::ServerReasoningIncluded(included)) => {
                 sess.set_server_reasoning_included(included).await;
             }
+            Ok(ResponseEvent::ServerModel(server_model)) => {
+                response_model = server_model;
+                sess.services.agent_control.update_model_call_token_usage(
+                    &root_turn_id,
+                    sess.thread_id,
+                    &turn_context.sub_id,
+                    &response_model,
+                );
+            }
             Ok(ResponseEvent::RateLimits(snapshot)) => {
                 sess.update_rate_limits(turn_context, snapshot).await;
             }
@@ -804,6 +824,7 @@ async fn drain_to_completed(
                 sess.record_observed_response_completed(
                     turn_context,
                     &response_id,
+                    &response_model,
                     token_usage.as_ref(),
                     usage_metadata.as_ref(),
                 )

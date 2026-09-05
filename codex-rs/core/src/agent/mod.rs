@@ -4,6 +4,7 @@ pub(crate) mod control;
 mod registry;
 pub(crate) mod role;
 pub(crate) mod status;
+mod token_usage;
 
 pub(crate) use codex_protocol::protocol::AgentStatus;
 pub(crate) use control::AgentControl;

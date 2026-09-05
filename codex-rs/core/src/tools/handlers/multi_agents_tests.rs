@@ -59,6 +59,7 @@ use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentActivityKind;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
@@ -1375,6 +1376,7 @@ async fn multi_agent_v2_list_agents_returns_completed_status() {
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         )
         .await;
@@ -1809,6 +1811,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         )
         .await;
@@ -1851,6 +1854,7 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
+                token_usage: None,
             }),
         )
         .await;
@@ -3689,7 +3693,7 @@ async fn multi_agent_v2_wait_agent_does_not_return_completed_content() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_interrupt_agent_accepts_task_name_target() {
+async fn multi_agent_v2_interrupt_agent_waits_for_turn_aborted_and_emits_one_terminal_activity() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let root = manager
@@ -3792,6 +3796,78 @@ async fn multi_agent_v2_interrupt_agent_accepts_task_name_target() {
     assert!(
         !ops.iter()
             .any(|(thread_id, op)| *thread_id == child_id && matches!(op, Op::Interrupt))
+    );
+
+    let aborted_turn_id = timeout(Duration::from_secs(2), async {
+        loop {
+            let event = worker_thread
+                .next_event()
+                .await
+                .expect("worker event stream should stay open");
+            if let EventMsg::TurnAborted(event) = event.msg {
+                assert_eq!(event.reason, TurnAbortReason::Interrupted);
+                return event.turn_id.expect("aborted worker turn ID");
+            }
+        }
+    })
+    .await
+    .expect("interrupt request should eventually produce worker TurnAborted");
+
+    let terminal = timeout(Duration::from_secs(2), async {
+        loop {
+            let event = root
+                .thread
+                .next_event()
+                .await
+                .expect("root event stream should stay open");
+            if let EventMsg::ItemCompleted(ItemCompletedEvent {
+                turn_id,
+                item: TurnItem::SubAgentActivity(activity),
+                ..
+            }) = event.msg
+                && activity.kind == SubAgentActivityKind::Interrupted
+            {
+                return (turn_id, activity);
+            }
+        }
+    })
+    .await
+    .expect("actual TurnAborted should publish terminal activity");
+    assert_eq!(terminal.0, turn.sub_id);
+    assert_eq!(terminal.1.agent_thread_id, agent_id);
+    assert_eq!(
+        terminal.1.id,
+        format!("subagent-interrupted-{aborted_turn_id}")
+    );
+    let token_usage = terminal
+        .1
+        .token_usage
+        .expect("terminal activity should carry token usage");
+    assert_eq!(token_usage.models.len(), 1);
+    assert_eq!(token_usage.models[0].usage, None);
+    assert!(token_usage.models[0].incomplete);
+
+    let duplicate = timeout(Duration::from_millis(100), async {
+        loop {
+            let event = root
+                .thread
+                .next_event()
+                .await
+                .expect("root event stream should stay open");
+            if let EventMsg::ItemCompleted(ItemCompletedEvent {
+                item: TurnItem::SubAgentActivity(activity),
+                ..
+            }) = event.msg
+                && activity.kind == SubAgentActivityKind::Interrupted
+            {
+                return activity;
+            }
+        }
+    })
+    .await;
+    assert!(
+        duplicate.is_err(),
+        "one child turn must publish only one terminal activity"
     );
 }
 

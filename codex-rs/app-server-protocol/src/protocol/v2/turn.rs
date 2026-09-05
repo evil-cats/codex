@@ -509,6 +509,7 @@ pub struct Usage {
 pub struct TurnCompletedNotification {
     pub thread_id: String,
     pub turn: Turn,
+    pub token_usage: Option<super::RootTurnTokenUsageSnapshot>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

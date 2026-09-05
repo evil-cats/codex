@@ -1920,6 +1920,9 @@ pub struct RawResponseItemEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 pub struct RawResponseCompletedEvent {
     pub response_id: String,
+    /// Model selected for this response, preferring the server-reported slug.
+    #[serde(default)]
+    pub model: String,
     pub token_usage: Option<TokenUsage>,
     pub usage_metadata: Option<crate::ResponseUsageMetadata>,
 }
@@ -2161,6 +2164,10 @@ pub struct TurnCompleteEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(type = "number | null", optional)]
     pub time_to_first_token_ms: Option<i64>,
+    /// Immutable token totals for a completed root turn. Child turns and old rollouts omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub token_usage: Option<RootTurnTokenUsageSnapshot>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -2232,6 +2239,95 @@ pub struct TokenUsage {
     #[schemars(skip)]
     #[ts(skip)]
     pub codex_rollout_budget_units: Option<serde_json::Number>,
+}
+
+/// Token usage attributed to one exact model slug within a bounded snapshot.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct ModelTokenUsageSnapshot {
+    /// `None` is reserved for an incomplete call whose model could not be recovered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model: Option<String>,
+    /// `None` means that no completed response supplied counters for this model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub usage: Option<TokenUsage>,
+    /// At least one response or in-flight call in this model bucket has unknown counters.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
+}
+
+/// Immutable, per-model token totals for one display or lifecycle boundary.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct TokenUsageSnapshot {
+    pub models: Vec<ModelTokenUsageSnapshot>,
+}
+
+/// Immutable token totals captured when a root turn reaches its terminal event.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct RootTurnTokenUsageSnapshot {
+    pub turn: TokenUsageSnapshot,
+    pub agents: TokenUsageSnapshot,
+    pub total: TokenUsageSnapshot,
+    #[ts(type = "number")]
+    pub agent_count: u64,
+    #[ts(type = "number")]
+    pub running_agent_count: u64,
+}
+
+/// Orders model slugs for token reports by numeric GPT version and known model tier.
+pub fn compare_model_slugs(left: &str, right: &str) -> std::cmp::Ordering {
+    let left_parts = parse_gpt_model_slug(left);
+    let right_parts = parse_gpt_model_slug(right);
+    match (left_parts, right_parts) {
+        (Some((left_version, left_suffix)), Some((right_version, right_suffix))) => {
+            let version_order = compare_model_versions(&left_version, &right_version).reverse();
+            if version_order != std::cmp::Ordering::Equal {
+                return version_order;
+            }
+            let tier_order = model_tier_rank(right_suffix).cmp(&model_tier_rank(left_suffix));
+            if tier_order != std::cmp::Ordering::Equal {
+                return tier_order;
+            }
+            left.cmp(right)
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => left.cmp(right),
+    }
+}
+
+fn parse_gpt_model_slug(model: &str) -> Option<(Vec<u64>, &str)> {
+    let remainder = model.strip_prefix("gpt-")?;
+    let (version, suffix) = remainder.split_once('-').unwrap_or((remainder, ""));
+    let version = version
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<Vec<u64>, _>>()
+        .ok()?;
+    (!version.is_empty()).then_some((version, suffix))
+}
+
+fn compare_model_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
+    let component_count = left.len().max(right.len());
+    (0..component_count)
+        .map(|index| {
+            left.get(index)
+                .copied()
+                .unwrap_or_default()
+                .cmp(&right.get(index).copied().unwrap_or_default())
+        })
+        .find(|ordering| *ordering != std::cmp::Ordering::Equal)
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+fn model_tier_rank(suffix: &str) -> u8 {
+    match suffix {
+        "sol" => 3,
+        "terra" => 2,
+        "luna" => 1,
+        _ => 0,
+    }
 }
 
 /// Best-effort Responses API usage observed for one completed response.
@@ -4296,6 +4392,7 @@ pub enum SubAgentActivityKind {
     Started,
     Interacted,
     Interrupted,
+    Errored,
     Completed,
 }
 
@@ -4412,6 +4509,10 @@ pub struct CollabResumeEndEvent {
     /// resume.
     pub status: AgentStatus,
 }
+
+#[cfg(test)]
+#[path = "token_usage_snapshot_tests.rs"]
+mod token_usage_snapshot_tests;
 
 #[cfg(test)]
 mod tests {

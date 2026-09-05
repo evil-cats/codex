@@ -54,6 +54,9 @@
   },
   "description": "Internal-only notification containing the exact usage from one upstream Responses API completion.",
   "properties": {
+    "model": {
+      "type": "string"
+    },
     "responseId": {
       "type": "string"
     },
@@ -85,6 +88,7 @@
     }
   },
   "required": [
+    "model",
     "responseId",
     "threadId",
     "turnId"

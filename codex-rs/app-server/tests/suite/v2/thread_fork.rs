@@ -91,6 +91,67 @@ const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+#[tokio::test]
+async fn thread_fork_raw_events_for_separator_token_usage() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
+    let conversation_id = create_fake_rollout(
+        codex_home.path(),
+        "2025-01-05T12-00-00",
+        "2025-01-05T12:00:00Z",
+        "Saved user message",
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let mut mcp = TestAppServer::builder()
+        .with_codex_home(codex_home.path())
+        .build_initialized()
+        .await?;
+
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: conversation_id,
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .await?;
+    let ThreadForkResponse { thread, .. } =
+        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(fork_id)).await??;
+
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "Continue".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let _: TurnStartResponse = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(turn_id)).await??;
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("rawResponse/completed"),
+    )
+    .await??;
+
+    assert_eq!(
+        notification
+            .params
+            .as_ref()
+            .and_then(|params| params.get("threadId"))
+            .and_then(Value::as_str),
+        Some(thread.id.as_str())
+    );
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    Ok(())
+}
+
 async fn list_threads(mcp: &mut TestAppServer) -> Result<ThreadListResponse> {
     let list_id = mcp
         .send_thread_list_request(ThreadListParams {
@@ -1388,6 +1449,7 @@ async fn thread_fork_creates_reference_backed_paginated_thread() -> Result<()> {
             completed_at: Some(20),
             duration_ms: Some(10_000),
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
     ] {
         append_rollout_item_to_path(source_path.as_path(), &item).await?;
@@ -1819,6 +1881,7 @@ async fn assert_thread_fork_freezes_active_paginated_turn_as_interrupted(
             completed_at: Some(20),
             duration_ms: Some(10_000),
             time_to_first_token_ms: None,
+            token_usage: None,
         })),
     )
     .await?;

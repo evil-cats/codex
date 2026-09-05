@@ -1177,6 +1177,51 @@ fn thread_fork_last_turn_id_round_trips() {
 }
 
 #[test]
+fn thread_lifecycle_raw_events_opt_in_defaults_to_omitted() {
+    let disabled = [
+        serde_json::to_value(ThreadStartParams::default()).expect("thread/start params serialize"),
+        serde_json::to_value(ThreadResumeParams {
+            thread_id: "thread-1".to_string(),
+            ..Default::default()
+        })
+        .expect("thread/resume params serialize"),
+        serde_json::to_value(ThreadForkParams {
+            thread_id: "thread-1".to_string(),
+            ..Default::default()
+        })
+        .expect("thread/fork params serialize"),
+    ];
+    assert_eq!(
+        disabled.map(|value| value.get("experimentalRawEvents").cloned()),
+        [None, None, None]
+    );
+
+    let enabled = [
+        serde_json::to_value(ThreadStartParams {
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .expect("thread/start params serialize"),
+        serde_json::to_value(ThreadResumeParams {
+            thread_id: "thread-1".to_string(),
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .expect("thread/resume params serialize"),
+        serde_json::to_value(ThreadForkParams {
+            thread_id: "thread-1".to_string(),
+            experimental_raw_events: true,
+            ..Default::default()
+        })
+        .expect("thread/fork params serialize"),
+    ];
+    assert_eq!(
+        enabled.map(|value| value.get("experimentalRawEvents").cloned()),
+        [Some(json!(true)), Some(json!(true)), Some(json!(true))]
+    );
+}
+
+#[test]
 fn fs_get_metadata_response_round_trips_minimal_fields() {
     let response = FsGetMetadataResponse {
         is_directory: false,
@@ -3317,6 +3362,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         agent_path: codex_protocol::AgentPath::root()
             .join("worker")
             .expect("worker path"),
+        token_usage: None,
     });
 
     assert_eq!(
@@ -3326,6 +3372,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             kind: SubAgentActivityKind::Completed,
             agent_thread_id: receiver_thread_id.to_string(),
             agent_path: "/root/worker".to_string(),
+            token_usage: None,
         }
     );
 
