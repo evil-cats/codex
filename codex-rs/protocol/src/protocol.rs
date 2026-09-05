@@ -2338,6 +2338,12 @@ pub struct TokenUsageRecord {
     pub session_id: SessionId,
     pub root_turn_id: String,
     pub response_id: String,
+    /// Итоговая модель ответа; отсутствует в записях старого формата.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Историческая стоимость ответа в пикокредитах; отсутствует либо неизвестна в старых записях.
+    #[serde(default)]
+    pub credit_cost_picocredits: Option<String>,
     pub usage: TokenUsage,
     pub turn_token_usage: TokenUsage,
     pub thread_token_usage: TokenUsage,

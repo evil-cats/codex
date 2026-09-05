@@ -945,6 +945,26 @@ fn separator_credit_rates() -> CreditRatesState {
 }
 
 #[test]
+/// Первый разделитель показывает только накопление, поскольку предыдущей границы ещё нет.
+fn separator_token_usage_omits_delta_before_first_separator() {
+    let cell =
+        FinalMessageSeparator::new(/*elapsed_seconds*/ None, /*runtime_metrics*/ None)
+            .with_interval_token_usage(SeparatorTokenUsageSnapshot {
+                cumulative: TokenUsageSnapshot {
+                    models: vec![separator_usage("gpt-5.6-sol", 51_273, 50_688, 1_113, 952)],
+                },
+                delta: None,
+            })
+            .with_credit_rates(separator_credit_rates());
+
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 1,113 / 952 out ──────────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    assert_eq!(
+        render_lines(&cell.raw_lines()),
+        vec!["Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 1,113 / 952 out"]
+    );
+}
+
+#[test]
 /// Обычный разделитель замораживает накопление хода и дельту после предыдущего разделителя.
 fn separator_token_usage_renders_interval() {
     let cell =
@@ -953,9 +973,9 @@ fn separator_token_usage_renders_interval() {
                 cumulative: TokenUsageSnapshot {
                     models: vec![separator_usage("gpt-5.6-sol", 370_982, 370_304, 161, 20)],
                 },
-                delta: TokenUsageSnapshot {
+                delta: Some(TokenUsageSnapshot {
                     models: vec![separator_usage("gpt-5.6-sol", 120_150, 120_000, 40, 15)],
-                },
+                }),
             })
             .with_credit_rates(separator_credit_rates());
 
@@ -978,9 +998,9 @@ fn separator_token_usage_preserves_full_raw_line_when_display_is_truncated() {
                 separator_usage("gpt-5.6-luna", 93_920, 92_800, 4_900, 2_410),
             ],
         },
-        delta: TokenUsageSnapshot {
+        delta: Some(TokenUsageSnapshot {
             models: vec![separator_usage("gpt-5.6-luna", 50_500, 50_000, 900, 410)],
-        },
+        }),
     };
     let cell =
         FinalMessageSeparator::new(/*elapsed_seconds*/ None, /*runtime_metrics*/ None)

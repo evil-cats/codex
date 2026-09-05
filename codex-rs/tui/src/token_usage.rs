@@ -65,11 +65,11 @@ pub(crate) struct TokenUsageInfo {
     pub(crate) model_context_window: Option<i64>,
 }
 
-/// Неизменяемая пара накопления видимого хода и его последнего интервала.
+/// Неизменяемое накопление видимого хода и необязательная дельта после прошлой границы.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SeparatorTokenUsageSnapshot {
     pub(crate) cumulative: TokenUsageSnapshot,
-    pub(crate) delta: TokenUsageSnapshot,
+    pub(crate) delta: Option<TokenUsageSnapshot>,
 }
 
 impl fmt::Display for TokenUsage {
@@ -122,7 +122,7 @@ pub(crate) fn format_token_usage_snapshot(
         .join("; ")
 }
 
-/// Форматирует накопление каждой модели вместе с дельтой последнего разделителя.
+/// Форматирует накопление каждой модели и существующую дельту последнего разделителя.
 pub(crate) fn format_separator_token_usage_snapshot(
     snapshot: &SeparatorTokenUsageSnapshot,
     credit_rates: &CreditRatesState,
@@ -139,13 +139,15 @@ pub(crate) fn format_separator_token_usage_snapshot(
     });
     models
         .into_iter()
-        .map(|model_usage| {
-            let delta = snapshot
-                .delta
-                .models
-                .iter()
-                .find(|delta| delta.model.as_deref() == model_usage.model.as_deref());
-            format_model_token_usage_with_delta(model_usage, delta, credit_rates)
+        .map(|model_usage| match &snapshot.delta {
+            Some(delta) => {
+                let delta = delta
+                    .models
+                    .iter()
+                    .find(|delta| delta.model.as_deref() == model_usage.model.as_deref());
+                format_model_token_usage_with_delta(model_usage, delta, credit_rates)
+            }
+            None => format_model_token_usage(model_usage, credit_rates),
         })
         .collect::<Vec<_>>()
         .join("; ")

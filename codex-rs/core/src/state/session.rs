@@ -164,6 +164,8 @@ impl SessionState {
         session_id: SessionId,
         root_turn_id: String,
         response_id: String,
+        model: &str,
+        credit_cost_picocredits: Option<String>,
         usage: &TokenUsage,
     ) -> TokenUsageRecord {
         let mut turn_token_usage = self
@@ -187,6 +189,8 @@ impl SessionState {
             session_id,
             root_turn_id,
             response_id,
+            model: Some(model.to_string()),
+            credit_cost_picocredits,
             usage: usage.clone(),
             turn_token_usage,
             thread_token_usage,

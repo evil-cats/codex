@@ -1,6 +1,8 @@
-//! Verifies observed Responses API usage is durably recorded in rollout history.
+//! Проверяет устойчивую запись наблюдаемого Responses API usage в историю rollout.
 
 use anyhow::Result;
+use codex_config::CreditRatesState;
+use codex_config::parse_credit_rates;
 use codex_history::RolloutItem;
 use codex_history::RolloutLine;
 use codex_protocol::SessionId;
@@ -27,6 +29,25 @@ fn token_usage_records(path: &std::path::Path) -> Vec<TokenUsageRecord> {
             _ => None,
         })
         .collect()
+}
+
+fn credit_rates(input_rate: u64) -> CreditRatesState {
+    let loaded = parse_credit_rates(&format!(
+        r#"{{
+          "schema_version": 1,
+          "unit": "credits_per_million_tokens",
+          "models": {{
+            "gpt-5.6-sol": {{
+              "input": {input_rate},
+              "cached_input": 0,
+              "output": 0
+            }}
+          }}
+        }}"#
+    ))
+    .expect("valid credit rates");
+    assert_eq!(loaded.invalid_model_entries, Vec::<String>::new());
+    CreditRatesState::Loaded(loaded.rates)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -72,7 +93,11 @@ async fn observed_response_usage_accumulates_per_turn_and_thread() -> Result<()>
         ],
     )
     .await;
-    let test = test_codex().build_with_auto_env(&server).await?;
+    let test = test_codex()
+        .with_model("gpt-5.6-sol")
+        .with_config(|config| config.credit_rates = credit_rates(100))
+        .build_with_auto_env(&server)
+        .await?;
     let rollout_path = test.codex.rollout_path().expect("rollout path");
     let home = test.home.clone();
 
@@ -80,6 +105,8 @@ async fn observed_response_usage_accumulates_per_turn_and_thread() -> Result<()>
     test.codex.shutdown_and_wait().await?;
 
     let resumed = test_codex()
+        .with_model("gpt-5.6-sol")
+        .with_config(|config| config.credit_rates = credit_rates(200))
         .resume(&server, home, rollout_path.clone())
         .await?;
     for prompt in ["second", "third"] {
@@ -95,15 +122,35 @@ async fn observed_response_usage_accumulates_per_turn_and_thread() -> Result<()>
             .map(|record| {
                 (
                     record.response_id.as_str(),
+                    record.model.as_deref(),
+                    record.credit_cost_picocredits.as_deref(),
                     record.turn_token_usage.total_tokens,
                     record.thread_token_usage.total_tokens,
                 )
             })
             .collect::<Vec<_>>(),
         vec![
-            ("response-a", 120, 120),
-            ("response-b", 200, 200),
-            ("response-c", 30, 230),
+            (
+                "response-a",
+                Some("gpt-5.6-sol"),
+                Some("12000000000"),
+                120,
+                120,
+            ),
+            (
+                "response-b",
+                Some("gpt-5.6-sol"),
+                Some("8000000000"),
+                200,
+                200,
+            ),
+            (
+                "response-c",
+                Some("gpt-5.6-sol"),
+                Some("6000000000"),
+                30,
+                230,
+            ),
         ]
     );
     assert_eq!(records[0].turn_id, records[1].turn_id);

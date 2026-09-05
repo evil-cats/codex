@@ -20,6 +20,7 @@ pub(super) struct SeparatorTokenUsage {
     since_turn_start: HashMap<Option<String>, ModelAggregate>,
     since_separator: HashMap<Option<String>, ModelAggregate>,
     seen_responses: HashSet<String>,
+    has_previous_separator: bool,
 }
 
 #[derive(Default)]
@@ -35,6 +36,7 @@ impl SeparatorTokenUsage {
         self.since_turn_start.clear();
         self.since_separator.clear();
         self.seen_responses.clear();
+        self.has_previous_separator = false;
     }
 
     /// Учитывает ответ активного хода, если его ещё не доставляли этому аккумулятору.
@@ -55,15 +57,16 @@ impl SeparatorTokenUsage {
             .record(notification.usage.as_ref());
     }
 
-    /// Замораживает итог хода и последний интервал, затем очищает только интервал.
+    /// Замораживает итог хода и существующий интервал, затем отмечает новую границу.
     pub(super) fn take_snapshot(&mut self) -> Option<SeparatorTokenUsageSnapshot> {
+        let has_previous_separator = std::mem::replace(&mut self.has_previous_separator, true);
         if self.since_separator.is_empty() {
             return None;
         }
         let since_separator = std::mem::take(&mut self.since_separator);
         Some(SeparatorTokenUsageSnapshot {
             cumulative: snapshot(&self.since_turn_start),
-            delta: snapshot(&since_separator),
+            delta: has_previous_separator.then(|| snapshot(&since_separator)),
         })
     }
 }

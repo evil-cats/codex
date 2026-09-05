@@ -25,6 +25,8 @@ async fn record_token_usage_continues_restored_totals() {
         session_id,
         root_turn_id: "root-turn".to_string(),
         response_id: "response-c".to_string(),
+        model: None,
+        credit_cost_picocredits: None,
         usage: usage(30),
         turn_token_usage: usage(30),
         thread_token_usage: usage(230),
@@ -35,6 +37,8 @@ async fn record_token_usage_continues_restored_totals() {
         session_id,
         "root-turn".to_string(),
         "response-d".to_string(),
+        "gpt-5.6-sol",
+        Some("123456789".to_string()),
         &usage(20),
     );
     assert_eq!(
@@ -45,10 +49,42 @@ async fn record_token_usage_continues_restored_totals() {
             session_id,
             root_turn_id: "root-turn".to_string(),
             response_id: "response-d".to_string(),
+            model: Some("gpt-5.6-sol".to_string()),
+            credit_cost_picocredits: Some("123456789".to_string()),
             usage: usage(20),
             turn_token_usage: usage(50),
             thread_token_usage: usage(250),
         }
+    );
+}
+
+#[tokio::test]
+async fn token_usage_record_accepts_legacy_json_without_model_or_credit_cost() {
+    let thread_id = ThreadId::new();
+    let legacy = TokenUsageRecord {
+        thread_id,
+        turn_id: "turn".to_string(),
+        session_id: SessionId::from(thread_id),
+        root_turn_id: "turn".to_string(),
+        response_id: "response".to_string(),
+        model: None,
+        credit_cost_picocredits: None,
+        usage: TokenUsage::default(),
+        turn_token_usage: TokenUsage::default(),
+        thread_token_usage: TokenUsage::default(),
+    };
+    let mut legacy_json = serde_json::to_value(&legacy)
+        .expect("serialize token usage record")
+        .as_object()
+        .cloned()
+        .expect("token usage record should be an object");
+    legacy_json.remove("model");
+    legacy_json.remove("credit_cost_picocredits");
+
+    assert_eq!(
+        serde_json::from_value::<TokenUsageRecord>(legacy_json.into())
+            .expect("deserialize legacy token usage record"),
+        legacy
     );
 }
 

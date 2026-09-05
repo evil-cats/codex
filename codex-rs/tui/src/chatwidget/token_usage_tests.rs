@@ -86,8 +86,8 @@ fn separator_interval_accepts_only_the_active_turn_and_deduplicates_responses() 
     assert_eq!(
         interval.take_snapshot(),
         Some(SeparatorTokenUsageSnapshot {
-            cumulative: expected.clone(),
-            delta: expected,
+            cumulative: expected,
+            delta: None,
         })
     );
     interval.record_response(&first);
@@ -106,7 +106,7 @@ fn separator_usage_keeps_turn_total_and_resets_at_the_next_turn() {
         Some(usage(100, 40, 20, 5)),
     ));
     let first = accumulator.take_snapshot().expect("first divider snapshot");
-    assert_eq!(first.cumulative, first.delta);
+    assert_eq!(first.delta, None);
 
     accumulator.record_response(&completed(
         "turn-1",
@@ -127,13 +127,13 @@ fn separator_usage_keeps_turn_total_and_resets_at_the_next_turn() {
                     incomplete: false,
                 }],
             },
-            delta: TokenUsageSnapshot {
+            delta: Some(TokenUsageSnapshot {
                 models: vec![ModelTokenUsageSnapshot {
                     model: Some("gpt-5.6-sol".to_string()),
                     usage: Some(usage(200, 100, 30, 10)),
                     incomplete: false,
                 }],
-            },
+            }),
         }
     );
 
@@ -154,7 +154,7 @@ fn separator_usage_keeps_turn_total_and_resets_at_the_next_turn() {
     let next_turn = accumulator
         .take_snapshot()
         .expect("next turn divider snapshot");
-    assert_eq!(next_turn.cumulative, next_turn.delta);
+    assert_eq!(next_turn.delta, None);
     assert_eq!(
         next_turn.cumulative,
         TokenUsageSnapshot {
@@ -194,8 +194,25 @@ fn separator_interval_preserves_missing_usage_as_partial_or_unavailable() {
     let snapshot = interval.take_snapshot().expect("interval snapshot");
     assert_eq!(
         crate::token_usage::format_separator_token_usage_snapshot(&snapshot, &credit_rates()),
-        "[gpt-5.6-sol] 0.03Ƶ+ (+0.03Ƶ+), 120 (+120) in, 80 (+80) cached, 40 (+40) / 17 (+17) out, partial; [gpt-5.6-luna] ?Ƶ (+?Ƶ), unavailable"
+        "[gpt-5.6-sol] 0.03Ƶ+, 120 in, 80 cached, 40 / 17 out, partial; [gpt-5.6-luna] ?Ƶ, unavailable"
     );
+}
+
+#[test]
+/// Пустой первый разделитель всё равно создаёт границу для следующей дельты.
+fn separator_without_usage_marks_the_next_interval_as_delta() {
+    let mut accumulator = SeparatorTokenUsage::default();
+    accumulator.start_turn("turn".to_string());
+    assert_eq!(accumulator.take_snapshot(), None);
+
+    accumulator.record_response(&completed(
+        "turn",
+        "response",
+        "gpt-5.6-sol",
+        Some(usage(100, 40, 20, 5)),
+    ));
+    let snapshot = accumulator.take_snapshot().expect("interval snapshot");
+    assert_eq!(snapshot.delta, Some(snapshot.cumulative.clone()));
 }
 
 #[test]

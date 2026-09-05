@@ -4459,6 +4459,16 @@ impl Session {
         let Some(usage) = usage else {
             return;
         };
+        let credit_cost_picocredits = turn_context
+            .config
+            .credit_rates
+            .cost_for_model(
+                model,
+                u64::try_from(usage.non_cached_input()).unwrap_or_default(),
+                u64::try_from(usage.cached_input()).unwrap_or_default(),
+                u64::try_from(usage.output_tokens.max(0)).unwrap_or_default(),
+            )
+            .map(|cost| cost.picocredits().to_string());
         let record = self.state.lock().await.record_token_usage(
             self.thread_id,
             &turn_context.sub_id,
@@ -4468,6 +4478,8 @@ impl Session {
                 .root_turn_id()
                 .unwrap_or_else(|| turn_context.sub_id.clone()),
             response_id.to_string(),
+            model,
+            credit_cost_picocredits,
             usage,
         );
         self.persist_rollout_items(&[RolloutItem::TokenUsageRecord(record)])
