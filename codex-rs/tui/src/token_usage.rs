@@ -1,9 +1,11 @@
-//! TUI token usage models and display formatting.
+//! Модели токенов TUI и форматирование токенов с расчётной кредитной стоимостью.
 
 use std::fmt;
 
 use codex_app_server_protocol::ModelTokenUsageSnapshot;
 use codex_app_server_protocol::TokenUsageSnapshot;
+use codex_config::CreditAmount;
+use codex_config::CreditRatesState;
 use codex_protocol::num_format::format_with_separators;
 use codex_protocol::protocol::compare_model_slugs;
 use serde::Deserialize;
@@ -63,6 +65,13 @@ pub(crate) struct TokenUsageInfo {
     pub(crate) model_context_window: Option<i64>,
 }
 
+/// Неизменяемая пара накопления видимого хода и его последнего интервала.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SeparatorTokenUsageSnapshot {
+    pub(crate) cumulative: TokenUsageSnapshot,
+    pub(crate) delta: TokenUsageSnapshot,
+}
+
 impl fmt::Display for TokenUsage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -91,8 +100,11 @@ impl fmt::Display for TokenUsage {
     }
 }
 
-/// Formats an immutable model map without ever adding counters across different model slugs.
-pub(crate) fn format_token_usage_snapshot(snapshot: &TokenUsageSnapshot) -> String {
+/// Форматирует неизменяемую карту моделей, не складывая токены разных slug.
+pub(crate) fn format_token_usage_snapshot(
+    snapshot: &TokenUsageSnapshot,
+    credit_rates: &CreditRatesState,
+) -> String {
     if snapshot.models.is_empty() {
         return "unavailable".to_string();
     }
@@ -105,17 +117,75 @@ pub(crate) fn format_token_usage_snapshot(snapshot: &TokenUsageSnapshot) -> Stri
     });
     models
         .into_iter()
-        .map(format_model_token_usage)
+        .map(|model_usage| format_model_token_usage(model_usage, credit_rates))
         .collect::<Vec<_>>()
         .join("; ")
 }
 
-fn format_model_token_usage(model_usage: &ModelTokenUsageSnapshot) -> String {
+/// Форматирует накопление каждой модели вместе с дельтой последнего разделителя.
+pub(crate) fn format_separator_token_usage_snapshot(
+    snapshot: &SeparatorTokenUsageSnapshot,
+    credit_rates: &CreditRatesState,
+) -> String {
+    if snapshot.cumulative.models.is_empty() {
+        return "unavailable".to_string();
+    }
+    let mut models = snapshot.cumulative.models.iter().collect::<Vec<_>>();
+    models.sort_by(|left, right| match (&left.model, &right.model) {
+        (Some(left), Some(right)) => compare_model_slugs(left, right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    models
+        .into_iter()
+        .map(|model_usage| {
+            let delta = snapshot
+                .delta
+                .models
+                .iter()
+                .find(|delta| delta.model.as_deref() == model_usage.model.as_deref());
+            format_model_token_usage_with_delta(model_usage, delta, credit_rates)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Форматирует `Total` и добавляет общую кредитную сумму только при нескольких моделях.
+pub(crate) fn format_total_token_usage_snapshot(
+    snapshot: &TokenUsageSnapshot,
+    credit_rates: &CreditRatesState,
+) -> String {
+    let models = format_token_usage_snapshot(snapshot, credit_rates);
+    if !credit_rates.is_enabled() || snapshot.models.len() < 2 {
+        return models;
+    }
+
+    let mut total = CreditAmount::default();
+    let mut incomplete = false;
+    for model_usage in &snapshot.models {
+        let Some(cost) = model_credit_cost(model_usage, credit_rates) else {
+            return format!("?Ƶ; {models}");
+        };
+        total = total.saturating_add(cost);
+        incomplete |= model_usage.incomplete;
+    }
+    format!("{}; {models}", format_credit_amount(total, incomplete))
+}
+
+fn format_model_token_usage(
+    model_usage: &ModelTokenUsageSnapshot,
+    credit_rates: &CreditRatesState,
+) -> String {
     let Some(model) = model_usage.model.as_deref() else {
         return "unavailable".to_string();
     };
     let Some(usage) = &model_usage.usage else {
-        return format!("[{model}] unavailable");
+        return if credit_rates.is_enabled() {
+            format!("[{model}] ?Ƶ, unavailable")
+        } else {
+            format!("[{model}] unavailable")
+        };
     };
     let cached = usage.cached_input_tokens.max(0);
     let non_cached = usage.input_tokens.saturating_sub(cached).max(0);
@@ -126,11 +196,141 @@ fn format_model_token_usage(model_usage: &ModelTokenUsageSnapshot) -> String {
     } else {
         ""
     };
+    let credit = if credit_rates.is_enabled() {
+        let formatted = model_credit_cost(model_usage, credit_rates)
+            .map(|cost| format_credit_amount(cost, model_usage.incomplete))
+            .unwrap_or_else(|| "?Ƶ".to_string());
+        format!("{formatted}, ")
+    } else {
+        String::new()
+    };
     format!(
-        "[{model}] {} in, {} cached, {} ({}) out{partial}",
+        "[{model}] {credit}{} in, {} cached, {} / {} out{partial}",
         format_with_separators(non_cached),
         format_with_separators(cached),
         format_with_separators(output),
         format_with_separators(reasoning),
     )
+}
+
+#[derive(Clone, Copy, Default)]
+struct DisplayTokenCounts {
+    non_cached: i64,
+    cached: i64,
+    output: i64,
+    reasoning: i64,
+}
+
+/// Форматирует модель обычного разделителя, не подменяя отсутствующий `usage` нулевой дельтой.
+fn format_model_token_usage_with_delta(
+    model_usage: &ModelTokenUsageSnapshot,
+    delta: Option<&ModelTokenUsageSnapshot>,
+    credit_rates: &CreditRatesState,
+) -> String {
+    let Some(model) = model_usage.model.as_deref() else {
+        return "unavailable".to_string();
+    };
+    let delta_counts = match delta {
+        Some(delta) => delta.usage.as_ref().map(display_token_counts),
+        None => Some(DisplayTokenCounts::default()),
+    };
+    let incomplete = model_usage.incomplete || delta.is_some_and(|delta| delta.incomplete);
+    let Some(counts) = model_usage.usage.as_ref().map(display_token_counts) else {
+        return if credit_rates.is_enabled() {
+            format!(
+                "[{model}] ?Ƶ ({}), unavailable",
+                format_delta_credit(delta, credit_rates)
+            )
+        } else {
+            format!("[{model}] unavailable")
+        };
+    };
+    let partial = if incomplete { ", partial" } else { "" };
+    let credit = if credit_rates.is_enabled() {
+        let formatted = model_credit_cost(model_usage, credit_rates)
+            .map(|cost| format_credit_amount(cost, incomplete))
+            .unwrap_or_else(|| "?Ƶ".to_string());
+        format!(
+            "{formatted} ({}), ",
+            format_delta_credit(delta, credit_rates)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "[{model}] {credit}{} {} in, {} {} cached, {} {} / {} {} out{partial}",
+        format_with_separators(counts.non_cached),
+        format_delta_count(delta_counts.map(|counts| counts.non_cached)),
+        format_with_separators(counts.cached),
+        format_delta_count(delta_counts.map(|counts| counts.cached)),
+        format_with_separators(counts.output),
+        format_delta_count(delta_counts.map(|counts| counts.output)),
+        format_with_separators(counts.reasoning),
+        format_delta_count(delta_counts.map(|counts| counts.reasoning)),
+    )
+}
+
+fn display_token_counts(
+    usage: &codex_app_server_protocol::TokenUsageBreakdown,
+) -> DisplayTokenCounts {
+    let cached = usage.cached_input_tokens.max(0);
+    DisplayTokenCounts {
+        non_cached: usage.input_tokens.saturating_sub(cached).max(0),
+        cached,
+        output: usage.output_tokens.max(0),
+        reasoning: usage.reasoning_output_tokens.max(0),
+    }
+}
+
+fn format_delta_count(value: Option<i64>) -> String {
+    value
+        .map(|value| format!("(+{})", format_with_separators(value)))
+        .unwrap_or_else(|| "(+?)".to_string())
+}
+
+fn format_delta_credit(
+    delta: Option<&ModelTokenUsageSnapshot>,
+    credit_rates: &CreditRatesState,
+) -> String {
+    let Some(delta) = delta else {
+        return "+0Ƶ".to_string();
+    };
+    model_credit_cost(delta, credit_rates)
+        .map(|cost| format!("+{}", format_credit_amount(cost, delta.incomplete)))
+        .unwrap_or_else(|| "+?Ƶ".to_string())
+}
+
+fn model_credit_cost(
+    model_usage: &ModelTokenUsageSnapshot,
+    credit_rates: &CreditRatesState,
+) -> Option<CreditAmount> {
+    let model = model_usage.model.as_deref()?;
+    let usage = model_usage.usage.as_ref()?;
+    let cached = usage.cached_input_tokens.max(0);
+    let non_cached = usage.input_tokens.saturating_sub(cached).max(0);
+    credit_rates.cost_for_model(
+        model,
+        u64::try_from(non_cached).ok()?,
+        u64::try_from(cached).ok()?,
+        u64::try_from(usage.output_tokens.max(0)).ok()?,
+    )
+}
+
+fn format_credit_amount(amount: CreditAmount, incomplete: bool) -> String {
+    let value = if amount.is_positive_below_one_cent() {
+        "<0.01".to_string()
+    } else {
+        let hundredths = amount.rounded_hundredths();
+        let whole = hundredths / 100;
+        match hundredths % 100 {
+            0 => whole.to_string(),
+            fractional if fractional % 10 == 0 => format!("{whole}.{}", fractional / 10),
+            fractional => format!("{whole}.{fractional:02}"),
+        }
+    };
+    if incomplete {
+        format!("{value}Ƶ+")
+    } else {
+        format!("{value}Ƶ")
+    }
 }

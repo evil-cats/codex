@@ -9,6 +9,7 @@ use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
+use codex_config::CreditRatesState;
 use codex_config::McpServerCommandMatcher;
 use codex_config::McpServerIdentity;
 use codex_config::McpServerRequirement;
@@ -10225,6 +10226,141 @@ async fn model_catalog_json_rejects_empty_catalog() -> std::io::Result<()> {
         err.to_string().contains("must contain at least one model"),
         "unexpected error: {err}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+/// Настроенная таблица тарифов один раз загружается в эффективную runtime-конфигурацию.
+async fn credit_rates_path_loads_valid_external_table() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let rates_path = codex_home.path().join("codex-credits.json");
+    std::fs::write(
+        &rates_path,
+        r#"
+        {
+          "schema_version": 1,
+          "unit": "credits_per_million_tokens",
+          "models": {
+            "gpt-5.6-sol": { "input": 100, "cached_input": 10, "output": 500 }
+          }
+        }
+        "#,
+    )?;
+    let cfg = ConfigToml {
+        credit_rates_path: Some(rates_path.abs()),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config
+            .credit_rates
+            .cost_for_model("gpt-5.6-sol", 3_450, 463_872, 2_573)
+            .expect("loaded Sol rate")
+            .picocredits(),
+        6_270_220_000_000
+    );
+    assert!(config.startup_warnings.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+/// Без ключа конфигурации одноимённый соседний файл не обнаруживается неявно.
+async fn credit_rates_path_absence_keeps_credit_estimates_disabled() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(codex_home.path().join("codex-credits.json"), "not json")?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.credit_rates, CreditRatesState::Disabled);
+    assert!(config.startup_warnings.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+/// Повреждённый настроенный документ даёт одну startup-диагностику и неизвестные оценки.
+async fn credit_rates_path_failure_is_nonfatal_and_warns_once() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let rates_path = codex_home.path().join("codex-credits.json");
+    std::fs::write(&rates_path, "not json")?;
+    let cfg = ConfigToml {
+        credit_rates_path: Some(rates_path.abs()),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.credit_rates, CreditRatesState::Unavailable);
+    let warnings = config
+        .startup_warnings
+        .iter()
+        .filter(|warning| warning.contains("credit_rates_path"))
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("Credit estimates are unavailable"));
+    Ok(())
+}
+
+#[tokio::test]
+/// Повреждённые записи моделей дают одно предупреждение, а корректные остаются доступными.
+async fn credit_rates_path_isolates_invalid_model_entries() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let rates_path = codex_home.path().join("codex-credits.json");
+    std::fs::write(
+        &rates_path,
+        r#"
+        {
+          "schema_version": 1,
+          "unit": "credits_per_million_tokens",
+          "models": {
+            "valid": { "input": 1, "cached_input": 1, "output": 1 },
+            "broken": { "input": -1, "cached_input": 1, "output": 1 }
+          }
+        }
+        "#,
+    )?;
+    let cfg = ConfigToml {
+        credit_rates_path: Some(rates_path.abs()),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(
+        config
+            .credit_rates
+            .cost_for_model("valid", 1, 1, 1)
+            .is_some()
+    );
+    assert_eq!(config.credit_rates.cost_for_model("broken", 1, 1, 1), None);
+    let warnings = config
+        .startup_warnings
+        .iter()
+        .filter(|warning| warning.contains("credit rate entries"))
+        .collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("`broken`"));
     Ok(())
 }
 

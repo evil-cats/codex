@@ -205,7 +205,9 @@ impl ChatWidget {
     }
 
     pub(super) fn on_sub_agent_activity(&mut self, item: ThreadItem) {
-        if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item) {
+        if let Some(cell) =
+            multi_agents::sub_agent_activity_history_cell(&item, &self.config.credit_rates)
+        {
             self.on_collab_event(cell);
         }
     }

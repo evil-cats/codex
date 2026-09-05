@@ -1,8 +1,10 @@
-//! Per-separator token interval for one visible `ChatWidget` turn.
+//! Накопительные и интервальные токены одного видимого хода `ChatWidget`.
 //!
-//! This accumulator deliberately sees only `rawResponse/completed` notifications routed to its
-//! own thread. Taking a snapshot is the divider boundary; unrelated agent responses remain in the
-//! root-turn snapshot supplied by core.
+//! Аккумулятор намеренно принимает только уведомления `rawResponse/completed` своего потока.
+//! Создание снимка очищает только дельту разделителя; ответы других агентов остаются в итоговом
+//! снимке корневого хода, который передаёт core.
+
+use crate::token_usage::SeparatorTokenUsageSnapshot;
 
 use codex_app_server_protocol::ModelTokenUsageSnapshot;
 use codex_app_server_protocol::RawResponseCompletedNotification;
@@ -15,7 +17,8 @@ use std::collections::HashSet;
 #[derive(Default)]
 pub(super) struct SeparatorTokenUsage {
     turn_id: Option<String>,
-    by_model: HashMap<Option<String>, ModelAggregate>,
+    since_turn_start: HashMap<Option<String>, ModelAggregate>,
+    since_separator: HashMap<Option<String>, ModelAggregate>,
     seen_responses: HashSet<String>,
 }
 
@@ -26,14 +29,15 @@ struct ModelAggregate {
 }
 
 impl SeparatorTokenUsage {
-    /// Starts a fresh user-visible turn and discards any interval left by the previous one.
+    /// Открывает новый пользовательский ход и очищает обе области предыдущего хода.
     pub(super) fn start_turn(&mut self, turn_id: String) {
         self.turn_id = Some(turn_id);
-        self.by_model.clear();
+        self.since_turn_start.clear();
+        self.since_separator.clear();
         self.seen_responses.clear();
     }
 
-    /// Adds one response when it belongs to the active turn and has not already been delivered.
+    /// Учитывает ответ активного хода, если его ещё не доставляли этому аккумулятору.
     pub(super) fn record_response(&mut self, notification: &RawResponseCompletedNotification) {
         if self.turn_id.as_deref() != Some(notification.turn_id.as_str())
             || !self.seen_responses.insert(notification.response_id.clone())
@@ -41,33 +45,46 @@ impl SeparatorTokenUsage {
             return;
         }
         let model = (!notification.model.is_empty()).then(|| notification.model.clone());
-        self.by_model
+        self.since_turn_start
+            .entry(model.clone())
+            .or_default()
+            .record(notification.usage.as_ref());
+        self.since_separator
             .entry(model)
             .or_default()
             .record(notification.usage.as_ref());
     }
 
-    /// Freezes and clears exactly the interval since the preceding emitted divider.
-    pub(super) fn take_snapshot(&mut self) -> Option<TokenUsageSnapshot> {
-        if self.by_model.is_empty() {
+    /// Замораживает итог хода и последний интервал, затем очищает только интервал.
+    pub(super) fn take_snapshot(&mut self) -> Option<SeparatorTokenUsageSnapshot> {
+        if self.since_separator.is_empty() {
             return None;
         }
-        let mut models = std::mem::take(&mut self.by_model)
-            .into_iter()
-            .map(|(model, aggregate)| ModelTokenUsageSnapshot {
-                model,
-                usage: aggregate.usage,
-                incomplete: aggregate.incomplete,
-            })
-            .collect::<Vec<_>>();
-        models.sort_by(|left, right| match (&left.model, &right.model) {
-            (Some(left), Some(right)) => compare_model_slugs(left, right),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
-        Some(TokenUsageSnapshot { models })
+        let since_separator = std::mem::take(&mut self.since_separator);
+        Some(SeparatorTokenUsageSnapshot {
+            cumulative: snapshot(&self.since_turn_start),
+            delta: snapshot(&since_separator),
+        })
     }
+}
+
+/// Строит детерминированно отсортированный снимок текущих модельных агрегатов.
+fn snapshot(by_model: &HashMap<Option<String>, ModelAggregate>) -> TokenUsageSnapshot {
+    let mut models = by_model
+        .iter()
+        .map(|(model, aggregate)| ModelTokenUsageSnapshot {
+            model: model.clone(),
+            usage: aggregate.usage.clone(),
+            incomplete: aggregate.incomplete,
+        })
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| match (&left.model, &right.model) {
+        (Some(left), Some(right)) => compare_model_slugs(left, right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    TokenUsageSnapshot { models }
 }
 
 impl ModelAggregate {

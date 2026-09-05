@@ -461,7 +461,8 @@ impl ChatWidget {
             if self.transcript.needs_final_message_separator && self.transcript.had_work_activity {
                 let mut separator = history_cell::FinalMessageSeparator::new(
                     /*elapsed_seconds*/ None, /*runtime_metrics*/ None,
-                );
+                )
+                .with_credit_rates(self.config.credit_rates.clone());
                 if let Some(token_usage) = self.transcript.separator_token_usage.take_snapshot() {
                     separator = separator.with_interval_token_usage(token_usage);
                 }

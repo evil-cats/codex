@@ -183,7 +183,8 @@ impl ChatWidget {
                     None
                 };
                 let mut separator =
-                    history_cell::FinalMessageSeparator::new(elapsed_seconds, runtime_metrics);
+                    history_cell::FinalMessageSeparator::new(elapsed_seconds, runtime_metrics)
+                        .with_credit_rates(self.config.credit_rates.clone());
                 if let Some(token_usage) = self.transcript.root_turn_token_usage.take() {
                     separator = separator.with_root_turn_token_usage(token_usage);
                 }

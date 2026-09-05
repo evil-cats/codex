@@ -376,6 +376,10 @@ pub struct ConfigToml {
     /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
     pub model_catalog_json: Option<AbsolutePathBuf>,
 
+    /// Необязательная внешняя таблица расчётной кредитной стоимости токенов по моделям.
+    /// Относительный путь разрешается от каталога конфигурационного слоя с этим полем.
+    pub credit_rates_path: Option<AbsolutePathBuf>,
+
     /// Optionally specify a personality for the model
     pub personality: Option<Personality>,
 

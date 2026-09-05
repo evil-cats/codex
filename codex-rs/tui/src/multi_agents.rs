@@ -13,6 +13,7 @@ use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
 use codex_app_server_protocol::SubAgentActivityKind;
 use codex_app_server_protocol::ThreadItem;
+use codex_config::CreditRatesState;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crossterm::event::KeyCode;
@@ -307,7 +308,10 @@ pub(crate) fn sub_agent_activity_display(item: &ThreadItem) -> Option<SubAgentAc
     })
 }
 
-pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
+pub(crate) fn sub_agent_activity_history_cell(
+    item: &ThreadItem,
+    credit_rates: &CreditRatesState,
+) -> Option<PlainHistoryCell> {
     let ThreadItem::SubAgentActivity {
         kind,
         agent_path,
@@ -322,7 +326,7 @@ pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<Plain
         .map(|snapshot| {
             vec![Line::from(format!(
                 "Tokens: {}",
-                crate::token_usage::format_token_usage_snapshot(snapshot)
+                crate::token_usage::format_token_usage_snapshot(snapshot, credit_rates)
             ))]
         })
         .unwrap_or_default();
@@ -695,6 +699,7 @@ mod tests {
     use codex_app_server_protocol::ModelTokenUsageSnapshot;
     use codex_app_server_protocol::TokenUsageBreakdown;
     use codex_app_server_protocol::TokenUsageSnapshot;
+    use codex_config::parse_credit_rates;
     #[cfg(target_os = "macos")]
     use crossterm::event::KeyEvent;
     #[cfg(target_os = "macos")]
@@ -704,6 +709,24 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::style::Modifier;
     use std::collections::HashMap;
+
+    fn agent_credit_rates() -> CreditRatesState {
+        let loaded = parse_credit_rates(
+            r#"
+            {
+              "schema_version": 1,
+              "unit": "credits_per_million_tokens",
+              "models": {
+                "gpt-5.6-terra": { "input": 50, "cached_input": 5, "output": 300 },
+                "gpt-5.6-luna": { "input": 5, "cached_input": 0.5, "output": 30 }
+              }
+            }
+            "#,
+        )
+        .expect("valid agent credit rates");
+        assert_eq!(loaded.invalid_model_entries, Vec::<String>::new());
+        CreditRatesState::Loaded(loaded.rates)
+    }
 
     #[test]
     fn interacted_sub_agent_activity_does_not_change_liveness() {
@@ -740,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    /// A terminal activity renders the agent's cumulative root-turn snapshot as one detail row.
+    /// Терминальное событие показывает накопительный снимок агента одной строкой деталей.
     fn completed_sub_agent_activity_renders_token_usage() {
         let item = ThreadItem::SubAgentActivity {
             id: "activity-token-usage".to_string(),
@@ -762,16 +785,17 @@ mod tests {
                 }],
             }),
         };
-        let cell = sub_agent_activity_history_cell(&item).expect("terminal activity cell");
+        let cell = sub_agent_activity_history_cell(&item, &agent_credit_rates())
+            .expect("terminal activity cell");
 
         assert_snapshot!(cell_to_text(&cell), @r"
         • Completed `/root/worker`
-          └ Tokens: [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 (3,310) out
+          └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 7,000 / 3,310 out
         ");
     }
 
     #[test]
-    /// Failed terminal states keep observed counters and never turn missing usage into zero.
+    /// Ошибка и прерывание сохраняют наблюдённые токены и не подменяют отсутствующий `usage` нулём.
     fn terminal_sub_agent_activity_renders_partial_and_unavailable_token_usage() {
         let errored = ThreadItem::SubAgentActivity {
             id: "activity-errored".to_string(),
@@ -806,11 +830,12 @@ mod tests {
                 }],
             }),
         };
+        let rates = agent_credit_rates();
         let rendered = [errored, interrupted]
             .iter()
             .map(|item| {
                 cell_to_text(
-                    &sub_agent_activity_history_cell(item).expect("terminal activity cell"),
+                    &sub_agent_activity_history_cell(item, &rates).expect("terminal activity cell"),
                 )
             })
             .collect::<Vec<_>>()
@@ -818,9 +843,9 @@ mod tests {
 
         assert_snapshot!(rendered, @r"
         • Errored `/root/reviewer`
-          └ Tokens: [gpt-5.6-terra] 920 in, 40,000 cached, 2,800 (1,100) out, partial
+          └ Tokens: [gpt-5.6-terra] 1.09Ƶ+, 920 in, 40,000 cached, 2,800 / 1,100 out, partial
         • Interrupted `/root/scout`
-          └ Tokens: [gpt-5.5] unavailable
+          └ Tokens: [gpt-5.5] ?Ƶ, unavailable
         ");
     }
 

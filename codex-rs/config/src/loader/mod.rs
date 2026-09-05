@@ -1936,6 +1936,7 @@ mod unit_tests {
 model_instructions_file = "./some_file.md"
 model_instructions_files = ["./model_a.md", "./model_b.md"]
 developer_instructions_files = ["./developer_a.md", "./developer_b.md"]
+credit_rates_path = "./codex-credits.json"
 
 # This is a field recognized by config.toml.
 model = "gpt-1000"
@@ -1991,6 +1992,15 @@ foo = "xyzzy"
             ]),
         );
         expected_toml_value.insert(
+            "credit_rates_path".to_string(),
+            TomlValue::String(
+                AbsolutePathBuf::resolve_path_against_base("./codex-credits.json", base_dir)
+                    .as_path()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        );
+        expected_toml_value.insert(
             "model".to_string(),
             TomlValue::String("gpt-1000".to_string()),
         );
@@ -2030,6 +2040,27 @@ foo = "xyzzy"
                     .to_string()
             })
             .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    /// Таблица тарифов использует тот же каталог слоя как базу, что и файлы инструкций.
+    fn credit_rates_path_resolves_relative_to_config_directory() -> anyhow::Result<()> {
+        let tmp = tempdir()?;
+        let base_dir = tmp.path();
+        let config = toml::from_str(r#"credit_rates_path = "codex-credits.json""#)?;
+
+        let resolved = resolve_relative_paths_in_config_toml(config, base_dir)?;
+        let actual = resolved
+            .get("credit_rates_path")
+            .and_then(TomlValue::as_str)
+            .expect("credit rates path should remain a string");
+        let expected = AbsolutePathBuf::resolve_path_against_base("codex-credits.json", base_dir)
+            .as_path()
+            .to_string_lossy()
+            .into_owned();
 
         assert_eq!(actual, expected);
         Ok(())

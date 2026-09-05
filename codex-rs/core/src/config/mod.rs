@@ -17,6 +17,7 @@ use codex_config::ConfigLayerStack;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::ConstrainedWithSource;
+use codex_config::CreditRatesState;
 use codex_config::FeatureRequirementsToml;
 use codex_config::ManagedAuthPolicy;
 use codex_config::McpServerRequirement;
@@ -33,6 +34,7 @@ use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
+use codex_config::load_credit_rates;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionProfileToml;
@@ -985,6 +987,9 @@ pub struct Config {
     /// Optional full model catalog loaded from `model_catalog_json`.
     /// When set, this replaces the bundled catalog for the current process.
     pub model_catalog: Option<ModelsResponse>,
+
+    /// Эффективные внешние тарифы; выключенное состояние отличается от ошибки загрузки.
+    pub credit_rates: CreditRatesState,
 
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
@@ -4113,6 +4118,27 @@ impl Config {
 
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
         let model_catalog = load_model_catalog(cfg.model_catalog_json.clone())?;
+        let credit_rates = match cfg.credit_rates_path.as_ref() {
+            None => CreditRatesState::Disabled,
+            Some(path) => match load_credit_rates(path) {
+                Ok(loaded) => {
+                    if !loaded.invalid_model_entries.is_empty() {
+                        startup_warnings.push(format!(
+                            "Ignoring invalid credit rate entries from `{}`: {}",
+                            path.display(),
+                            loaded.invalid_model_entries.join("; ")
+                        ));
+                    }
+                    CreditRatesState::Loaded(loaded.rates)
+                }
+                Err(err) => {
+                    startup_warnings.push(format!(
+                        "Credit estimates are unavailable because `credit_rates_path` could not be loaded: {err}"
+                    ));
+                    CreditRatesState::Unavailable
+                }
+            },
+        };
 
         let log_dir = cfg
             .log_dir
@@ -4427,6 +4453,7 @@ impl Config {
             plan_mode_reasoning_effort: cfg.plan_mode_reasoning_effort,
             model_reasoning_summary: cfg.model_reasoning_summary,
             model_catalog,
+            credit_rates,
             model_verbosity: cfg.model_verbosity,
             chatgpt_base_url: cfg
                 .chatgpt_base_url
