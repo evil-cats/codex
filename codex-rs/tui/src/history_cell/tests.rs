@@ -957,10 +957,10 @@ fn separator_token_usage_omits_delta_before_first_separator() {
             })
             .with_credit_rates(separator_credit_rates());
 
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 1,113 / 952 out ──────────────────────────────────────────────────────────────────────────────────────────────────────────────");
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 161 / 1,113 out ──────────────────────────────────────────────────────────────────────────────────────────────────────────────");
     assert_eq!(
         render_lines(&cell.raw_lines()),
-        vec!["Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 1,113 / 952 out"]
+        vec!["Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 161 / 1,113 out"]
     );
 }
 
@@ -979,11 +979,11 @@ fn separator_token_usage_renders_interval() {
             })
             .with_credit_rates(separator_credit_rates());
 
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 161 (+40) / 20 (+15) out ─────────────────────────────────────────────────────────────────────────");
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 141 (+25) / 161 (+40) out ────────────────────────────────────────────────────────────────────────");
     assert_eq!(
         render_lines(&cell.raw_lines()),
         vec![
-            "Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 161 (+40) / 20 (+15) out"
+            "Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 141 (+25) / 161 (+40) out"
         ]
     );
 }
@@ -1010,7 +1010,7 @@ fn separator_token_usage_preserves_full_raw_line_when_display_is_truncated() {
     assert_eq!(
         render_lines(&cell.raw_lines()),
         vec![
-            "Tokens: [gpt-5.6-sol] 2,230 (+0) in, 137,600 (+0) cached, 10,000 (+0) / 5,135 (+0) out; [gpt-5.6-luna] 1,120 (+500) in, 92,800 (+50,000) cached, 4,900 (+900) / 2,410 (+410) out"
+            "Tokens: [gpt-5.6-sol] 2,230 (+0) in, 137,600 (+0) cached, 4,865 (+0) / 10,000 (+0) out; [gpt-5.6-luna] 1,120 (+500) in, 92,800 (+50,000) cached, 2,490 (+490) / 4,900 (+900) out"
         ]
     );
 }
@@ -1044,9 +1044,9 @@ fn final_separator_token_usage_renders_turn_agents_and_total_before_worked_label
         .with_credit_rates(separator_credit_rates());
 
     insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 240)).join("\n"), @r"
-      Turn:   [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out
-      Agents: [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 546 / 138 out
-      Total:  6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 546 / 138 out
+      Turn:   [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out
+      Agents: [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 408 / 546 out
+      Total:  6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 408 / 546 out
     ─ Worked for 7m 57s ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     ");
 }
@@ -1073,11 +1073,11 @@ fn final_separator_token_usage_renders_only_total_without_agents() {
         })
         .with_credit_rates(separator_credit_rates());
 
-    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Worked for 1m 10s • Total: [gpt-5.6-sol] 4.9Ƶ, 3,746 in, 286,080 cached, 3,332 / 2,009 out ───────────────────────────────────────────────────────────────────────────────────────");
+    insta::assert_snapshot!(render_lines(&cell.display_lines(/*width*/ 180)).join("\n"), @r"─ Worked for 1m 10s • Total: [gpt-5.6-sol] 4.9Ƶ, 3,746 in, 286,080 cached, 1,323 / 3,332 out ───────────────────────────────────────────────────────────────────────────────────────");
     assert_eq!(
         render_lines(&cell.raw_lines()),
         vec![
-            "Worked for 1m 10s • Total: [gpt-5.6-sol] 4.9Ƶ, 3,746 in, 286,080 cached, 3,332 / 2,009 out"
+            "Worked for 1m 10s • Total: [gpt-5.6-sol] 4.9Ƶ, 3,746 in, 286,080 cached, 1,323 / 3,332 out"
         ]
     );
 }
@@ -1108,8 +1108,8 @@ fn final_separator_token_usage_reports_running_agents_on_frozen_totals() {
         render_lines(&cell.raw_lines()),
         vec![
             "  Turn:   unavailable",
-            "  Agents: [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 / 3,310 out · 1 agent running",
-            "  Total:  [gpt-5.6-luna] 1,760 in, 92,800 cached, 7,000 / 3,310 out · 1 agent running",
+            "  Agents: [gpt-5.6-luna] 1,760 in, 92,800 cached, 3,690 / 7,000 out · 1 agent running",
+            "  Total:  [gpt-5.6-luna] 1,760 in, 92,800 cached, 3,690 / 7,000 out · 1 agent running",
         ]
     );
 }

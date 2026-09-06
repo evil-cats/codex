@@ -189,10 +189,7 @@ fn format_model_token_usage(
             format!("[{model}] unavailable")
         };
     };
-    let cached = usage.cached_input_tokens.max(0);
-    let non_cached = usage.input_tokens.saturating_sub(cached).max(0);
-    let output = usage.output_tokens.max(0);
-    let reasoning = usage.reasoning_output_tokens.max(0);
+    let counts = display_token_counts(usage);
     let partial = if model_usage.incomplete {
         ", partial"
     } else {
@@ -208,10 +205,10 @@ fn format_model_token_usage(
     };
     format!(
         "[{model}] {credit}{} in, {} cached, {} / {} out{partial}",
-        format_with_separators(non_cached),
-        format_with_separators(cached),
-        format_with_separators(output),
-        format_with_separators(reasoning),
+        format_with_separators(counts.non_cached),
+        format_with_separators(counts.cached),
+        format_with_separators(counts.non_reasoning_output),
+        format_with_separators(counts.output),
     )
 }
 
@@ -219,8 +216,8 @@ fn format_model_token_usage(
 struct DisplayTokenCounts {
     non_cached: i64,
     cached: i64,
+    non_reasoning_output: i64,
     output: i64,
-    reasoning: i64,
 }
 
 /// Форматирует модель обычного разделителя, не подменяя отсутствующий `usage` нулевой дельтой.
@@ -265,10 +262,10 @@ fn format_model_token_usage_with_delta(
         format_delta_count(delta_counts.map(|counts| counts.non_cached)),
         format_with_separators(counts.cached),
         format_delta_count(delta_counts.map(|counts| counts.cached)),
+        format_with_separators(counts.non_reasoning_output),
+        format_delta_count(delta_counts.map(|counts| counts.non_reasoning_output)),
         format_with_separators(counts.output),
         format_delta_count(delta_counts.map(|counts| counts.output)),
-        format_with_separators(counts.reasoning),
-        format_delta_count(delta_counts.map(|counts| counts.reasoning)),
     )
 }
 
@@ -276,11 +273,13 @@ fn display_token_counts(
     usage: &codex_app_server_protocol::TokenUsageBreakdown,
 ) -> DisplayTokenCounts {
     let cached = usage.cached_input_tokens.max(0);
+    let output = usage.output_tokens.max(0);
+    let reasoning = usage.reasoning_output_tokens.max(0);
     DisplayTokenCounts {
         non_cached: usage.input_tokens.saturating_sub(cached).max(0),
         cached,
-        output: usage.output_tokens.max(0),
-        reasoning: usage.reasoning_output_tokens.max(0),
+        non_reasoning_output: output.saturating_sub(reasoning).max(0),
+        output,
     }
 }
 

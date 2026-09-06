@@ -141,7 +141,7 @@ fn separator_usage_keeps_turn_total_and_resets_at_the_next_turn() {
     let unknown_delta = accumulator.take_snapshot().expect("unknown divider delta");
     assert_eq!(
         crate::token_usage::format_separator_token_usage_snapshot(&unknown_delta, &credit_rates(),),
-        "[gpt-5.6-sol] 0.04Ƶ+ (+?Ƶ), 160 (+?) in, 140 (+?) cached, 50 (+?) / 15 (+?) out, partial"
+        "[gpt-5.6-sol] 0.04Ƶ+ (+?Ƶ), 160 (+?) in, 140 (+?) cached, 35 (+?) / 50 (+?) out, partial"
     );
 
     accumulator.start_turn("turn-2".to_string());
@@ -194,7 +194,7 @@ fn separator_interval_preserves_missing_usage_as_partial_or_unavailable() {
     let snapshot = interval.take_snapshot().expect("interval snapshot");
     assert_eq!(
         crate::token_usage::format_separator_token_usage_snapshot(&snapshot, &credit_rates()),
-        "[gpt-5.6-sol] 0.03Ƶ+, 120 in, 80 cached, 40 / 17 out, partial; [gpt-5.6-luna] ?Ƶ, unavailable"
+        "[gpt-5.6-sol] 0.03Ƶ+, 120 in, 80 cached, 23 / 40 out, partial; [gpt-5.6-luna] ?Ƶ, unavailable"
     );
 }
 
@@ -238,7 +238,7 @@ fn model_sorting_uses_numeric_version_then_known_tier() {
 
     assert_eq!(
         crate::token_usage::format_token_usage_snapshot(&snapshot, &CreditRatesState::Disabled),
-        "[gpt-6] 1 in, 0 cached, 1 / 0 out; [gpt-5.6-sol] 1 in, 0 cached, 1 / 0 out; [gpt-5.6-terra] 1 in, 0 cached, 1 / 0 out; [gpt-5.6-luna] 1 in, 0 cached, 1 / 0 out; [gpt-5.5] 1 in, 0 cached, 1 / 0 out; [other-model] 1 in, 0 cached, 1 / 0 out"
+        "[gpt-6] 1 in, 0 cached, 1 / 1 out; [gpt-5.6-sol] 1 in, 0 cached, 1 / 1 out; [gpt-5.6-terra] 1 in, 0 cached, 1 / 1 out; [gpt-5.6-luna] 1 in, 0 cached, 1 / 1 out; [gpt-5.5] 1 in, 0 cached, 1 / 1 out; [other-model] 1 in, 0 cached, 1 / 1 out"
     );
 }
 
@@ -268,7 +268,7 @@ fn credit_formatting_marks_partial_unknown_and_subcent_costs() {
 
     assert_eq!(
         crate::token_usage::format_token_usage_snapshot(&snapshot, &rates),
-        "[gpt-5.6-sol] 0.03Ƶ+, 120 in, 80 cached, 40 / 17 out, partial; [gpt-5.6-luna] <0.01Ƶ, 1 in, 0 cached, 0 / 0 out; [gpt-5.5] ?Ƶ, 100 in, 0 cached, 20 / 0 out"
+        "[gpt-5.6-sol] 0.03Ƶ+, 120 in, 80 cached, 23 / 40 out, partial; [gpt-5.6-luna] <0.01Ƶ, 1 in, 0 cached, 0 / 0 out; [gpt-5.5] ?Ƶ, 100 in, 0 cached, 20 / 20 out"
     );
 }
 
@@ -294,7 +294,7 @@ fn total_credit_formatting_combines_only_multiple_models() {
             },
             &rates,
         ),
-        "6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 546 / 138 out"
+        "6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 408 / 546 out"
     );
     let mut partial_luna = luna;
     partial_luna.incomplete = true;
@@ -305,7 +305,7 @@ fn total_credit_formatting_combines_only_multiple_models() {
             },
             &rates,
         ),
-        "6.59Ƶ+; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out; [gpt-5.6-luna] 0.32Ƶ+, 44,161 in, 156,672 cached, 546 / 138 out, partial"
+        "6.59Ƶ+; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out; [gpt-5.6-luna] 0.32Ƶ+, 44,161 in, 156,672 cached, 408 / 546 out, partial"
     );
     assert_eq!(
         crate::token_usage::format_total_token_usage_snapshot(
@@ -321,14 +321,14 @@ fn total_credit_formatting_combines_only_multiple_models() {
             },
             &rates,
         ),
-        "?Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out; [gpt-5.5] ?Ƶ, 100 in, 0 cached, 20 / 0 out"
+        "?Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out; [gpt-5.5] ?Ƶ, 100 in, 0 cached, 20 / 20 out"
     );
     assert_eq!(
         crate::token_usage::format_total_token_usage_snapshot(
             &TokenUsageSnapshot { models: vec![sol] },
             &rates,
         ),
-        "[gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out"
+        "[gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out"
     );
 }
 
@@ -345,6 +345,6 @@ fn unavailable_credit_table_keeps_enabled_unknown_marker() {
 
     assert_eq!(
         crate::token_usage::format_token_usage_snapshot(&snapshot, &CreditRatesState::Unavailable),
-        "[gpt-5.6-sol] ?Ƶ, 10 in, 0 cached, 1 / 0 out"
+        "[gpt-5.6-sol] ?Ƶ, 10 in, 0 cached, 1 / 1 out"
     );
 }

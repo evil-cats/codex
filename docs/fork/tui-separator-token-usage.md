@@ -134,28 +134,28 @@ Responses API уже возвращал `usage` завершённого отв�
 В терминальной строке агента и итоговом отчёте одна модель отображается так:
 
 ```text
-Tokens: [gpt-5.6-sol] 1.89Ƶ, 1,841 in, 153,856 cached, 330 / 86 out
+Tokens: [gpt-5.6-sol] 1.89Ƶ, 1,841 in, 153,856 cached, 244 / 330 out
 ```
 
 Несколько моделей остаются в одной логической строке и разделяются точкой с
 запятой:
 
 ```text
-Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out; [gpt-5.6-luna] 0.19Ƶ, 1,120 in, 68,800 cached, 4,900 / 2,410 out
+Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 4,865 / 10,000 out; [gpt-5.6-luna] 0.19Ƶ, 1,120 in, 68,800 cached, 2,490 / 4,900 out
 ```
 
 Первый обычный разделитель показывает только накопление модели с начала текущего
 пользовательского хода, поскольку предыдущей границы для дельты ещё нет:
 
 ```text
-─ Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 1,113 / 952 out ─────────
+─ Tokens: [gpt-5.6-sol] 1.12Ƶ, 585 in, 50,688 cached, 161 / 1,113 out ─────────
 ```
 
 Начиная со второго фактически добавленного разделителя, каждая величина также
 показывает в скобках дельту после предыдущей границы:
 
 ```text
-─ Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 161 (+40) / 20 (+15) out ─────────
+─ Tokens: [gpt-5.6-sol] 3.85Ƶ (+1.24Ƶ), 678 (+150) in, 370,304 (+120,000) cached, 141 (+25) / 161 (+40) out ─────────
 ```
 
 В накопительной части перечисляются все модели отображаемого потока,
@@ -172,10 +172,10 @@ Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out; [gpt-
 
 ```text
 • Completed `/root/worker`
-  └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 7,000 / 3,310 out
+  └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 3,690 / 7,000 out
 
 • Errored `/root/reviewer`
-  └ Tokens: [gpt-5.6-terra] 1.09Ƶ+, 920 in, 40,000 cached, 2,800 / 1,100 out, partial
+  └ Tokens: [gpt-5.6-terra] 1.09Ƶ+, 920 in, 40,000 cached, 1,700 / 2,800 out, partial
 
 • Interrupted `/root/scout`
   └ Tokens: [gpt-5.5] ?Ƶ, unavailable
@@ -188,7 +188,7 @@ Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out; [gpt-
 
 ```text
 • Completed `/root/worker`
-  └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 7,000 / 3,310 out
+  └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 3,690 / 7,000 out
 ```
 
 При запуске того же агента из нового корневого хода используется новый
@@ -211,9 +211,9 @@ Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out; [gpt-
 `Worked for ...` и содержит три строки:
 
 ```text
-  Turn:   [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out
-  Agents: [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 546 / 138 out
-  Total:  6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 2,573 / 1,791 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 546 / 138 out
+  Turn:   [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out
+  Agents: [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 408 / 546 out
+  Total:  6.59Ƶ; [gpt-5.6-sol] 6.27Ƶ, 3,450 in, 463,872 cached, 782 / 2,573 out; [gpt-5.6-luna] 0.32Ƶ, 44,161 in, 156,672 cached, 408 / 546 out
 ─ Worked for 1m 15s ─────────────────────────────────────────────────
 ```
 
@@ -231,7 +231,7 @@ Tokens: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out; [gpt-
 отделяется тем же символом `•`, который уже разделяет метки этого компонента:
 
 ```text
-─ Worked for 7m 57s • Total: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 10,000 / 5,135 out ─────────────────────
+─ Worked for 7m 57s • Total: [gpt-5.6-sol] 6.6Ƶ, 2,230 in, 137,600 cached, 4,865 / 10,000 out ─────────────────────
 ```
 
 `Total` присутствует в финальном представлении всегда. Если существующее
@@ -262,29 +262,30 @@ LETTER Z WITH STROKE): `6.27Ƶ`.
 Для каждого завершённого ответа:
 
 ```text
-in        = max(input_tokens - cached_input_tokens, 0)
-cached    = max(cached_input_tokens, 0)
-out       = max(output_tokens, 0)
-reasoning = max(reasoning_output_tokens, 0)
+in                    = max(input_tokens - cached_input_tokens, 0)
+cached                = max(cached_input_tokens, 0)
+reasoning             = max(reasoning_output_tokens, 0)
+total_out             = max(output_tokens, 0)
+out_without_reasoning = max(total_out - reasoning, 0)
 ```
 
-`out` является полным выходом и уже включает reasoning-токены. Значение после
-косой черты — их подмножество; его нельзя повторно прибавлять к `out`. Поля
-`total_tokens` и `cache_write_input_tokens` отдельно не выводятся. Запись в кэш
-остаётся внутри `in`, потому что из `input_tokens` вычитается только
-`cached_input_tokens`.
+Первое число перед косой чертой — выход без reasoning-токенов, второе — полный
+выход, уже включающий reasoning. Полный выход нельзя складывать с первым числом.
+Поля `total_tokens`, `reasoning_output_tokens` и `cache_write_input_tokens`
+отдельно не выводятся. Запись в кэш остаётся внутри `in`, потому что из
+`input_tokens` вычитается только `cached_input_tokens`.
 
-Число reasoning-токенов после косой черты показывается всегда, в том числе как
-`/ 0 out`. Начиная со второго обычного разделителя каждая накопительная величина
-сопровождается дельтой в скобках: `161 (+40) / 20 (+15) out`.
+Полный выход после косой черты показывается всегда, в том числе как `/ 0 out`.
+Начиная со второго обычного разделителя каждая накопительная величина
+сопровождается дельтой в скобках: `141 (+25) / 161 (+40) out`.
 
 При включённом расчёте стоимость одной завершённой модельной записи равна:
 
 ```text
-credits = (in * input_rate + cached * cached_input_rate + out * output_rate) / 1,000,000
+credits = (in * input_rate + cached * cached_input_rate + total_out * output_rate) / 1,000,000
 ```
 
-Reasoning-токены отдельно не тарифицируются, поскольку уже входят в `out`.
+Reasoning-токены отдельно не тарифицируются, поскольку уже входят в `total_out`.
 `cache_write_input_tokens` остаются внутри `in` и получают обычный входной
 тариф. Стоимости ответов одной модели складываются с полной внутренней
 точностью. Стоимости разных моделей также можно складывать, поскольку все они
@@ -582,7 +583,7 @@ TUI не должен выводить модель из текущего сос
 Например:
 
 ```text
-Tokens: [gpt-5.6-sol] 6.6Ƶ+, 2,230 in, 137,600 cached, 10,000 / 5,135 out, partial; [gpt-5.6-luna] ?Ƶ, unavailable
+Tokens: [gpt-5.6-sol] 6.6Ƶ+, 2,230 in, 137,600 cached, 4,865 / 10,000 out, partial; [gpt-5.6-luna] ?Ƶ, unavailable
 ```
 
 Накопительная часть обычного снимка сохраняет неполноту модели с начала хода, а

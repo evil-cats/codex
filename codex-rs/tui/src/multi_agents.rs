@@ -790,7 +790,7 @@ mod tests {
 
         assert_snapshot!(cell_to_text(&cell), @r"
         • Completed `/root/worker`
-          └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 7,000 / 3,310 out
+          └ Tokens: [gpt-5.6-luna] 0.27Ƶ, 1,760 in, 92,800 cached, 3,690 / 7,000 out
         ");
     }
 
@@ -843,7 +843,7 @@ mod tests {
 
         assert_snapshot!(rendered, @r"
         • Errored `/root/reviewer`
-          └ Tokens: [gpt-5.6-terra] 1.09Ƶ+, 920 in, 40,000 cached, 2,800 / 1,100 out, partial
+          └ Tokens: [gpt-5.6-terra] 1.09Ƶ+, 920 in, 40,000 cached, 1,700 / 2,800 out, partial
         • Interrupted `/root/scout`
           └ Tokens: [gpt-5.5] ?Ƶ, unavailable
         ");
