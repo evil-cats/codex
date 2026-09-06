@@ -188,24 +188,39 @@ impl App {
                 app_server.remember_task_tool_thread(thread_id);
             }
             AppEvent::RequestOlderScrollbackHistory { thread_id } => {
-                if self.chat_widget.thread_id() == Some(thread_id)
-                    && self.overlay.is_none()
-                    && self.scrollback_has_older_history
-                {
-                    self.request_older_history_page(app_server, thread_id);
+                if self.chat_widget.thread_id() != Some(thread_id) {
+                    self.cancel_scrollback_history_top_up(thread_id);
+                } else if self.overlay.is_some() || !self.scrollback_has_older_history {
+                    self.finish_scrollback_history_top_up(tui, thread_id);
+                } else if !self.request_older_history_page(
+                    app_server,
+                    thread_id,
+                    HistoryPageLoadKind::ScrollbackTopUp,
+                ) {
+                    self.finish_scrollback_history_top_up(tui, thread_id);
                 }
             }
             AppEvent::OlderThreadHistoryLoaded {
                 thread_id,
                 cursor,
+                load_kind,
                 result,
             } => {
                 if let Err(err) = self
-                    .handle_older_history_page(tui, app_server, thread_id, &cursor, result)
+                    .handle_older_history_page(
+                        tui,
+                        app_server,
+                        thread_id,
+                        &cursor,
+                        load_kind,
+                        result,
+                    )
                     .await
                 {
                     app_server.cancel_older_history_page(thread_id);
-                    if self.chat_widget.thread_id() == Some(thread_id)
+                    if load_kind == HistoryPageLoadKind::ScrollbackTopUp {
+                        self.finish_scrollback_history_top_up(tui, thread_id);
+                    } else if self.chat_widget.thread_id() == Some(thread_id)
                         && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
                     {
                         overlay.set_history_state(TranscriptHistoryState::Failed);

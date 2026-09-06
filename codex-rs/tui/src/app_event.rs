@@ -214,6 +214,12 @@ pub(crate) enum RecapTrigger {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HistoryPageLoadKind {
+    ScrollbackTopUp,
+    TranscriptOverlay,
+}
+
 #[derive(Debug)]
 pub(crate) struct AgentsOverviewThreadRefresh {
     pub(crate) threads: std::collections::HashMap<ThreadId, Option<Thread>>,
@@ -323,6 +329,7 @@ pub(crate) enum AppEvent {
     OlderThreadHistoryLoaded {
         thread_id: ThreadId,
         cursor: String,
+        load_kind: HistoryPageLoadKind,
         result: Result<ThreadItemsListResponse, String>,
     },
 

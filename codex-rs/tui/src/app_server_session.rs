@@ -3301,6 +3301,7 @@ mod tests {
             params,
             ThreadResumeParams {
                 thread_id: thread_id.to_string(),
+                experimental_raw_events: true,
                 ..ThreadResumeParams::default()
             }
         );

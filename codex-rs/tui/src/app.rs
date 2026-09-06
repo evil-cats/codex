@@ -10,6 +10,7 @@ use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
 use crate::app_event::FeedbackCategory;
 use crate::app_event::HistoryLookupResponse;
+use crate::app_event::HistoryPageLoadKind;
 use crate::app_event::PermissionProfileSelection;
 use crate::app_event::PluginLocation;
 use crate::app_event::PluginRemoteSectionError;
@@ -222,6 +223,7 @@ mod event_dispatch;
 mod exit_summary;
 mod file_change_approvals;
 mod history_pagination;
+mod history_row_budget;
 mod history_ui;
 mod input;
 mod loaded_threads;
@@ -528,8 +530,32 @@ struct SessionSummary {
 #[derive(Debug, Default)]
 struct InitialHistoryReplayBuffer {
     retained_items: VecDeque<HistoryCellDisplayItem>,
+    retained_rows: usize,
     render_from_transcript_tail: bool,
     was_truncated: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScrollbackTopUpPresentation {
+    DeferredInitialReplay,
+    AlreadyRendered,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScrollbackTopUpPhase {
+    Loading,
+    FinalReflow,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ScrollbackHistoryTopUp {
+    thread_id: ThreadId,
+    presentation: ScrollbackTopUpPresentation,
+    phase: ScrollbackTopUpPhase,
+    rendered_rows: usize,
+    scanned_items: usize,
+    loaded_pages: usize,
+    page_cursor: Option<String>,
 }
 
 pub(crate) struct App {
@@ -564,6 +590,7 @@ pub(crate) struct App {
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
+    scrollback_history_top_up: Option<ScrollbackHistoryTopUp>,
     pub(crate) scrollback_has_older_history: bool,
 
     pub(crate) enhanced_keys_supported: bool,

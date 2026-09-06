@@ -19,6 +19,7 @@ use crate::exec_cell::output_lines;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::legacy_core::config::Config;
+use crate::legacy_core::config::HistoryImagePreviewConfig;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
 use crate::motion::MotionMode;
@@ -153,6 +154,64 @@ pub(crate) enum HistoryCellDisplayItem {
         path: PathBuf,
         preview_size: ImagePreviewSize,
     },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HistoryRowCalculator {
+    width: u16,
+    mode: HistoryRenderMode,
+    image_preview: HistoryImagePreviewConfig,
+}
+
+impl HistoryRowCalculator {
+    pub(crate) fn new(
+        width: u16,
+        mode: HistoryRenderMode,
+        image_preview: HistoryImagePreviewConfig,
+    ) -> Self {
+        Self {
+            width: width.max(1),
+            mode,
+            image_preview,
+        }
+    }
+
+    pub(crate) fn display_item_rows(self, item: &HistoryCellDisplayItem) -> usize {
+        match item {
+            HistoryCellDisplayItem::Line(line) => Paragraph::new(Text::from(line.line.clone()))
+                .wrap(Wrap { trim: false })
+                .line_count(self.width),
+            HistoryCellDisplayItem::LocalImage { preview_size, .. } => {
+                usize::from(self.image_preview.rows_for(*preview_size))
+            }
+        }
+    }
+
+    pub(crate) fn display_items_rows(self, items: &[HistoryCellDisplayItem]) -> usize {
+        items.iter().fold(0usize, |rows, item| {
+            rows.saturating_add(self.display_item_rows(item))
+        })
+    }
+
+    pub(crate) fn appended_cells_rows<'a>(
+        self,
+        cells: impl IntoIterator<Item = &'a dyn HistoryCell>,
+        initial_rows: usize,
+    ) -> usize {
+        let mut rows = initial_rows;
+        for cell in cells {
+            let cell_rows =
+                self.display_items_rows(&cell.display_items_for_mode(self.width, self.mode));
+            if cell_rows == 0 {
+                continue;
+            }
+            if rows != 0 && !cell.is_stream_continuation() {
+                rows = rows.saturating_add(/*separator*/ 1);
+            }
+            rows = rows.saturating_add(cell_rows);
+        }
+        rows
+    }
 }
 
 impl From<HyperlinkLine> for HistoryCellDisplayItem {

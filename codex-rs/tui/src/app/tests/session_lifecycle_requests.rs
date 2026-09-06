@@ -1754,8 +1754,15 @@ async fn older_pagination_reconciles_review_prompts_across_page_boundaries() -> 
             },
         })
         .await?;
-    app.handle_older_history_page(&mut tui, &mut app_server, thread_id, &cursor, Ok(page))
-        .await?;
+    app.handle_older_history_page(
+        &mut tui,
+        &mut app_server,
+        thread_id,
+        &cursor,
+        HistoryPageLoadKind::TranscriptOverlay,
+        Ok(page),
+    )
+    .await?;
 
     let visible_user_messages = app
         .transcript_cells
@@ -2210,8 +2217,59 @@ async fn paginated_fork_survives_post_response_hydration_failure() -> Result<()>
     Ok(())
 }
 
+async fn complete_automatic_scrollback_top_up(
+    app: &mut App,
+    app_event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+    tui: &mut crate::tui::Tui,
+    app_server: &mut AppServerSession,
+) -> Result<usize> {
+    let mut loaded_pages = 0;
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), app_event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("history event channel closed"))?;
+        let automatic_page_loaded = matches!(
+            &event,
+            AppEvent::OlderThreadHistoryLoaded {
+                load_kind: HistoryPageLoadKind::ScrollbackTopUp,
+                ..
+            }
+        );
+        if automatic_page_loaded {
+            assert!(!app.transcript_reflow.has_pending_reflow());
+        }
+        app.handle_event(tui, app_server, event).await?;
+        if !automatic_page_loaded {
+            continue;
+        }
+
+        loaded_pages += 1;
+        let top_up = app
+            .scrollback_history_top_up
+            .as_ref()
+            .expect("automatic history top-up should remain tracked until final reflow");
+        match top_up.phase {
+            ScrollbackTopUpPhase::Loading => {
+                assert!(top_up.page_cursor.is_some());
+                assert!(!app.transcript_reflow.has_pending_reflow());
+            }
+            ScrollbackTopUpPhase::FinalReflow => {
+                assert!(top_up.page_cursor.is_none());
+                assert!(app.transcript_reflow.has_pending_reflow());
+                break;
+            }
+        }
+    }
+
+    let screen_size = tui.terminal.last_known_screen_size;
+    app.maybe_run_resize_reflow(tui, screen_size)?;
+    assert!(app.scrollback_history_top_up.is_none());
+    assert!(!app.transcript_reflow.has_pending_reflow());
+    Ok(loaded_pages)
+}
+
 #[tokio::test]
-async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcript() -> Result<()> {
+async fn cold_and_warm_resume_batch_automatic_scrollback_pages_before_one_reflow() -> Result<()> {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
@@ -2238,7 +2296,7 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
         model_context_window: None,
         collaboration_mode_kind: Default::default(),
     }))
-    .chain((0..120).map(|index| {
+    .chain((0..305).map(|index| {
         EventMsg::ItemCompleted(ItemCompletedEvent {
             thread_id,
             turn_id: "scrollback-pagination-turn".to_string(),
@@ -2277,115 +2335,136 @@ async fn underfilled_scrollback_fetches_older_pages_without_opening_the_transcri
         /*failed_thread_name*/ None,
     )
     .await?;
-    let started = app_server
+    let cold_started = app_server
         .resume_thread(
             app.config.clone(),
             thread_id,
             crate::app_server_session::ResumeModelSettings::RestoreFromThread,
         )
         .await?;
-    let mut initial_cells = crate::thread_transcript::thread_items_to_transcript_cells(
+    let mut cold_cells = crate::thread_transcript::thread_items_to_transcript_cells(
         Some(thread_id),
         &app.config.cwd,
-        started.turns.iter().flat_map(|turn| turn.items.clone()),
+        cold_started
+            .turns
+            .iter()
+            .flat_map(|turn| turn.items.clone()),
         crate::thread_transcript::RawReasoningVisibility::Hidden,
         Some(&app.config),
     );
-    initial_cells.insert(
+    cold_cells.insert(
         /*index*/ 0,
         Arc::new(crate::history_cell::new_session_info(
             &app.config,
-            started.session.model.as_str(),
-            &started.session,
+            cold_started.session.model.as_str(),
+            &cold_started.session,
             /*is_first_event*/ false,
-            Some("This is a test announcement".to_string()),
+            /*tooltip_override*/ None,
             /*auth_plan*/ None,
             /*show_fast_status*/ false,
         )),
     );
-    app.enqueue_primary_thread_session(started.session, started.turns)
+    app.enqueue_primary_thread_session(cold_started.session, cold_started.turns)
         .await?;
-    app.transcript_cells = initial_cells;
+    while app_event_rx.try_recv().is_ok() {}
+    app.transcript_cells = cold_cells;
     app.scrollback_has_older_history = app_server.has_older_history(thread_id);
-    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(32);
-    let initial_cell_count = app.transcript_cells.len();
-    let initial_page_requests = recorded_params(&requests, "thread/items/list").len();
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(350);
+    let cold_initial_rows = app.current_thread_history_rows(/*width*/ 80);
+    let cold_initial_page_requests = recorded_params(&requests, "thread/items/list").len();
     let mut tui = crate::tui::test_support::make_test_tui()?;
 
-    app.scrollback_has_older_history = false;
-    app.handle_key_event(
+    app.begin_initial_history_replay_buffer();
+    app.finish_initial_history_replay_buffer(&mut tui);
+    assert!(!app.transcript_reflow.has_pending_reflow());
+    let cold_loaded_pages = complete_automatic_scrollback_top_up(
+        &mut app,
+        &mut app_event_rx,
         &mut tui,
         &mut app_server,
-        KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
     )
-    .await;
-    assert!(app.scrollback_has_older_history);
-    if let Some(Overlay::Transcript(overlay)) = app.overlay.as_mut() {
-        overlay.handle_event(
-            &mut tui,
-            TuiEvent::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)),
-        )?;
-        let area = Rect::new(
-            /*x*/ 0, /*y*/ 0, /*width*/ 100, /*height*/ 16,
-        );
-        let render_overlay = |overlay: &mut crate::pager_overlay::TranscriptOverlay| {
-            let mut buffer = Buffer::empty(area);
-            overlay.render(area, &mut buffer);
-            (area.y..area.bottom())
-                .map(|y| {
-                    (area.x..area.right())
-                        .map(|x| buffer[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let partial = render_overlay(overlay);
-        assert!(partial.contains("Earlier messages are available — scroll up to load them"));
-        assert!(!partial.contains("OpenAI Codex"));
-        assert!(!partial.contains("This is a test announcement"));
-        assert!(!partial.contains('%'));
+    .await?;
+    let cold_page_requests =
+        recorded_params(&requests, "thread/items/list").len() - cold_initial_page_requests;
+    let previous_transcript = app.transcript_cells.clone();
 
-        overlay.set_history_state(crate::pager_overlay::TranscriptHistoryState::LoadingOlder);
-        let loading = render_overlay(overlay);
-        assert!(loading.contains("Loading earlier messages..."));
-        assert!(!loading.contains("OpenAI Codex"));
-        assert!(!loading.contains('%'));
-    } else {
-        panic!("expected transcript overlay");
-    }
-    app.close_transcript_overlay(&mut tui);
-
-    let terminal_width = tui.terminal.last_known_screen_size.into();
-    app.reflow_transcript_now(&mut tui, terminal_width)?;
-    let request = loop {
-        match app_event_rx.recv().await {
-            Some(event @ AppEvent::RequestOlderScrollbackHistory { .. }) => break event,
-            Some(_) => {}
-            None => panic!("scrollback refill request channel closed"),
-        }
-    };
-    app.handle_event(&mut tui, &mut app_server, request).await?;
-    let loaded = loop {
-        match app_event_rx.recv().await {
-            Some(event @ AppEvent::OlderThreadHistoryLoaded { .. }) => break event,
-            Some(_) => {}
-            None => panic!("older history page channel closed"),
-        }
-    };
-    app.handle_event(&mut tui, &mut app_server, loaded).await?;
-
-    assert!(app.overlay.is_none());
-    assert!(app.transcript_cells.len() > initial_cell_count);
-    assert_eq!(
-        recorded_params(&requests, "thread/items/list").len(),
-        initial_page_requests + 1
+    app_server.thread_unload(thread_id).await?;
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(8);
+    let warm_started = app_server
+        .resume_thread(
+            app.config.clone(),
+            thread_id,
+            crate::app_server_session::ResumeModelSettings::RestoreFromThread,
+        )
+        .await?;
+    let mut warm_cells = crate::thread_transcript::thread_items_to_transcript_cells(
+        Some(thread_id),
+        &app.config.cwd,
+        warm_started
+            .turns
+            .iter()
+            .flat_map(|turn| turn.items.clone()),
+        crate::thread_transcript::RawReasoningVisibility::Hidden,
+        Some(&app.config),
     );
-    assert_eq!(
-        app.render_transcript_lines_for_reflow(/*width*/ 80)
+    warm_cells.insert(
+        /*index*/ 0,
+        Arc::new(crate::history_cell::new_session_info(
+            &app.config,
+            warm_started.session.model.as_str(),
+            &warm_started.session,
+            /*is_first_event*/ false,
+            /*tooltip_override*/ None,
+            /*auth_plan*/ None,
+            /*show_fast_status*/ false,
+        )),
+    );
+    app.enqueue_primary_thread_session(warm_started.session, warm_started.turns)
+        .await?;
+    while app_event_rx.try_recv().is_ok() {}
+    let mut accumulated_cells = previous_transcript;
+    accumulated_cells.extend(warm_cells);
+    app.transcript_cells = accumulated_cells;
+    app.scrollback_has_older_history = app_server.has_older_history(thread_id);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(350);
+    let warm_initial_rows = app.current_thread_history_rows(/*width*/ 80);
+    let warm_initial_page_requests = recorded_params(&requests, "thread/items/list").len();
+
+    app.begin_thread_switch_history_replay_buffer();
+    app.finish_initial_history_replay_buffer(&mut tui);
+    assert!(!app.transcript_reflow.has_pending_reflow());
+    let warm_loaded_pages = complete_automatic_scrollback_top_up(
+        &mut app,
+        &mut app_event_rx,
+        &mut tui,
+        &mut app_server,
+    )
+    .await?;
+    let warm_page_requests =
+        recorded_params(&requests, "thread/items/list").len() - warm_initial_page_requests;
+
+    assert!(cold_loaded_pages >= 2);
+    assert_eq!(warm_loaded_pages, cold_loaded_pages);
+    assert_eq!(warm_page_requests, cold_page_requests);
+    assert_eq!(warm_initial_rows, cold_initial_rows);
+    let rendered = app.render_transcript_lines_for_reflow(/*width*/ 80);
+    insta::assert_snapshot!(
+        rendered
             .items
-            .len(),
-        32
+            .iter()
+            .rev()
+            .take(/*n*/ 5)
+            .rev()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        @r"
+    • scrollback output 302
+
+    • scrollback output 303
+
+    • scrollback output 304
+    "
     );
 
     app_server.shutdown().await?;

@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::app_event::AppEvent;
+use crate::app_event::HistoryPageLoadKind;
 use crate::app_server_session::AppServerSession;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::chatwidget::ChatWidget;
@@ -102,7 +103,11 @@ impl App {
                     && matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat)))
             && let Some(thread_id) = self.chat_widget.thread_id()
             && app_server.has_older_history(thread_id)
-            && self.request_older_history_page(app_server, thread_id)
+            && self.request_older_history_page(
+                app_server,
+                thread_id,
+                HistoryPageLoadKind::TranscriptOverlay,
+            )
         {
             if let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut() {
                 overlay.set_history_state(if overlay.should_load_from_start(*key_event) {

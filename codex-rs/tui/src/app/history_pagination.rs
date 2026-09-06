@@ -1,9 +1,10 @@
-//! Load older transcript pages without rewriting terminal-native scrollback.
+//! Пагинация старой истории: пакетный scrollback top-up и явная загрузка transcript overlay.
 
 use std::collections::HashSet;
 
 use super::*;
 use crate::app_server_session::HISTORY_ITEM_PAGE_LIMIT;
+use crate::app_server_session::HISTORY_ITEM_SCAN_LIMIT;
 use crate::app_server_session::thread_items_page_params;
 use crate::history_cell::SessionInfoCell;
 use crate::history_cell::UserHistoryCell;
@@ -14,19 +15,29 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ThreadItemsListResponse;
 
 impl App {
-    /// Start one bounded page request shared by scrollback refill and the transcript overlay.
+    /// Запускает один ограниченный запрос страницы для scrollback или transcript overlay.
     pub(crate) fn request_older_history_page(
-        &self,
+        &mut self,
         app_server: &mut AppServerSession,
         thread_id: ThreadId,
+        load_kind: HistoryPageLoadKind,
     ) -> bool {
         let Some(cursor) = app_server.begin_older_history_page(thread_id) else {
             return false;
         };
+        if load_kind == HistoryPageLoadKind::ScrollbackTopUp {
+            let Some(top_up) = self.scrollback_history_top_up.as_mut().filter(|top_up| {
+                top_up.thread_id == thread_id && top_up.phase == ScrollbackTopUpPhase::Loading
+            }) else {
+                app_server.cancel_older_history_page(thread_id);
+                return false;
+            };
+            top_up.page_cursor = Some(cursor.clone());
+        }
         tracing::debug!(
             %thread_id,
             %cursor,
-            overlay = self.overlay.is_some(),
+            ?load_kind,
             "loading older transcript history page"
         );
         let request_id = app_server.next_request_id();
@@ -48,10 +59,85 @@ impl App {
             app_event_tx.send(AppEvent::OlderThreadHistoryLoaded {
                 thread_id,
                 cursor,
+                load_kind,
                 result,
             });
         });
         true
+    }
+
+    pub(super) fn begin_scrollback_history_top_up(
+        &mut self,
+        rendered_rows: usize,
+        presentation: ScrollbackTopUpPresentation,
+    ) -> bool {
+        if !self.scrollback_history_needs_top_up(rendered_rows) {
+            return false;
+        }
+        let Some(thread_id) = self.chat_widget.thread_id() else {
+            return false;
+        };
+        if self
+            .scrollback_history_top_up
+            .as_ref()
+            .is_some_and(|top_up| {
+                top_up.thread_id == thread_id && top_up.phase == ScrollbackTopUpPhase::Loading
+            })
+        {
+            return true;
+        }
+
+        self.scrollback_history_top_up = Some(ScrollbackHistoryTopUp {
+            thread_id,
+            presentation,
+            phase: ScrollbackTopUpPhase::Loading,
+            rendered_rows,
+            scanned_items: 0,
+            loaded_pages: 0,
+            page_cursor: None,
+        });
+        tracing::debug!(
+            %thread_id,
+            rendered_rows,
+            max_rows = self.resize_reflow_max_rows(),
+            "refilling underfilled terminal scrollback from paginated history"
+        );
+        self.app_event_tx
+            .send(AppEvent::RequestOlderScrollbackHistory { thread_id });
+        true
+    }
+
+    pub(super) fn finish_scrollback_history_top_up(
+        &mut self,
+        tui: &mut tui::Tui,
+        thread_id: ThreadId,
+    ) {
+        let Some(top_up) = self
+            .scrollback_history_top_up
+            .as_mut()
+            .filter(|top_up| top_up.thread_id == thread_id)
+        else {
+            return;
+        };
+        let needs_final_reflow = top_up.presentation
+            == ScrollbackTopUpPresentation::DeferredInitialReplay
+            || top_up.loaded_pages != 0;
+        if needs_final_reflow {
+            top_up.phase = ScrollbackTopUpPhase::FinalReflow;
+            self.schedule_immediate_resize_reflow(tui);
+        } else {
+            self.scrollback_history_top_up = None;
+        }
+    }
+
+    pub(super) fn cancel_scrollback_history_top_up(&mut self, thread_id: ThreadId) {
+        if self
+            .scrollback_history_top_up
+            .as_ref()
+            .is_some_and(|top_up| top_up.thread_id == thread_id)
+        {
+            self.scrollback_history_top_up = None;
+        }
     }
 
     pub(super) async fn handle_older_history_page(
@@ -60,19 +146,25 @@ impl App {
         app_server: &mut AppServerSession,
         thread_id: ThreadId,
         cursor: &str,
+        load_kind: HistoryPageLoadKind,
         result: Result<ThreadItemsListResponse, String>,
     ) -> Result<()> {
         if self.chat_widget.thread_id() != Some(thread_id) {
             app_server.cancel_older_history_page(thread_id);
+            self.cancel_scrollback_history_top_up(thread_id);
             return Ok(());
         }
         let page = result.map_err(|err| color_eyre::eyre::eyre!(err))?;
+        let page_item_count = page.data.len();
         let Some(store) = self
             .thread_event_channels
             .get(&thread_id)
             .map(|channel| Arc::clone(&channel.store))
         else {
             app_server.cancel_older_history_page(thread_id);
+            if load_kind == HistoryPageLoadKind::ScrollbackTopUp {
+                self.finish_scrollback_history_top_up(tui, thread_id);
+            }
             return Ok(());
         };
         let (cwd, mut turns) = {
@@ -226,7 +318,8 @@ impl App {
             } else {
                 TranscriptHistoryState::Complete
             });
-            continue_to_start = previous_state == TranscriptHistoryState::LoadingBeginning
+            continue_to_start = load_kind == HistoryPageLoadKind::TranscriptOverlay
+                && previous_state == TranscriptHistoryState::LoadingBeginning
                 && self.scrollback_has_older_history;
         } else {
             let index = self
@@ -235,20 +328,58 @@ impl App {
                 .rposition(|cell| cell.as_any().is::<SessionInfoCell>())
                 .map_or(/*default*/ 0, |index| index.saturating_add(/*rhs*/ 1));
             self.transcript_cells.splice(index..index, cells);
-            let wrap_width = self.chat_widget.history_wrap_width(width);
-            let rendered_rows = self
-                .render_transcript_lines_for_reflow(wrap_width)
-                .items
-                .len();
-            self.schedule_immediate_resize_reflow(tui);
-            if self.scrollback_history_needs_top_up(rendered_rows)
-                && self.request_older_history_page(app_server, thread_id)
-            {
-                return Ok(());
+        }
+        if load_kind == HistoryPageLoadKind::ScrollbackTopUp {
+            let automatic_page_tracked = if let Some(top_up) =
+                self.scrollback_history_top_up.as_mut().filter(|top_up| {
+                    top_up.thread_id == thread_id
+                        && top_up.phase == ScrollbackTopUpPhase::Loading
+                        && top_up.page_cursor.as_deref() == Some(cursor)
+                }) {
+                top_up.page_cursor = None;
+                top_up.scanned_items = top_up.scanned_items.saturating_add(page_item_count);
+                top_up.loaded_pages = top_up.loaded_pages.saturating_add(/*rhs*/ 1);
+                true
+            } else {
+                false
+            };
+            if automatic_page_tracked {
+                let wrap_width = self.chat_widget.history_wrap_width(width);
+                let rendered_rows = self.current_thread_history_rows(wrap_width);
+                let (rendered_rows, scan_limit_reached) = self
+                    .scrollback_history_top_up
+                    .as_mut()
+                    .filter(|top_up| top_up.thread_id == thread_id)
+                    .map_or((rendered_rows, true), |top_up| {
+                        top_up.rendered_rows = rendered_rows;
+                        (
+                            top_up.rendered_rows,
+                            top_up.scanned_items >= HISTORY_ITEM_SCAN_LIMIT,
+                        )
+                    });
+                if self.scrollback_history_needs_top_up(rendered_rows)
+                    && !scan_limit_reached
+                    && self.request_older_history_page(
+                        app_server,
+                        thread_id,
+                        HistoryPageLoadKind::ScrollbackTopUp,
+                    )
+                {
+                    return Ok(());
+                }
+                self.finish_scrollback_history_top_up(tui, thread_id);
+            } else if self.overlay.is_none() {
+                self.schedule_immediate_resize_reflow(tui);
             }
+        } else if self.overlay.is_none() {
+            self.schedule_immediate_resize_reflow(tui);
         }
         if continue_to_start
-            && self.request_older_history_page(app_server, thread_id)
+            && self.request_older_history_page(
+                app_server,
+                thread_id,
+                HistoryPageLoadKind::TranscriptOverlay,
+            )
             && let Some(Overlay::Transcript(overlay)) = self.overlay.as_mut()
         {
             overlay.set_history_state(TranscriptHistoryState::LoadingBeginning);

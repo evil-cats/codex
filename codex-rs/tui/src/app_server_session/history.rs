@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use super::AppServerSession;
 use crate::history_cell::HistoryRenderMode;
+use crate::history_cell::HistoryRowCalculator;
 use crate::inline_visualization::InlineVisualizationContext;
 use crate::legacy_core::config::Config;
 use crate::resize_reflow_cap::resize_reflow_max_rows;
@@ -314,17 +315,14 @@ fn rendered_history_rows(
     } else {
         HistoryRenderMode::Rich
     };
-    thread_items_to_transcript_cells_with_context(
+    let cells = thread_items_to_transcript_cells_with_context(
         &thread.cwd,
         items,
         visibility,
         inline_visualization_context,
-    )
-    .into_iter()
-    .fold(rendered_rows, |rows, cell| {
-        let height = usize::from(cell.desired_height_for_mode(width, mode));
-        rows + height + usize::from(height != 0 && rows != 0 && !cell.is_stream_continuation())
-    })
+    );
+    HistoryRowCalculator::new(width, mode, config.history_image_preview)
+        .appended_cells_rows(cells.iter().map(std::convert::AsRef::as_ref), rendered_rows)
 }
 
 #[cfg(test)]

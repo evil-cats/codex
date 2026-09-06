@@ -5480,6 +5480,7 @@ async fn make_test_app() -> App {
         has_emitted_history_lines: false,
         transcript_reflow: TranscriptReflowState::default(),
         initial_history_replay_buffer: None,
+        scrollback_history_top_up: None,
         scrollback_has_older_history: false,
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
@@ -5563,6 +5564,7 @@ async fn make_test_app_with_channels() -> (
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
+            scrollback_history_top_up: None,
             scrollback_has_older_history: false,
             enhanced_keys_supported: false,
             keymap: crate::keymap::RuntimeKeymap::defaults(),
@@ -6044,12 +6046,14 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
 
     app.begin_initial_history_replay_buffer();
     for index in 0..5 {
+        let row_calculator = app.history_row_calculator(/*width*/ 80);
         App::buffer_initial_history_replay_display_items(
             app.initial_history_replay_buffer
                 .as_mut()
                 .expect("initial replay buffer active"),
             vec![Line::from(format!("line {index}")).into()],
             /*max_rows*/ 3,
+            row_calculator,
         );
     }
 
@@ -6085,12 +6089,14 @@ async fn required_stream_reflow_during_capped_initial_replay_uses_transcript_tai
     ];
 
     app.begin_initial_history_replay_buffer();
+    let row_calculator = app.history_row_calculator(/*width*/ 80);
     App::buffer_initial_history_replay_display_items(
         app.initial_history_replay_buffer
             .as_mut()
             .expect("initial replay buffer active"),
         vec![Line::from("latest user question").into()],
         /*max_rows*/ 20,
+        row_calculator,
     );
 
     let mut tui = crate::tui::test_support::make_test_tui()?;
@@ -6175,12 +6181,14 @@ async fn required_stream_reflow_during_capped_initial_replay_survives_transcript
     ];
 
     app.begin_initial_history_replay_buffer();
+    let row_calculator = app.history_row_calculator(/*width*/ 80);
     App::buffer_initial_history_replay_display_items(
         app.initial_history_replay_buffer
             .as_mut()
             .expect("initial replay buffer active"),
         vec![Line::from("stale streamed table tail").into()],
         /*max_rows*/ 7,
+        row_calculator,
     );
 
     let mut tui = crate::tui::test_support::make_test_tui()?;

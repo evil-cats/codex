@@ -2,7 +2,9 @@ use super::*;
 use crate::app::test_support::make_test_app;
 use crate::history_cell::PlainHistoryCell;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
+use codex_protocol::items::ImagePreviewSize;
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 fn plain_history_cells(count: usize) -> Vec<Arc<dyn HistoryCell>> {
     (0..count)
@@ -23,6 +25,33 @@ fn rendered_line_text(item: &HistoryCellDisplayItem) -> String {
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
+}
+
+#[tokio::test]
+async fn row_calculator_counts_wrapping_separators_and_image_height() {
+    let mut app = make_test_app().await;
+    app.config.history_image_preview.normal_rows = 5;
+    let row_calculator = app.history_row_calculator(/*width*/ 5);
+    let display = vec![
+        Line::from("123456789").into(),
+        HistoryCellDisplayItem::LocalImage {
+            path: PathBuf::from("preview.png"),
+            preview_size: ImagePreviewSize::Normal,
+        },
+    ];
+    let cells = [
+        Arc::new(PlainHistoryCell::new(vec![Line::from("a")])) as Arc<dyn HistoryCell>,
+        Arc::new(PlainHistoryCell::new(vec![Line::from("b")])) as Arc<dyn HistoryCell>,
+    ];
+
+    assert_eq!(row_calculator.display_items_rows(&display), 7);
+    assert_eq!(
+        row_calculator.appended_cells_rows(
+            cells.iter().map(std::convert::AsRef::as_ref),
+            /*initial_rows*/ 0,
+        ),
+        3
+    );
 }
 
 #[tokio::test]

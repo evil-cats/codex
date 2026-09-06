@@ -25,9 +25,12 @@ use ratatui::text::Line;
 
 use super::App;
 use super::InitialHistoryReplayBuffer;
+use super::ScrollbackTopUpPhase;
+use super::ScrollbackTopUpPresentation;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryCellDisplayItem;
+use crate::history_cell::HistoryRowCalculator;
 use crate::insert_history::HistoryInsertItem;
 use crate::insert_history::HistoryLineWrapPolicy;
 use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
@@ -179,6 +182,7 @@ impl App {
     /// overlay replay continues through the normal deferred-history path.
     pub(super) fn begin_initial_history_replay_buffer(&mut self) {
         if self.overlay.is_none() {
+            self.scrollback_history_top_up = None;
             self.initial_history_replay_buffer = Some(Default::default());
         }
     }
@@ -190,8 +194,10 @@ impl App {
     /// so only the rows the terminal would retain are formatted and inserted.
     pub(super) fn begin_thread_switch_history_replay_buffer(&mut self) {
         if self.resize_reflow_max_rows().is_some() && self.overlay.is_none() {
+            self.scrollback_history_top_up = None;
             self.initial_history_replay_buffer = Some(InitialHistoryReplayBuffer {
                 retained_items: VecDeque::new(),
+                retained_rows: 0,
                 render_from_transcript_tail: true,
                 was_truncated: false,
             });
@@ -206,6 +212,18 @@ impl App {
         let Some(buffer) = self.initial_history_replay_buffer.take() else {
             return;
         };
+        let width = self
+            .chat_widget
+            .history_wrap_width(tui.terminal.last_known_screen_size.width);
+
+        if self.overlay.is_none()
+            && self.begin_scrollback_history_top_up(
+                self.current_thread_history_rows(width),
+                ScrollbackTopUpPresentation::DeferredInitialReplay,
+            )
+        {
+            return;
+        }
 
         if buffer.render_from_transcript_tail || self.overlay.is_some() {
             // Reflow clears any pre-replay or partially emitted history and applies the reserved
@@ -215,16 +233,11 @@ impl App {
         }
 
         if buffer.retained_items.is_empty() {
-            self.request_scrollback_history_top_up(/*rendered_rows*/ 0);
             return;
         }
 
         let mut retained_items = buffer.retained_items.into_iter().collect::<Vec<_>>();
-        let width = self
-            .chat_widget
-            .history_wrap_width(tui.terminal.last_known_screen_size.width);
         self.prepend_scrollback_history_notice(&mut retained_items, buffer.was_truncated, width);
-        let retained_rows = retained_items.len();
         let insert_items = self.prepare_history_insert_items(retained_items, width);
         tui.insert_history_items_with_wrap_policy(insert_items, self.history_line_wrap_policy());
         if self.pending_thread_usage_history_refresh
@@ -232,7 +245,6 @@ impl App {
         {
             tracing::warn!(error = %err, "failed to refresh thread usage after initial replay");
         }
-        self.request_scrollback_history_top_up(retained_rows);
     }
 
     pub(super) fn insert_history_cell_lines_with_initial_replay_buffer(
@@ -260,8 +272,14 @@ impl App {
         }
 
         if let Some(max_rows) = self.resize_reflow_max_rows() {
+            let row_calculator = self.history_row_calculator(width);
             if let Some(buffer) = &mut self.initial_history_replay_buffer {
-                Self::buffer_initial_history_replay_display_items(buffer, display, max_rows);
+                Self::buffer_initial_history_replay_display_items(
+                    buffer,
+                    display,
+                    max_rows,
+                    row_calculator,
+                );
             }
             return;
         }
@@ -294,10 +312,19 @@ impl App {
         buffer: &mut InitialHistoryReplayBuffer,
         display: Vec<HistoryCellDisplayItem>,
         max_rows: usize,
+        row_calculator: HistoryRowCalculator,
     ) {
+        buffer.retained_rows = buffer
+            .retained_rows
+            .saturating_add(row_calculator.display_items_rows(&display));
         buffer.retained_items.extend(display);
-        while buffer.retained_items.len() > max_rows {
-            buffer.retained_items.pop_front();
+        while buffer.retained_rows > max_rows && buffer.retained_items.len() > 1 {
+            let Some(item) = buffer.retained_items.pop_front() else {
+                break;
+            };
+            buffer.retained_rows = buffer
+                .retained_rows
+                .saturating_sub(row_calculator.display_item_rows(&item));
             buffer.was_truncated = true;
         }
     }
@@ -306,7 +333,7 @@ impl App {
         self.transcript_reflow.schedule_debounced(target_width)
     }
 
-    fn resize_reflow_max_rows(&self) -> Option<usize> {
+    pub(super) fn resize_reflow_max_rows(&self) -> Option<usize> {
         crate::resize_reflow_cap::resize_reflow_max_rows(self.config.terminal_resize_reflow)
     }
 
@@ -374,6 +401,7 @@ impl App {
             && let Some(buffer) = self.initial_history_replay_buffer.as_mut()
         {
             buffer.retained_items.clear();
+            buffer.retained_rows = 0;
             buffer.render_from_transcript_tail = true;
             self.transcript_reflow.clear_stream_flags();
             return Ok(());
@@ -488,6 +516,13 @@ impl App {
         if self.overlay.is_some() {
             return Ok(());
         }
+        if self
+            .scrollback_history_top_up
+            .as_ref()
+            .is_some_and(|top_up| top_up.phase == ScrollbackTopUpPhase::Loading)
+        {
+            return Ok(());
+        }
 
         self.transcript_reflow.clear_pending_reflow();
 
@@ -518,15 +553,29 @@ impl App {
     ) -> Result<TerminalWidth> {
         let width = self.chat_widget.history_wrap_width(terminal_width.0);
         if self.transcript_cells.is_empty() {
+            if self
+                .scrollback_history_top_up
+                .as_ref()
+                .is_some_and(|top_up| top_up.phase == ScrollbackTopUpPhase::FinalReflow)
+            {
+                self.scrollback_history_top_up = None;
+            }
             // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
             tui.clear_pending_history_lines();
             self.reset_history_emission_state();
             return Ok(terminal_width);
         }
 
+        let completing_history_top_up =
+            self.scrollback_history_top_up
+                .as_ref()
+                .is_some_and(|top_up| {
+                    top_up.phase == ScrollbackTopUpPhase::FinalReflow
+                        && self.chat_widget.thread_id() == Some(top_up.thread_id)
+                });
+        let current_thread_rows = self.current_thread_history_rows(width);
         let reflow_result = self.render_transcript_lines_for_reflow(width);
         let reflowed_items = reflow_result.items;
-        let reflowed_rows = reflowed_items.len();
 
         // Drop any queued pre-resize/pre-consolidation inserts before rebuilding from cells.
         tui.clear_pending_history_lines();
@@ -559,7 +608,14 @@ impl App {
         if self.pending_thread_usage_history_refresh {
             self.refresh_thread_usage_history_tail(tui)?;
         }
-        self.request_scrollback_history_top_up(reflowed_rows);
+        if completing_history_top_up {
+            self.scrollback_history_top_up = None;
+        } else {
+            self.begin_scrollback_history_top_up(
+                current_thread_rows,
+                ScrollbackTopUpPresentation::AlreadyRendered,
+            );
+        }
 
         Ok(terminal_width)
     }
@@ -571,21 +627,6 @@ impl App {
             && self
                 .resize_reflow_max_rows()
                 .is_some_and(|max_rows| rendered_rows < max_rows)
-    }
-
-    fn request_scrollback_history_top_up(&self, rendered_rows: usize) {
-        if self.scrollback_history_needs_top_up(rendered_rows)
-            && let Some(thread_id) = self.chat_widget.thread_id()
-        {
-            tracing::debug!(
-                %thread_id,
-                rendered_rows,
-                max_rows = self.resize_reflow_max_rows(),
-                "refilling underfilled terminal scrollback from paginated history"
-            );
-            self.app_event_tx
-                .send(crate::app_event::AppEvent::RequestOlderScrollbackHistory { thread_id });
-        }
     }
 
     /// Rebuild scrollback after rollback removes transcript cells.
@@ -630,6 +671,7 @@ impl App {
     /// so the returned rows obey the cap exactly.
     pub(super) fn render_transcript_lines_for_reflow(&mut self, width: u16) -> ReflowRenderResult {
         let row_cap = self.resize_reflow_max_rows();
+        let row_calculator = self.history_row_calculator(width);
         let mut cell_displays = VecDeque::new();
         let mut rendered_rows = 0usize;
         let mut start = self.transcript_cells.len();
@@ -639,7 +681,7 @@ impl App {
             start -= 1;
             let cell = self.transcript_cells[start].clone();
             let items = cell.display_items_for_mode(width, self.chat_widget.history_render_mode());
-            rendered_rows += items.len();
+            rendered_rows = rendered_rows.saturating_add(row_calculator.display_items_rows(&items));
             cell_displays.push_front(ReflowCellDisplay {
                 items,
                 is_stream_continuation: cell.is_stream_continuation(),
@@ -677,10 +719,8 @@ impl App {
             reflowed_items.extend(display.items);
         }
         if let Some(max_rows) = row_cap
-            && reflowed_items.len() > max_rows
+            && Self::trim_display_items_to_row_cap(&mut reflowed_items, max_rows, row_calculator)
         {
-            let trimmed_item_count = reflowed_items.len() - max_rows;
-            reflowed_items = reflowed_items.split_off(trimmed_item_count);
             history_was_truncated = true;
         }
         self.prepend_scrollback_history_notice(&mut reflowed_items, history_was_truncated, width);
@@ -711,12 +751,19 @@ impl App {
         let notice_lines =
             crate::wrapping::word_wrap_lines([notice], usize::from(width.max(/*other*/ 1)));
         if let Some(max_rows) = self.resize_reflow_max_rows() {
-            let available_history_rows = max_rows.saturating_sub(notice_lines.len());
+            let row_calculator = self.history_row_calculator(width);
+            let notice_rows = notice_lines.iter().fold(0usize, |rows, line| {
+                rows.saturating_add(
+                    row_calculator.display_item_rows(&HistoryCellDisplayItem::from(line.clone())),
+                )
+            });
+            let available_history_rows = max_rows.saturating_sub(notice_rows);
             if available_history_rows == 0 {
                 return;
             }
-            if items.len() > available_history_rows {
-                items.drain(..items.len() - available_history_rows);
+            Self::trim_display_items_to_row_cap(items, available_history_rows, row_calculator);
+            if row_calculator.display_items_rows(items) > available_history_rows {
+                return;
             }
         }
         items.splice(
