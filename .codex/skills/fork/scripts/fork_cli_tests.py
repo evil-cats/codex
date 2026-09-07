@@ -54,8 +54,8 @@ class RecordingLogSession:
     def write(self, text: str) -> None:
         self.output.append(text)
 
-    def check_command(self, _name: str) -> str:
-        return "file"
+    def check_command(self, name: str) -> str:
+        return name
 
     def run_step(
         self,
@@ -280,16 +280,6 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ),
             ],
         )
-
-    def test_default_install_target_uses_home_local_bin(self) -> None:
-        self.assertEqual(
-            fork_cli.default_install_target({"HOME": "/home/slader"}),
-            Path("/home/slader/.local/bin/codex-hermione"),
-        )
-
-    def test_default_install_target_requires_home(self) -> None:
-        with self.assertRaisesRegex(ValueError, "HOME must be set"):
-            fork_cli.default_install_target({})
 
     def test_rustc_host_target_reads_verbose_version_output(self) -> None:
         self.assertEqual(
@@ -664,6 +654,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         )
 
     def test_install_syncs_both_artifacts_with_one_rsync_command(self) -> None:
+        """Явный локальный target сохраняет прямую публикацию общей парой."""
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
             main_source = self.create_release_fast_pair(repo_root)
@@ -695,6 +686,9 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             ]
             self.assertEqual(len(sync_steps), 1)
             sync_command = sync_steps[0]
+            self.assertEqual(sync_command[0], "rsync")
+            self.assertNotIn("--no-owner", sync_command)
+            self.assertNotIn("--no-group", sync_command)
             self.assertIn("--delay-updates", sync_command)
             self.assertEqual(Path(sync_command[-3]).name, "codex-hermione")
             self.assertEqual(Path(sync_command[-2]).name, "codex-code-mode-host")
@@ -706,6 +700,76 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                 ),
                 session.steps,
             )
+
+    def test_default_install_uses_sudo_only_for_local_publication(self) -> None:
+        """Системный default повышает права только для итогового `rsync`."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            self.create_release_fast_pair(repo_root)
+            args = fork_cli.build_parser().parse_args(
+                ["install", "--repo-root", str(repo_root)]
+            )
+            with (
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
+                unittest.mock.patch.object(fork_cli.Path, "mkdir") as mkdir,
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 0)
+        mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        session = RecordingLogSession.instances[0]
+        sync_command = next(
+            argv for label, argv in session.steps if label == "sync local binaries"
+        )
+        self.assertEqual(
+            sync_command[:6],
+            ["sudo", "--", "rsync", "--archive", "--no-owner", "--no-group"],
+        )
+        self.assertEqual(sync_command[-1], "/usr/local/bin/")
+        self.assertEqual(
+            [label for label, argv in session.steps if argv and argv[0] == "sudo"],
+            ["sync local binaries"],
+        )
+        self.assertEqual(
+            session.ok_extra,
+            [
+                f"SOURCE: {repo_root / 'codex-rs/target/release-fast/codex'}",
+                "TARGET: /usr/local/bin/codex-hermione",
+                "CODE_MODE_HOST_SOURCE: "
+                f"{repo_root / 'codex-rs/target/release-fast/codex-code-mode-host'}",
+                "CODE_MODE_HOST_TARGET: /usr/local/bin/codex-code-mode-host",
+                f"REVISION: {TEST_GIT_REVISION}",
+            ],
+        )
+
+    def test_default_install_requires_sudo_before_build(self) -> None:
+        """Недоступный `sudo` останавливает системную установку до сборки."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            args = fork_cli.build_parser().parse_args(
+                ["install", "--repo-root", str(repo_root)]
+            )
+            with (
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
+                unittest.mock.patch.object(
+                    RecordingLogSession,
+                    "check_command",
+                    autospec=True,
+                    side_effect=lambda _session, name: None if name == "sudo" else name,
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "release-fast freshness build",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
 
     def test_install_strips_temporary_binaries_without_changing_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -990,7 +1054,7 @@ class FixCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         session = RecordingLogSession.instances[-1]
-        self.assertEqual(session.steps, [("rust lint fix", ["file", "fix"])])
+        self.assertEqual(session.steps, [("rust lint fix", ["just", "fix"])])
         self.assertEqual(session.env_overrides, [cargo_env])
 
 

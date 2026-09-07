@@ -36,6 +36,7 @@ DEVELOPMENT_REVISION = "dev"
 FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 REVISION_ELF_SECTION = ".hermione_revision"
 REVISION_ELF_SECTION_SIZE = 40
+DEFAULT_LOCAL_INSTALL_TARGET = Path("/usr/local/bin/codex-hermione")
 
 REQUIRED_FILES = (
     "SKILL.md",
@@ -471,14 +472,6 @@ def command_env() -> dict[str, str]:
     if home:
         env["PATH"] = f"{home}/.cargo/bin:{home}/.local/bin:{env.get('PATH', '')}"
     return env
-
-
-def default_install_target(env: Mapping[str, str] | None = None) -> Path:
-    source_env = os.environ if env is None else env
-    home = source_env.get("HOME")
-    if not home:
-        raise ValueError("HOME must be set to resolve the default install target")
-    return Path(home) / ".local/bin/codex-hermione"
 
 
 def resolve_path_arg(value: str, repo_root: Path) -> Path:
@@ -2046,6 +2039,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     source_artifacts = release_fast_binary_artifacts(repo_root)
     source_path = source_artifacts[0].path
     hosts = tuple(args.host)
+    publish_local_with_sudo = not hosts and not args.target
     try:
         for host in hosts:
             validate_remote_install_host(host)
@@ -2057,7 +2051,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             local_target = (
                 resolve_path_arg(args.target, repo_root)
                 if args.target
-                else default_install_target()
+                else DEFAULT_LOCAL_INSTALL_TARGET
             )
     except ValueError as exc:
         session.write(f"{exc}\n")
@@ -2075,6 +2069,11 @@ def cmd_install(args: argparse.Namespace) -> int:
     rsync_cmd = session.check_command("rsync")
     if not rsync_cmd:
         return session.fail(label="require command: rsync")
+    sudo_cmd = None
+    if publish_local_with_sudo:
+        sudo_cmd = session.check_command("sudo")
+        if not sudo_cmd:
+            return session.fail(label="require command: sudo")
     ssh_cmd = None
     if hosts:
         ssh_cmd = session.check_command("ssh")
@@ -2234,18 +2233,22 @@ def cmd_install(args: argparse.Namespace) -> int:
             except OSError as exc:
                 session.write(f"failed to create install directory: {exc}\n")
                 return session.fail(label="create install directory")
-            result = session.run_step(
-                "sync local binaries",
-                [
-                    rsync_cmd,
-                    "--archive",
-                    "--delay-updates",
-                    "--chmod=F755",
-                    "--",
-                    *rsync_sources,
-                    f"{local_directory}/",
-                ],
+            rsync_ownership_options = (
+                ["--no-owner", "--no-group"] if sudo_cmd is not None else []
             )
+            sync_command = [
+                rsync_cmd,
+                "--archive",
+                *rsync_ownership_options,
+                "--delay-updates",
+                "--chmod=F755",
+                "--",
+                *rsync_sources,
+                f"{local_directory}/",
+            ]
+            if sudo_cmd is not None:
+                sync_command = [sudo_cmd, "--", *sync_command]
+            result = session.run_step("sync local binaries", sync_command)
             if result != 0:
                 return result
             for artifact in local_artifacts:
@@ -2468,8 +2471,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         help=(
             "Main install target. The Code Mode host is installed beside it. "
-            "Local installs default to ${HOME}/.local/bin/codex-hermione; "
-            "remote installs default to .local/bin/codex-hermione relative to "
+            "Local installs default to /usr/local/bin/codex-hermione; default "
+            "local publication uses sudo. "
+            "Remote installs default to .local/bin/codex-hermione relative to "
             "the SSH login home."
         ),
     )
