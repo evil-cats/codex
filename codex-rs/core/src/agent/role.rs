@@ -36,15 +36,17 @@ use toml::Value as TomlValue;
 pub const DEFAULT_ROLE_NAME: &str = "default";
 const AGENT_TYPE_UNAVAILABLE_ERROR: &str = "agent type is currently not available";
 
+/// Закрытая сериализуемая проекция полей, которые роль вправе изменить у ребёнка.
 #[derive(Default, Serialize)]
 struct AgentRoleOverrides {
-    // В projected layer попадает уже собранный текст, а пустые массивы маскируют
+    // В проецируемый слой попадает уже собранный текст, а пустые массивы маскируют
     // унаследованные множественные источники и не допускают повторной сборки.
     instructions: Option<String>,
     developer_instructions: Option<String>,
     model_instructions_files: Option<Vec<AbsolutePathBuf>>,
     developer_instructions_files: Option<Vec<AbsolutePathBuf>>,
     model: Option<String>,
+    model_context_window: Option<i64>,
     model_reasoning_effort: Option<ReasoningEffort>,
     model_reasoning_summary: Option<ReasoningSummary>,
     model_verbosity: Option<Verbosity>,
@@ -53,8 +55,9 @@ struct AgentRoleOverrides {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     features: BTreeMap<String, bool>,
     skills: Option<SkillsConfig>,
-    // `None` является допустимым результатом включённого developer override,
-    // когда все файлы роли пусты, поэтому одного `Option<String>` недостаточно.
+    // `None` является допустимым результатом включённого переопределения инструкций
+    // разработчика, когда все файлы роли пусты, поэтому одного `Option<String>`
+    // недостаточно.
     #[serde(skip)]
     replaces_developer_instructions: bool,
     #[serde(skip)]
@@ -80,6 +83,7 @@ pub(crate) async fn apply_role_to_config(
         })
 }
 
+/// Загружает файл роли и проецирует только разрешённые поля в дочерний `Config`.
 async fn apply_role_to_config_inner(
     config: &mut Config,
     role_name: &str,
@@ -122,6 +126,7 @@ async fn apply_role_to_config_inner(
         model_instructions_files: instructions.is_some().then(Vec::new),
         developer_instructions_files: replaces_developer_instructions.then(Vec::new),
         model: role_config.model,
+        model_context_window: role_config.model_context_window,
         model_reasoning_effort: role_config.model_reasoning_effort,
         model_reasoning_summary: role_config.model_reasoning_summary,
         model_verbosity: role_config.model_verbosity,
@@ -221,6 +226,7 @@ pub(crate) fn resolve_role_config<'a>(
 mod role_overrides {
     use super::*;
 
+    /// Собирает дочерний `Config`, сохраняя поля родителя вне `AgentRoleOverrides`.
     pub(super) fn build_next_config(
         config: &Config,
         role_layer_toml: TomlValue,
@@ -230,6 +236,9 @@ mod role_overrides {
         next_config.config_layer_stack = build_config_layer_stack(config, &role_layer_toml)?;
         if let Some(model) = &overrides.model {
             next_config.model = Some(model.clone());
+        }
+        if let Some(model_context_window) = overrides.model_context_window {
+            next_config.model_context_window = Some(model_context_window);
         }
         if let Some(instructions) = &overrides.instructions {
             next_config.base_instructions = Some(instructions.clone());

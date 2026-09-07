@@ -81,6 +81,7 @@ const TURN_1_PROMPT: &str = "spawn a child and continue";
 const TURN_2_NO_WAIT_PROMPT: &str = "follow up without wait";
 const CHILD_PROMPT: &str = "child: do work";
 const INHERITED_MODEL: &str = "gpt-5.2";
+const INHERITED_MODEL_CONTEXT_WINDOW: i64 = 272_000;
 const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::XHigh;
 const REQUESTED_MODEL: &str = "gpt-5.4";
 const REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
@@ -89,6 +90,7 @@ const V2_DEFAULT_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::High;
 const V2_REQUESTED_MODEL: &str = "gpt-5.6-sol";
 const V2_REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
 const ROLE_MODEL: &str = "gpt-5.4";
+const ROLE_MODEL_CONTEXT_WINDOW: i64 = 800_000;
 const ROLE_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::High;
 const SUBAGENT_START_CONTEXT: &str = "subagent start context reaches child";
 const SUBAGENT_STOP_CONTINUATION: &str = "continue only the child";
@@ -3044,12 +3046,13 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child() -> Resu
     Ok(())
 }
 
+/// `agent role` заменяет запрошенные параметры модели и окно контекста только у ребёнка.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> Result<()> {
+async fn spawn_agent_role_model_context_window_overrides_parent() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let child_snapshot = spawn_child_and_capture_snapshot(
+    let (test, spawned_id, _child_request_log) = setup_turn_one_with_custom_spawned_child(
         &server,
         json!({
             "message": CHILD_PROMPT,
@@ -3057,13 +3060,16 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
             "model": REQUESTED_MODEL,
             "reasoning_effort": REQUESTED_REASONING_EFFORT,
         }),
+        /*child_response_delay*/ None,
+        /*wait_for_parent_notification*/ false,
+        INHERITED_REASONING_EFFORT,
         |builder| {
             builder.with_config(|config| {
                 let role_path = config.codex_home.join("custom-role.toml");
                 std::fs::write(
                     &role_path,
                     format!(
-                        "model = \"{ROLE_MODEL}\"\nmodel_reasoning_effort = \"{ROLE_REASONING_EFFORT}\"\n",
+                        "model = \"{ROLE_MODEL}\"\nmodel_context_window = {ROLE_MODEL_CONTEXT_WINDOW}\nmodel_reasoning_effort = \"{ROLE_REASONING_EFFORT}\"\n",
                     ),
                 )
                 .expect("write role config");
@@ -3075,13 +3081,30 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
                         nickname_candidates: None,
                     },
                 );
+                config.model_context_window = Some(INHERITED_MODEL_CONTEXT_WINDOW);
             })
         },
     )
     .await?;
 
-    assert_eq!(child_snapshot.model, ROLE_MODEL);
-    assert_eq!(child_snapshot.reasoning_effort, Some(ROLE_REASONING_EFFORT));
+    let thread_id = ThreadId::from_string(&spawned_id)?;
+    let child = test.thread_manager.get_thread(thread_id).await?;
+    let child_config = child.config().await;
+    let parent_config = test.codex.config().await;
+    assert_eq!(
+        (
+            child_config.model.as_deref(),
+            child_config.model_context_window,
+            child_config.model_reasoning_effort.as_ref(),
+            parent_config.model_context_window,
+        ),
+        (
+            Some(ROLE_MODEL),
+            Some(ROLE_MODEL_CONTEXT_WINDOW),
+            Some(&ROLE_REASONING_EFFORT),
+            Some(INHERITED_MODEL_CONTEXT_WINDOW),
+        ),
+    );
 
     Ok(())
 }

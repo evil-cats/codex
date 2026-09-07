@@ -178,6 +178,7 @@ model = "role-model"
     assert_eq!(config.model.as_deref(), Some("role-model"));
 }
 
+/// Роль сохраняет все поля `Config`, для которых не задаёт разрешённое переопределение.
 #[tokio::test]
 async fn apply_role_preserves_unspecified_keys() {
     let (home, mut config) = test_config_with_cli_overrides(vec![(
@@ -203,6 +204,7 @@ async fn apply_role_preserves_unspecified_keys() {
     );
 
     config.model = Some("spawn-model".to_string());
+    config.model_context_window = Some(272_000);
     config.model_reasoning_effort = Some(ReasoningEffort::Low);
     config.base_instructions = Some("inherited model instructions".to_string());
     config.base_instructions_provenance = Some(BaseInstructionsProvenance::Model {
@@ -216,8 +218,16 @@ async fn apply_role_preserves_unspecified_keys() {
         .expect("custom role should apply");
 
     assert_eq!(
-        (config.model.as_deref(), config.model_reasoning_effort),
-        (Some("spawn-model"), Some(ReasoningEffort::Low)),
+        (
+            config.model.as_deref(),
+            config.model_context_window,
+            config.model_reasoning_effort,
+        ),
+        (
+            Some("spawn-model"),
+            Some(272_000),
+            Some(ReasoningEffort::Low),
+        ),
     );
     assert_eq!(
         config.codex_linux_sandbox_exe,
@@ -229,6 +239,42 @@ async fn apply_role_preserves_unspecified_keys() {
     );
     assert_eq!(config.base_instructions, base_instructions);
     assert_eq!(config.base_instructions_provenance, provenance);
+}
+
+/// Явное окно контекста роли заменяет значение родителя в `Config` и проецируемом слое.
+#[tokio::test]
+async fn apply_agent_role_model_context_window_overrides_parent() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_path = write_role_config(
+        &home,
+        "model-context-window.toml",
+        "model_context_window = 800000",
+    )
+    .await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: None,
+            config_file: Some(role_path),
+            nickname_candidates: None,
+        },
+    );
+    config.model_context_window = Some(272_000);
+
+    apply_role_to_config(&mut config, Some("custom"))
+        .await
+        .expect("custom role should apply");
+
+    let effective_config = config.config_layer_stack.effective_config();
+    assert_eq!(
+        (
+            config.model_context_window,
+            effective_config
+                .get("model_context_window")
+                .and_then(TomlValue::as_integer),
+        ),
+        (Some(800_000), Some(800_000)),
+    );
 }
 
 /// Файлы роли заменяют оба унаследованных prompt-слоя без смешивания секций.
