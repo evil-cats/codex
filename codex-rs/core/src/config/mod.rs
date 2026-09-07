@@ -68,7 +68,6 @@ use codex_core_plugins::PluginLoadOutcome;
 use codex_core_plugins::PluginsConfigInput;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
-use codex_exec_server::ReadFileOptions;
 use codex_features::CodeModeConfigToml;
 use codex_features::CurrentTimeReminderConfigToml;
 use codex_features::CurrentTimeReminderDeliveryMode;
@@ -171,6 +170,7 @@ use toml_edit::DocumentMut;
 
 mod auth_keyring;
 pub mod edit;
+pub(crate) mod instruction_files;
 mod managed_features;
 mod network_proxy_spec;
 mod otel;
@@ -3995,32 +3995,18 @@ impl Config {
             }
         });
 
-        if cfg.model_instructions_file.is_some() && !cfg.model_instructions_files.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "`model_instructions_file` and `model_instructions_files` cannot both be set",
-            ));
-        }
+        instruction_files::validate_model_instruction_file_settings(
+            cfg.model_instructions_file.as_ref(),
+            &cfg.model_instructions_files,
+        )?;
 
         let file_base_instructions = if base_instructions.is_none() {
-            if cfg.model_instructions_files.is_empty() {
-                Self::try_read_non_empty_file(
-                    fs,
-                    cfg.model_instructions_file.as_ref(),
-                    "model instructions file",
-                )
-                .await?
-            } else {
-                let mut sections = Vec::with_capacity(cfg.model_instructions_files.len());
-                for path in &cfg.model_instructions_files {
-                    let section =
-                        Self::try_read_non_empty_file(fs, Some(path), "model instructions file")
-                            .await?
-                            .expect("a provided model instructions path must produce a section");
-                    sections.push(section);
-                }
-                Some(sections.join("\n\n"))
-            }
+            instruction_files::load_model_instructions(
+                fs,
+                cfg.model_instructions_file.as_ref(),
+                &cfg.model_instructions_files,
+            )
+            .await?
         } else {
             None
         };
@@ -4030,47 +4016,18 @@ impl Config {
         let base_instructions_provenance = base_instructions
             .as_ref()
             .map(|_| BaseInstructionsProvenance::Custom);
-        let file_developer_instructions = if developer_instructions.is_none() {
-            let mut sections = Vec::new();
-            for path in &cfg.developer_instructions_files {
-                let path_uri = PathUri::from_abs_path(path);
-                let contents = fs
-                    .read_file_text(&path_uri, ReadFileOptions::default(), /*sandbox*/ None)
-                    .await
-                    .map_err(|e| {
-                        std::io::Error::new(
-                            e.kind(),
-                            format!(
-                                "failed to read developer instructions file {}: {e}",
-                                path.display()
-                            ),
-                        )
-                    })?;
-                let contents = contents.trim();
-                if contents.is_empty() {
-                    startup_warnings.push(format!(
-                        "developer instructions file is empty: {}",
-                        path.display()
-                    ));
-                } else {
-                    sections.push(contents.to_string());
-                }
+        let developer_instructions = match developer_instructions {
+            Some(developer_instructions) => Some(developer_instructions),
+            None => {
+                instruction_files::load_developer_instructions(
+                    fs,
+                    cfg.developer_instructions.as_deref(),
+                    &cfg.developer_instructions_files,
+                    &mut startup_warnings,
+                )
+                .await?
             }
-            sections
-        } else {
-            Vec::new()
         };
-        let developer_instructions = developer_instructions.or_else(|| {
-            let mut sections = Vec::new();
-            if let Some(inline_developer_instructions) = cfg.developer_instructions {
-                let inline_developer_instructions = inline_developer_instructions.trim();
-                if !inline_developer_instructions.is_empty() {
-                    sections.push(inline_developer_instructions.to_string());
-                }
-            }
-            sections.extend(file_developer_instructions);
-            (!sections.is_empty()).then(|| sections.join("\n\n"))
-        });
         let include_permissions_instructions = cfg.include_permissions_instructions.unwrap_or(true);
         let include_apps_instructions = cfg.include_apps_instructions.unwrap_or(true);
         let include_collaboration_mode_instructions =
@@ -4103,7 +4060,7 @@ impl Config {
             });
 
         let experimental_compact_prompt_path = cfg.experimental_compact_prompt_file.as_ref();
-        let file_compact_prompt = Self::try_read_non_empty_file(
+        let file_compact_prompt = instruction_files::read_non_empty_file(
             fs,
             experimental_compact_prompt_path,
             "experimental compact prompt file",
@@ -4594,40 +4551,6 @@ impl Config {
         Ok(config)
         })
         .await
-    }
-
-    /// If `path` is `Some`, attempts to read the file at the given path and
-    /// returns its contents as a trimmed `String`. If the file is empty, or
-    /// is `Some` but cannot be read, returns an `Err`.
-    async fn try_read_non_empty_file(
-        fs: &dyn ExecutorFileSystem,
-        path: Option<&AbsolutePathBuf>,
-        context: &str,
-    ) -> std::io::Result<Option<String>> {
-        let Some(path) = path else {
-            return Ok(None);
-        };
-
-        let path_uri = PathUri::from_abs_path(path);
-        let contents = fs
-            .read_file_text(&path_uri, ReadFileOptions::default(), /*sandbox*/ None)
-            .await
-            .map_err(|e| {
-                std::io::Error::new(
-                    e.kind(),
-                    format!("failed to read {context} {}: {e}", path.display()),
-                )
-            })?;
-
-        let s = contents.trim().to_string();
-        if s.is_empty() {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{context} is empty: {}", path.display()),
-            ))
-        } else {
-            Ok(Some(s))
-        }
     }
 
     pub fn set_windows_sandbox_enabled(&mut self, value: bool) {

@@ -9192,8 +9192,7 @@ nickname_candidates = ["Noether"]
 }
 
 #[tokio::test]
-async fn agent_role_file_without_developer_instructions_is_dropped_with_warning()
--> std::io::Result<()> {
+async fn agent_role_file_requires_inline_or_file_developer_instructions() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let repo_root = TempDir::new()?;
     let nested_cwd = repo_root.path().join("packages").join("app");
@@ -9214,11 +9213,28 @@ trust_level = "trusted"
 
     let standalone_agents_dir = repo_root.path().join(".codex").join("agents");
     tokio::fs::create_dir_all(&standalone_agents_dir).await?;
+    let role_instructions_dir = standalone_agents_dir.join("instructions");
+    tokio::fs::create_dir_all(&role_instructions_dir).await?;
+    tokio::fs::write(
+        role_instructions_dir.join("librarian.md"),
+        "Catalog evidence carefully.\n",
+    )
+    .await?;
     tokio::fs::write(
         standalone_agents_dir.join("researcher.toml"),
         r#"
 name = "researcher"
 description = "Role metadata from file"
+model = "gpt-5.2"
+"#,
+    )
+    .await?;
+    tokio::fs::write(
+        standalone_agents_dir.join("librarian.toml"),
+        r#"
+name = "librarian"
+description = "File-only role"
+developer_instructions_files = ["instructions/librarian.md"]
 model = "gpt-5.2"
 "#,
     )
@@ -9243,6 +9259,13 @@ model = "gpt-5.2"
         .build()
         .await?;
     assert!(!config.agent_roles.contains_key("researcher"));
+    assert_eq!(
+        config
+            .agent_roles
+            .get("librarian")
+            .and_then(|role| role.description.as_deref()),
+        Some("File-only role")
+    );
     assert_eq!(
         config
             .agent_roles

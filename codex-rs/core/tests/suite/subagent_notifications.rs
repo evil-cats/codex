@@ -11,6 +11,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::items::SubAgentActivityItem;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::MultiAgentMessages;
 use codex_protocol::openai_models::MultiAgentRoleMessages;
@@ -3123,6 +3124,89 @@ async fn spawn_agent_preserves_configured_defaults_through_unrelated_role() -> R
             Some(REQUESTED_REASONING_EFFORT)
         )
     );
+    Ok(())
+}
+
+/// Созданный ребёнок получает только принадлежащие роли model- и developer-секции.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn_agent_role_model_instructions_files_and_developer_instructions_files_replace_parent()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let (_test, _spawned_id, child_request_log) = setup_turn_one_with_custom_spawned_child(
+        &server,
+        json!({
+            "message": CHILD_PROMPT,
+            "agent_type": "custom",
+        }),
+        /*child_response_delay*/ None,
+        /*wait_for_parent_notification*/ false,
+        INHERITED_REASONING_EFFORT,
+        |builder| {
+            builder.with_config(|config| {
+                let role_dir = config.codex_home.join("agents");
+                let instructions_dir = role_dir.join("instructions");
+                fs::create_dir_all(&instructions_dir).expect("create role instructions directory");
+                fs::write(
+                    instructions_dir.join("model-identity.md"),
+                    "\nRole model identity.\n",
+                )
+                .expect("write role model identity");
+                fs::write(
+                    instructions_dir.join("model-workflow.md"),
+                    "Role model workflow.\n\n",
+                )
+                .expect("write role model workflow");
+                fs::write(
+                    instructions_dir.join("developer-policy.md"),
+                    "\nRole developer policy.\n",
+                )
+                .expect("write role developer policy");
+                let role_path = role_dir.join("custom.toml");
+                fs::write(
+                    &role_path,
+                    r#"
+developer_instructions = "Role inline developer instructions."
+developer_instructions_files = ["instructions/developer-policy.md"]
+model_instructions_files = [
+    "instructions/model-identity.md",
+    "instructions/model-workflow.md",
+]
+"#,
+                )
+                .expect("write role config");
+                config.agent_roles.insert(
+                    "custom".to_string(),
+                    AgentRoleConfig {
+                        description: Some("Custom role".to_string()),
+                        config_file: Some(role_path.to_path_buf()),
+                        nickname_candidates: None,
+                    },
+                );
+                config.base_instructions = Some("Parent model instructions.".to_string());
+                config.base_instructions_provenance = Some(BaseInstructionsProvenance::Custom);
+                config.developer_instructions = Some("Parent developer instructions.".to_string());
+            })
+        },
+    )
+    .await?;
+
+    let child_requests = wait_for_requests(&child_request_log).await?;
+    let child_request = child_requests
+        .last()
+        .expect("child request log should capture at least one request");
+    assert_eq!(
+        child_request.body_json()["instructions"],
+        json!("Role model identity.\n\nRole model workflow.")
+    );
+    assert!(
+        child_request
+            .body_contains_text("Role inline developer instructions.\n\nRole developer policy.")
+    );
+    assert!(!child_request.body_contains_text("Parent model instructions."));
+    assert!(!child_request.body_contains_text("Parent developer instructions."));
+
     Ok(())
 }
 

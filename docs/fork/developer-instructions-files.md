@@ -2,7 +2,7 @@
 id: fork-developer-instructions-files
 status: active
 created: 2026-06-08
-updated: 2026-08-30
+updated: 2026-09-06
 ---
 
 # Developer instructions files
@@ -12,7 +12,9 @@ updated: 2026-08-30
 Эта карточка фиксирует fork-доработку Hermione, которая добавляет top-level
 config key `developer_instructions_files`. Он позволяет хранить длинные
 developer instructions в отдельных Markdown-файлах и подключать их к
-`developer_instructions` в заданном порядке.
+`developer_instructions` в заданном порядке. В конфиге agent role тот же список
+собирается вместе с inline-инструкциями самой роли и заменяет весь
+parent-derived developer block субагента.
 
 ## Зачем это нужно
 
@@ -28,7 +30,11 @@ Inline `developer_instructions` неудобен для больших profile-d
 - читать файлы в порядке списка;
 - соединять непустые секции через пустую строку;
 - пустые файлы пропускать с warning;
-- missing/unreadable file считать ошибкой config load.
+- missing/unreadable file считать ошибкой config load;
+- разрешить standalone agent role без inline `developer_instructions`, если она
+  задаёт непустой `developer_instructions_files`;
+- не добавлять role sections к унаследованным developer instructions: наличие
+  inline-инструкций роли или непустого списка файлов означает полную замену.
 
 ## Карта файлов
 
@@ -36,8 +42,12 @@ Inline `developer_instructions` неудобен для больших profile-d
 | --- | --- |
 | `codex-rs/config/src/config_toml.rs` | Добавляет поле `developer_instructions_files` в `ConfigToml` |
 | `codex-rs/config/src/loader/mod.rs` | Нормализует relative paths в TOML config |
-| `codex-rs/core/src/config/mod.rs` | Читает файлы и собирает effective `developer_instructions` |
+| `codex-rs/core/src/config/instruction_files.rs` | Задаёт общий для основного config и agent role контракт чтения, trim, порядка, warnings и ошибок |
+| `codex-rs/core/src/config/mod.rs` | Выбирает источники и собирает effective `developer_instructions` основного config |
 | `codex-rs/core/src/config/config_tests.rs` | Проверяет parsing, append order, empty warnings и missing-file error |
+| `codex-rs/agent-roles/src/agent_role_config.rs` | Принимает standalone role с inline developer instructions или непустым списком файлов |
+| `codex-rs/core/src/agent/role.rs` | Собирает собственный developer block роли и заменяет parent-derived значение |
+| `codex-rs/core/src/agent/role_tests.rs` | Проверяет relative paths, порядок, замену и очистку унаследованного значения |
 | `codex-rs/core/config.schema.json` | Экспортирует config key в schema |
 | `codex-rs/core/src/session/turn_context.rs` | Передаёт итоговые инструкции из конфигурации сессии в `TurnContext` |
 | `codex-rs/core/src/session/mod.rs` | Добавляет итоговое значение в агрегированное сообщение с ролью `developer` |
@@ -45,6 +55,7 @@ Inline `developer_instructions` неудобен для больших profile-d
 | `codex-rs/core/src/context_manager/updates.rs` | Преобразует developer sections в model-visible `ResponseItem` |
 | `codex-rs/core/src/client.rs` | В Responses Lite добавляет базовые инструкции отдельным элементом с ролью `developer` перед обычным `input` |
 | `codex-rs/core/tests/suite/client.rs` | Проверяет наличие `Config.developer_instructions` в developer message запроса |
+| `codex-rs/core/tests/suite/subagent_notifications.rs` | Проверяет developer message реально созданного субагента |
 | `codex-rs/file-system/src/lib.rs` | Предоставляет чтение UTF-8 файла; жёсткий предел для fork сейчас отсутствует |
 
 ## Итоговый контракт
@@ -93,6 +104,37 @@ Inline `developer_instructions` неудобен для больших profile-d
     их собственным developer item перед основным input; два текста не сливаются,
     не заменяют и не дублируют друг друга.
 
+### Agent role
+
+В отдельном конфиге agent role разрешены оба developer-источника:
+
+```toml
+name = "researcher"
+description = "Исследователь"
+developer_instructions = "Сначала проверяй первичные источники."
+developer_instructions_files = [
+    "instructions/research.md",
+    "instructions/report.md",
+]
+```
+
+Контракт применения роли:
+
+1. Относительные пути разрешаются от каталога `.toml`-файла роли.
+2. Inline `developer_instructions` роли после `trim()` становится первой
+   секцией, затем в заданном порядке следуют непустые файлы роли.
+3. Наличие inline-секции или непустого `developer_instructions_files` включает
+   role override: полученный текст целиком заменяет унаследованный developer
+   block и никогда к нему не дописывается.
+4. Standalone role может не иметь inline-секции, если список файлов непустой.
+5. Пустой или отсутствующий список без inline-секции не является override и
+   сохраняет наследование.
+6. Пустые файлы по-прежнему дают warning. Если role override был включён
+   непустым списком, но все его файлы пусты, effective
+   `developer_instructions` становится `None`, а parent block не возвращается.
+7. Missing или unreadable role file делает agent type недоступным по общему
+   контракту применения agent role.
+
 ## Архитектурное решение
 
 Config loader владеет нормализацией путей, а сборка `Config` — последовательным
@@ -103,6 +145,12 @@ Config loader владеет нормализацией путей, а сбор�
 Lite базовые инструкции добавляются перед основным `input` отдельным элементом с
 ролью `developer`. Runtime override останавливает чтение файлов до I/O: явно
 переданные инструкции нельзя неожиданно дополнять конфигурацией.
+
+Agent role применяется позже, уже к parent-derived config. Поэтому её
+собственные inline/file sections образуют новый developer block и заменяют даже
+значение, которое родитель получил из `ConfigOverrides` или своих
+`developer_instructions_files`. При cold resume роль применяется заново к
+актуальному parent-derived config и перечитывает свои файлы.
 
 ## Порядок повторения при переносе
 
@@ -203,6 +251,17 @@ let developer_instructions = developer_instructions.or_else(|| {
 Schema должна показывать `developer_instructions_files` как array со значениями
 paths и default `[]`.
 
+### 5. Применить список в agent role
+
+В `codex-rs/core/src/agent/role.rs` нужно отличать отсутствие role override от
+его effective значения. Непустой список файлов или inline-секция роли включает
+замену parent-derived developer instructions, после чего общий загрузчик
+собирает только role-owned sections.
+
+Standalone discovery должен считать непустой `developer_instructions_files`
+достаточным источником developer instructions и по-прежнему отклонять роль, у
+которой нет ни inline-секции, ни непустого списка.
+
 ## Проверки
 
 Исполняемая карта card-level regression tests:
@@ -212,7 +271,7 @@ paths и default `[]`.
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "ordered merge, override precedence, warnings, errors и отдельная Responses Lite delivery",
+      "purpose": "ordered merge, override precedence, warnings, errors, file-only agent role, agent-role replacement и model-visible delivery",
       "argv": ["just", "test", "-p", "codex-core", "developer_instructions"]
     }
   ]
@@ -234,6 +293,8 @@ paths и default `[]`.
   потерять важные правила.
 - Не менять `model_instructions_file`: это отдельная base instructions
   surface, а не developer surface.
+- Не смешивать parent и role developer sections: это нарушит обещанную замену
+  и незаметно вернёт личности или политики родительского профиля.
 
 ### Риски
 
@@ -249,3 +310,5 @@ paths и default `[]`.
 - Молчаливое усечение для profile-defining rules недопустимо; политику ошибки,
   разбиения или другой bounded representation нужно согласовать в owner scope
   `session/context aggregation`.
+- Изменение или исчезновение файла роли между spawn/cold resume приводит к
+  новому содержимому или ошибке повторного применения роли.

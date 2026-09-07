@@ -231,6 +231,168 @@ async fn apply_role_preserves_unspecified_keys() {
     assert_eq!(config.base_instructions_provenance, provenance);
 }
 
+/// Файлы роли заменяют оба унаследованных prompt-слоя без смешивания секций.
+#[tokio::test]
+async fn apply_role_model_instructions_files_and_developer_instructions_files_replace_parent() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_dir = home.path().join("agents");
+    let instructions_dir = role_dir.join("instructions");
+    tokio::fs::create_dir_all(&instructions_dir)
+        .await
+        .expect("create role instructions directory");
+    tokio::fs::write(
+        instructions_dir.join("model-identity.md"),
+        "\nRole model identity.\n",
+    )
+    .await
+    .expect("write role model identity");
+    tokio::fs::write(
+        instructions_dir.join("model-workflow.md"),
+        "Role model workflow.\n\n",
+    )
+    .await
+    .expect("write role model workflow");
+    tokio::fs::write(
+        instructions_dir.join("developer-policy.md"),
+        "\nRole developer policy.\n",
+    )
+    .await
+    .expect("write role developer policy");
+    tokio::fs::write(
+        instructions_dir.join("developer-workflow.md"),
+        "Role developer workflow.\n",
+    )
+    .await
+    .expect("write role developer workflow");
+    let role_path = role_dir.join("custom.toml");
+    tokio::fs::write(
+        &role_path,
+        r#"
+developer_instructions = "Role inline developer instructions."
+developer_instructions_files = [
+    "instructions/developer-policy.md",
+    "instructions/developer-workflow.md",
+]
+model_instructions_files = [
+    "instructions/model-identity.md",
+    "instructions/model-workflow.md",
+]
+"#,
+    )
+    .await
+    .expect("write role config");
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: None,
+            config_file: Some(role_path),
+            nickname_candidates: None,
+        },
+    );
+    config.base_instructions = Some("Parent model instructions.".to_string());
+    config.base_instructions_provenance = Some(BaseInstructionsProvenance::Model {
+        model: "parent-model".to_string(),
+    });
+    config.developer_instructions = Some("Parent developer instructions.".to_string());
+
+    apply_role_to_config(&mut config, Some("custom"))
+        .await
+        .expect("custom role should apply");
+
+    assert_eq!(
+        (
+            config.base_instructions.as_deref(),
+            config.base_instructions_provenance,
+            config.developer_instructions.as_deref(),
+        ),
+        (
+            Some("Role model identity.\n\nRole model workflow."),
+            Some(BaseInstructionsProvenance::Custom),
+            Some(
+                "Role inline developer instructions.\n\nRole developer policy.\n\nRole developer workflow."
+            ),
+        )
+    );
+}
+
+/// Непустой список роли заменяет developer-текст родителя, даже когда все файлы пусты.
+#[tokio::test]
+async fn apply_role_developer_instructions_files_clear_parent_when_all_files_are_empty() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let empty_path = home.path().join("empty-developer.md");
+    tokio::fs::write(&empty_path, "\n\n")
+        .await
+        .expect("write empty developer instructions file");
+    let role_path = write_role_config(
+        &home,
+        "file-only-role.toml",
+        "developer_instructions_files = [\"empty-developer.md\"]",
+    )
+    .await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: None,
+            config_file: Some(role_path),
+            nickname_candidates: None,
+        },
+    );
+    config.developer_instructions = Some("Parent developer instructions.".to_string());
+
+    apply_role_to_config(&mut config, Some("custom"))
+        .await
+        .expect("file-only role should apply");
+
+    assert_eq!(config.developer_instructions, None);
+    assert!(config.startup_warnings.iter().any(|warning| {
+        warning
+            == &format!(
+                "developer instructions file is empty: {}",
+                empty_path.display()
+            )
+    }));
+}
+
+/// Пустые списки роли не являются override и сохраняют оба унаследованных слоя.
+#[tokio::test]
+async fn apply_role_empty_instruction_file_lists_preserve_parent_instructions() {
+    let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    let role_path = write_role_config(
+        &home,
+        "empty-instruction-lists.toml",
+        "model_instructions_files = []\ndeveloper_instructions_files = []",
+    )
+    .await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: None,
+            config_file: Some(role_path),
+            nickname_candidates: None,
+        },
+    );
+    config.base_instructions = Some("Parent model instructions.".to_string());
+    config.base_instructions_provenance = Some(BaseInstructionsProvenance::Custom);
+    config.developer_instructions = Some("Parent developer instructions.".to_string());
+
+    apply_role_to_config(&mut config, Some("custom"))
+        .await
+        .expect("empty instruction lists should be ignored");
+
+    assert_eq!(
+        (
+            config.base_instructions.as_deref(),
+            config.base_instructions_provenance,
+            config.developer_instructions.as_deref(),
+        ),
+        (
+            Some("Parent model instructions."),
+            Some(BaseInstructionsProvenance::Custom),
+            Some("Parent developer instructions."),
+        )
+    );
+}
+
 #[tokio::test]
 async fn apply_role_regenerates_model_instructions_when_personality_changes() {
     for (role_contents, provenance) in [

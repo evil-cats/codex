@@ -2,7 +2,7 @@
 id: fork-model-instructions-files
 status: active
 created: 2026-07-24
-updated: 2026-09-02
+updated: 2026-09-06
 ---
 
 # Model instructions files
@@ -14,7 +14,9 @@ config key `model_instructions_files`. Он позволяет разделит�
 модели между несколькими Markdown-файлами и собрать их в одно значение
 `Config.base_instructions`. Обычный Responses transport передаёт это значение
 через top-level поле `instructions`; Responses Lite по upstream wire contract
-передаёт его одним отдельным developer item.
+передаёт его одним отдельным developer item. Тот же ключ поддерживается в
+конфиге agent role: непустой список роли заменяет унаследованные ребёнком
+базовые инструкции.
 
 ## Зачем это нужно
 
@@ -38,7 +40,11 @@ config key `model_instructions_files`. Он позволяет разделит�
   ошибку конфигурации;
 - пустой, отсутствующий или нечитаемый файл возвращает ошибку конфигурации;
 - встроенные инструкции модели остаются fallback-значением, если ни один
-  файловый override не задан.
+  файловый override не задан;
+- в agent role непустой `model_instructions_files` заменяет, а не дополняет
+  унаследованный `Config.base_instructions`;
+- пустой или отсутствующий список в agent role сохраняет наследование;
+- относительные пути agent role разрешаются от каталога файла роли.
 
 ## Карта файлов
 
@@ -47,10 +53,14 @@ config key `model_instructions_files`. Он позволяет разделит�
 | `codex-rs/config/src/config_toml.rs` | Содержит `model_instructions_files` в `ConfigToml` |
 | `codex-rs/config/src/profile_toml.rs` | Содержит новый ключ в profile config |
 | `codex-rs/config/src/loader/mod.rs` | Нормализует каждый относительный путь массива |
-| `codex-rs/core/src/config/mod.rs` | Проверяет конфликт ключей, читает файлы и собирает `base_instructions` |
+| `codex-rs/core/src/config/instruction_files.rs` | Задаёт общий для основного config и agent role контракт чтения, trim, порядка и ошибок |
+| `codex-rs/core/src/config/mod.rs` | Выбирает файловый источник и собирает `base_instructions` основного config |
 | `codex-rs/core/src/config/config_tests.rs` | Покрывает разбор, порядок, большие объединённые инструкции, ошибки и приоритет |
 | `codex-rs/core/src/config/config_loader_tests.rs` | Покрывает config layers и CLI config override |
+| `codex-rs/core/src/agent/role.rs` | Загружает список agent role и заменяет унаследованные базовые инструкции ребёнка |
+| `codex-rs/core/src/agent/role_tests.rs` | Проверяет relative paths, порядок, замену и provenance на уровне effective config |
 | `codex-rs/core/tests/suite/client.rs` | Проверяет обычное поле `instructions` и раздельные developer items в Responses Lite |
+| `codex-rs/core/tests/suite/subagent_notifications.rs` | Проверяет model-visible инструкции реально созданного субагента |
 | `codex-rs/core/config.schema.json` | Описывает новый config key в сгенерированной schema |
 
 ## Итоговый контракт
@@ -69,6 +79,18 @@ model_instructions_files = [
 
 Она также разрешена в отдельном profile config-файле.
 
+В конфиге agent role используется тот же ключ:
+
+```toml
+name = "researcher"
+description = "Исследователь"
+developer_instructions = "Проверяй источники."
+model_instructions_files = [
+    "instructions/identity.md",
+    "instructions/workflow.md",
+]
+```
+
 `ConfigToml` и `ConfigProfile` содержат поле:
 
 ```rust
@@ -77,7 +99,12 @@ pub model_instructions_files: Vec<AbsolutePathBuf>,
 ```
 
 Относительные пути разрешаются относительно каталога config-файла, в котором
-они заданы. Порядок элементов после нормализации не меняется.
+они заданы. Для agent role таким base dir является каталог его `.toml`-файла.
+Порядок элементов после нормализации не меняется.
+
+Пустой массив agent role, как и пустой массив основного config, считается
+отсутствием override. Эта доработка не добавляет одиночный
+`model_instructions_file` в список разрешённых override-полей agent role.
 
 ### Сборка базовых инструкций
 
@@ -198,13 +225,25 @@ Effective base instructions выбираются в следующем поря�
 Runtime override сохраняет наивысший приоритет. Эта карточка не меняет общий
 контракт `ConfigOverrides` и не меняет источник встроенных инструкций модели.
 
+Для субагента role override применяется после сборки parent-derived config:
+
+1. если agent role задаёт непустой `model_instructions_files`, файлы роли
+   собираются по общему контракту и целиком заменяют унаследованный
+   `Config.base_instructions` независимо от его исходного config-источника;
+2. provenance заменённого значения становится
+   `BaseInstructionsProvenance::Custom`;
+3. если список роли отсутствует или пуст, ребёнок сохраняет унаследованные
+   базовые инструкции;
+4. parent и role sections никогда не объединяются.
+
 ### Граница runtime-конфигурации
 
 Исходные пути `model_instructions_files` используются только при загрузке
-`Config`; дальнейший runtime получает уже собранное значение
-`base_instructions`. Механизм снимка или фиксации эффективной конфигурации
-потока должен сохранять итоговые `base_instructions`, а не исходные пути
-файлов.
+основного `Config` или применении agent role. Дальнейший runtime получает уже
+собранное значение `base_instructions`. Механизм снимка или фиксации эффективной
+конфигурации потока должен сохранять итоговые `base_instructions`, а не исходные
+пути файлов. При cold resume роль применяется заново к актуальному
+parent-derived config, поэтому её файлы перечитываются по тому же контракту.
 
 ## Архитектурное решение
 
@@ -239,7 +278,12 @@ Runtime override сохраняет наивысший приоритет. Эт�
    `base_instructions`;
 9. обновить config schema через skill-owned generator;
 10. восстановить unit, loader и сквозное покрытие обычного Responses и
-    Responses Lite.
+    Responses Lite;
+11. разрешить непустой `model_instructions_files` в agent role whitelist,
+    загружать его относительно файла роли и заменять parent-derived
+    `base_instructions`;
+12. добавить role-level unit test и сквозной spawn test, различающие
+    наследование и замену.
 
 ## Проверки
 
@@ -250,7 +294,7 @@ Runtime override сохраняет наивысший приоритет. Эт�
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "порядок загрузки, сохранение больших объединённых инструкций, приоритет, взаимоисключение, ошибки и отдельная доставка Responses Lite",
+      "purpose": "порядок загрузки, сохранение больших объединённых инструкций, приоритет, взаимоисключение, ошибки, agent-role replacement и model-visible доставка",
       "argv": ["just", "test", "-p", "codex-core", "model_instructions_files"]
     }
   ]
@@ -268,6 +312,10 @@ types и schema.
 - Разделитель всегда равен `\n\n`; содержимое внутри документа сохраняется.
 - Файлы читаются целиком; отдельный предел размера в этой доработке отсутствует.
 - Молчаливое усечение или пропуск файла недопустимы.
+- Agent role не добавляет свои model sections к parent prompt: непустой список
+  всегда заменяет его целиком.
+- Изменение или исчезновение файла роли между spawn/cold resume приводит к
+  новому содержимому или ошибке повторного применения роли.
 - Новый ключ является fork-specific и должен переноситься при следующих
   upstream migration.
 - Schema обновлена вместе с реализацией. При будущих изменениях она должна

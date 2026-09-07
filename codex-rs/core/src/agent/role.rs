@@ -6,6 +6,7 @@
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::deserialize_config_toml_with_base;
+use crate::config::instruction_files;
 use anyhow::anyhow;
 use codex_agent_roles::parse_agent_role_file_contents;
 use codex_config::ConfigLayerEntry;
@@ -13,6 +14,7 @@ use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::SkillsConfig;
 use codex_config::loader::resolve_relative_paths_in_config_toml;
+use codex_exec_server::LOCAL_FS;
 use codex_exec_server::read_sensitive_file_to_string;
 use codex_features::Feature;
 use codex_features::feature_for_key;
@@ -22,6 +24,7 @@ use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -35,7 +38,12 @@ const AGENT_TYPE_UNAVAILABLE_ERROR: &str = "agent type is currently not availabl
 
 #[derive(Default, Serialize)]
 struct AgentRoleOverrides {
+    // В projected layer попадает уже собранный текст, а пустые массивы маскируют
+    // унаследованные множественные источники и не допускают повторной сборки.
+    instructions: Option<String>,
     developer_instructions: Option<String>,
+    model_instructions_files: Option<Vec<AbsolutePathBuf>>,
+    developer_instructions_files: Option<Vec<AbsolutePathBuf>>,
     model: Option<String>,
     model_reasoning_effort: Option<ReasoningEffort>,
     model_reasoning_summary: Option<ReasoningSummary>,
@@ -45,6 +53,12 @@ struct AgentRoleOverrides {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     features: BTreeMap<String, bool>,
     skills: Option<SkillsConfig>,
+    // `None` является допустимым результатом включённого developer override,
+    // когда все файлы роли пусты, поэтому одного `Option<String>` недостаточно.
+    #[serde(skip)]
+    replaces_developer_instructions: bool,
+    #[serde(skip)]
+    effective_developer_instructions: Option<String>,
 }
 
 /// Applies typed role overrides to the existing parent-derived configuration.
@@ -77,14 +91,44 @@ async fn apply_role_to_config_inner(
     };
     let role_layer_toml = load_role_layer_toml(config, config_file, is_built_in, role_name).await?;
     let role_config = deserialize_config_toml_with_base(role_layer_toml, &config.codex_home)?;
+    let instructions = if role_config.model_instructions_files.is_empty() {
+        None
+    } else {
+        instruction_files::load_model_instructions(
+            LOCAL_FS.as_ref(),
+            /*model_instructions_file*/ None,
+            &role_config.model_instructions_files,
+        )
+        .await?
+    };
+    let replaces_developer_instructions = role_config.developer_instructions.is_some()
+        || !role_config.developer_instructions_files.is_empty();
+    let mut startup_warnings = Vec::new();
+    let effective_developer_instructions = if replaces_developer_instructions {
+        instruction_files::load_developer_instructions(
+            LOCAL_FS.as_ref(),
+            role_config.developer_instructions.as_deref(),
+            &role_config.developer_instructions_files,
+            &mut startup_warnings,
+        )
+        .await?
+    } else {
+        None
+    };
     let mut overrides = AgentRoleOverrides {
-        developer_instructions: role_config.developer_instructions,
+        instructions: instructions.clone(),
+        developer_instructions: replaces_developer_instructions
+            .then(|| effective_developer_instructions.clone().unwrap_or_default()),
+        model_instructions_files: instructions.is_some().then(Vec::new),
+        developer_instructions_files: replaces_developer_instructions.then(Vec::new),
         model: role_config.model,
         model_reasoning_effort: role_config.model_reasoning_effort,
         model_reasoning_summary: role_config.model_reasoning_summary,
         model_verbosity: role_config.model_verbosity,
         personality: role_config.personality,
         service_tier: role_config.service_tier,
+        replaces_developer_instructions,
+        effective_developer_instructions,
         ..Default::default()
     };
 
@@ -124,7 +168,9 @@ async fn apply_role_to_config_inner(
     {
         return Ok(());
     }
-    *config = role_overrides::build_next_config(config, role_layer_toml, &overrides)?;
+    let mut next_config = role_overrides::build_next_config(config, role_layer_toml, &overrides)?;
+    next_config.startup_warnings.extend(startup_warnings);
+    *config = next_config;
     Ok(())
 }
 
@@ -185,8 +231,12 @@ mod role_overrides {
         if let Some(model) = &overrides.model {
             next_config.model = Some(model.clone());
         }
-        if let Some(instructions) = &overrides.developer_instructions {
-            next_config.developer_instructions = Some(instructions.clone());
+        if let Some(instructions) = &overrides.instructions {
+            next_config.base_instructions = Some(instructions.clone());
+            next_config.base_instructions_provenance = Some(BaseInstructionsProvenance::Custom);
+        }
+        if overrides.replaces_developer_instructions {
+            next_config.developer_instructions = overrides.effective_developer_instructions.clone();
         }
         if let Some(effort) = overrides.model_reasoning_effort.clone() {
             next_config.model_reasoning_effort = Some(effort);
@@ -225,7 +275,8 @@ mod role_overrides {
         let personality_changed = config.personality != next_config.personality
             || config.features.enabled(Feature::Personality)
                 != next_config.features.enabled(Feature::Personality);
-        if personality_changed
+        if overrides.instructions.is_none()
+            && personality_changed
             && matches!(
                 config.base_instructions_provenance,
                 Some(BaseInstructionsProvenance::Model { .. })

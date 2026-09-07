@@ -1,4 +1,5 @@
 use codex_config::config_toml::ConfigToml;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -25,6 +26,12 @@ struct RawAgentRoleFileToml {
     nickname_candidates: Option<Vec<String>>,
     #[serde(flatten)]
     config: ConfigToml,
+}
+
+#[derive(Clone, Copy)]
+enum DeveloperInstructionsRequirement {
+    Required,
+    Optional,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,7 +74,12 @@ pub fn parse_agent_role_file_contents(
     validate_agent_role_file_developer_instructions(
         role_file_label,
         parsed.config.developer_instructions.as_deref(),
-        role_name_hint.is_none(),
+        &parsed.config.developer_instructions_files,
+        if role_name_hint.is_none() {
+            DeveloperInstructionsRequirement::Required
+        } else {
+            DeveloperInstructionsRequirement::Optional
+        },
     )?;
 
     let role_name = parsed
@@ -134,7 +146,8 @@ pub(crate) fn normalize_agent_role_description(
 fn validate_agent_role_file_developer_instructions(
     role_file_label: &Path,
     developer_instructions: Option<&str>,
-    require_present: bool,
+    developer_instructions_files: &[AbsolutePathBuf],
+    requirement: DeveloperInstructionsRequirement,
 ) -> std::io::Result<()> {
     match developer_instructions.map(str::trim) {
         Some("") => Err(std::io::Error::new(
@@ -145,13 +158,17 @@ fn validate_agent_role_file_developer_instructions(
             ),
         )),
         Some(_) => Ok(()),
-        None if require_present => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "agent role file at {} must define `developer_instructions`",
-                role_file_label.display()
-            ),
-        )),
+        None if matches!(requirement, DeveloperInstructionsRequirement::Required)
+            && developer_instructions_files.is_empty() =>
+        {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "agent role file at {} must define `developer_instructions` or non-empty `developer_instructions_files`",
+                    role_file_label.display()
+                ),
+            ))
+        }
         None => Ok(()),
     }
 }
