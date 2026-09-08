@@ -121,7 +121,9 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
     })
 }
 
-pub fn create_write_stdin_tool() -> ToolSpec {
+pub fn create_write_stdin_tool(
+    timeouts: crate::unified_exec::BackgroundTerminalWaitTimeouts,
+) -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "session_id".to_string(),
@@ -138,7 +140,11 @@ pub fn create_write_stdin_tool() -> ToolSpec {
         (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
-                "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.".to_string(),
+                format!(
+                    "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to {} ms, cap at {} ms, and return sooner when the process exits or new user input arrives.",
+                    timeouts.default_ms,
+                    timeouts.max_ms,
+                ),
             )),
         ),
         (
@@ -225,6 +231,11 @@ fn unified_exec_output_schema() -> Value {
             "original_token_count": {
                 "type": "number",
                 "description": "Approximate token count before output truncation."
+            },
+            "wait_wake_reason": {
+                "type": "string",
+                "enum": ["completed", "steered", "timed_out"],
+                "description": "Why an empty write_stdin wait returned."
             },
             "output": {
                 "type": "string",

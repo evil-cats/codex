@@ -8,6 +8,7 @@ use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolExecutor;
 use crate::tools::sandboxing::ToolError;
+use crate::unified_exec::BackgroundTerminalWaitTimeouts;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::WriteStdinInteractionEvent;
@@ -25,13 +26,29 @@ struct WriteStdinArgs {
     session_id: i32,
     #[serde(default)]
     chars: String,
-    #[serde(default = "super::default_write_stdin_yield_time_ms")]
-    yield_time_ms: u64,
+    yield_time_ms: Option<u64>,
     #[serde(default)]
     max_output_tokens: Option<usize>,
 }
 
-pub struct WriteStdinHandler;
+pub struct WriteStdinHandler {
+    timeouts: BackgroundTerminalWaitTimeouts,
+}
+
+impl WriteStdinHandler {
+    pub(crate) fn new(timeouts: BackgroundTerminalWaitTimeouts) -> Self {
+        Self { timeouts }
+    }
+}
+
+impl Default for WriteStdinHandler {
+    fn default() -> Self {
+        Self::new(BackgroundTerminalWaitTimeouts {
+            default_ms: crate::unified_exec::DEFAULT_BACKGROUND_TERMINAL_WAIT_TIMEOUT_MS,
+            max_ms: crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS,
+        })
+    }
+}
 
 impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     fn tool_name(&self) -> ToolName {
@@ -39,7 +56,7 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
     }
 
     fn spec(&self) -> ToolSpec {
-        create_write_stdin_tool()
+        create_write_stdin_tool(self.timeouts)
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {

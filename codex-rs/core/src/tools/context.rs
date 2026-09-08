@@ -364,6 +364,112 @@ pub struct ExecCommandToolOutput {
     pub output_spill: Option<ExecCommandOutputSpill>,
 }
 
+/// Причина, по которой событийное ожидание вернуло управление модели.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WaitWakeReason {
+    Activity,
+    Completed,
+    Steered,
+    TimedOut,
+}
+
+impl WaitWakeReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Activity => "activity",
+            Self::Completed => "completed",
+            Self::Steered => "steered",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+/// Результат `write_stdin`, дополненный причиной завершения пустого ожидания.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct WriteStdinToolOutput {
+    output: ExecCommandToolOutput,
+    wait_wake_reason: Option<WaitWakeReason>,
+}
+
+impl WriteStdinToolOutput {
+    pub(crate) fn new(
+        output: ExecCommandToolOutput,
+        wait_wake_reason: Option<WaitWakeReason>,
+    ) -> Self {
+        Self {
+            output,
+            wait_wake_reason,
+        }
+    }
+}
+
+impl std::ops::Deref for WriteStdinToolOutput {
+    type Target = ExecCommandToolOutput;
+
+    fn deref(&self) -> &Self::Target {
+        &self.output
+    }
+}
+
+impl ToolOutput for WriteStdinToolOutput {
+    fn log_output(&self) -> String {
+        match self.wait_wake_reason {
+            Some(reason) => format!(
+                "Wait wake reason: {}\n{}",
+                reason.as_str(),
+                self.output.log_output()
+            ),
+            None => self.output.log_output(),
+        }
+    }
+
+    fn success_for_logging(&self) -> bool {
+        self.output.success_for_logging()
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        let Some(reason) = self.wait_wake_reason else {
+            return self.output.to_response_item(call_id, payload);
+        };
+        function_tool_response(
+            call_id,
+            payload,
+            vec![FunctionCallOutputContentItem::InputText {
+                text: format!(
+                    "Wait wake reason: {}\n{}",
+                    reason.as_str(),
+                    self.output.response_text()
+                ),
+            }],
+            Some(true),
+        )
+    }
+
+    fn post_tool_use_id(&self, call_id: &str) -> String {
+        self.output.post_tool_use_id(call_id)
+    }
+
+    fn post_tool_use_input(&self, payload: &ToolPayload) -> Option<JsonValue> {
+        self.output.post_tool_use_input(payload)
+    }
+
+    fn post_tool_use_response(&self, call_id: &str, payload: &ToolPayload) -> Option<JsonValue> {
+        self.output.post_tool_use_response(call_id, payload)
+    }
+
+    fn code_mode_result(&self, payload: &ToolPayload) -> JsonValue {
+        let mut result = self.output.code_mode_result(payload);
+        if let (Some(reason), JsonValue::Object(fields)) = (self.wait_wake_reason, &mut result) {
+            fields.insert(
+                "wait_wake_reason".to_string(),
+                JsonValue::String(reason.as_str().to_string()),
+            );
+        }
+        result
+    }
+}
+
 impl ToolOutput for ExecCommandToolOutput {
     fn log_output(&self) -> String {
         // Лимит телеметрии не должен наследовать ограничение output-токенов модели.

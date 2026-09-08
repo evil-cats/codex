@@ -78,7 +78,51 @@ pub(crate) struct TurnInputQueue {
 /// Session-scoped pending input storage and active-turn mailbox delivery coordination.
 pub(crate) struct InputQueue {
     activity_tx: watch::Sender<InputQueueActivity>,
+    steer_tx: watch::Sender<u64>,
     mailbox_pending_mails: Mutex<VecDeque<PendingMailboxCommunication>>,
+}
+
+/// Неразрушающая подписка на пользовательский `Steer` активного хода.
+pub(crate) struct SteerSubscription {
+    activity_rx: watch::Receiver<u64>,
+    pending: bool,
+    triggered: bool,
+}
+
+impl SteerSubscription {
+    /// Наблюдает сигнал, не извлекая pending input из очереди хода.
+    pub(crate) fn try_observe(&mut self) -> bool {
+        if self.triggered {
+            return true;
+        }
+        if self.pending {
+            self.pending = false;
+            self.triggered = true;
+            return true;
+        }
+        if self.activity_rx.has_changed().unwrap_or(false) {
+            self.activity_rx.borrow_and_update();
+            self.triggered = true;
+            return true;
+        }
+        false
+    }
+
+    pub(crate) async fn wait(&mut self) {
+        if self.try_observe() {
+            return;
+        }
+        if self.activity_rx.changed().await.is_ok() {
+            self.activity_rx.borrow_and_update();
+            self.triggered = true;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    pub(crate) fn triggered(&self) -> bool {
+        self.triggered
+    }
 }
 
 struct PendingMailboxCommunication {
@@ -90,9 +134,28 @@ struct PendingMailboxCommunication {
 impl InputQueue {
     pub(crate) fn new() -> Self {
         let (activity_tx, _) = watch::channel(InputQueueActivity::Mailbox);
+        let (steer_tx, _) = watch::channel(0);
         Self {
             activity_tx,
+            steer_tx,
             mailbox_pending_mails: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    pub(crate) async fn subscribe_steer(
+        &self,
+        turn_state: Option<&Mutex<TurnState>>,
+    ) -> SteerSubscription {
+        let activity_rx = self.steer_tx.subscribe();
+        let pending = if let Some(turn_state) = turn_state {
+            turn_state.lock().await.pending_input.has_pending_input()
+        } else {
+            false
+        };
+        SteerSubscription {
+            activity_rx,
+            pending,
+            triggered: false,
         }
     }
 
@@ -265,6 +328,9 @@ impl InputQueue {
             turn_state.accept_mailbox_delivery_for_current_turn();
         }
         self.activity_tx.send_replace(InputQueueActivity::Steer);
+        self.steer_tx.send_modify(|generation| {
+            *generation = generation.wrapping_add(1);
+        });
     }
 
     pub(crate) async fn extend_pending_input_for_turn_state(
@@ -484,6 +550,36 @@ mod tests {
 
         activity_rx.changed().await.expect("steer update");
         assert_eq!(*activity_rx.borrow_and_update(), InputQueueActivity::Steer);
+    }
+
+    #[tokio::test]
+    async fn event_driven_wait_runtime_steer_subscription_is_non_destructive() {
+        let input_queue = InputQueue::new();
+        let turn_state = Mutex::new(TurnState::default());
+        let mut subscription = input_queue.subscribe_steer(Some(&turn_state)).await;
+        let mut second_subscription = input_queue.subscribe_steer(Some(&turn_state)).await;
+
+        input_queue
+            .extend_pending_input_and_accept_mailbox_delivery_for_turn_state(
+                &turn_state,
+                vec![TurnInput::UserInput {
+                    content: vec![UserInput::Text {
+                        text: "steer".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    client_id: None,
+                }],
+            )
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(subscription.wait(), second_subscription.wait());
+        })
+        .await
+        .expect("every steer subscription should wake");
+        assert!(subscription.triggered());
+        assert!(second_subscription.triggered());
+        assert!(turn_state.lock().await.pending_input.has_pending_input());
     }
 
     #[tokio::test]

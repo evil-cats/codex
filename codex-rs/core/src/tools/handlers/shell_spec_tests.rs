@@ -122,8 +122,11 @@ fn exec_command_tool_can_hide_shell_parameter() {
 }
 
 #[test]
-fn write_stdin_tool_matches_expected_spec() {
-    let tool = create_write_stdin_tool();
+fn event_driven_wait_config_write_stdin_tool_matches_expected_spec() {
+    let tool = create_write_stdin_tool(crate::unified_exec::BackgroundTerminalWaitTimeouts {
+        default_ms: 600_000,
+        max_ms: 900_000,
+    });
 
     let properties = BTreeMap::from([
         (
@@ -141,7 +144,7 @@ fn write_stdin_tool_matches_expected_spec() {
         (
             "yield_time_ms".to_string(),
             JsonSchema::number(Some(
-                "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default.".to_string(),
+                "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to 600000 ms, cap at 900000 ms, and return sooner when the process exits or new user input arrives.".to_string(),
             )),
         ),
         (

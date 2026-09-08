@@ -1,11 +1,13 @@
 //! Продолжает или завершает ячейку Code Mode и использует общий путь ответа модели.
 
 use serde::Deserialize;
+use std::time::Duration;
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::context::WaitWakeReason;
 use crate::tools::context::boxed_tool_output;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::PostToolUsePayload;
@@ -14,28 +16,30 @@ use crate::tools::registry::ToolExecutor;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 
-use super::DEFAULT_WAIT_YIELD_TIME_MS;
 use super::ExecContext;
 use super::WAIT_TOOL_NAME;
 use super::handle_runtime_response;
 use super::telemetry::CodeModeToolCallGuard;
 use super::wait_spec::create_wait_tool;
 
-pub struct CodeModeWaitHandler;
+pub struct CodeModeWaitHandler {
+    default_wait_timeout_ms: u64,
+}
+
+impl Default for CodeModeWaitHandler {
+    fn default() -> Self {
+        Self::new(codex_code_mode::DEFAULT_WAIT_YIELD_TIME_MS)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct ExecWaitArgs {
     cell_id: String,
-    #[serde(default = "default_wait_yield_time_ms")]
-    yield_time_ms: u64,
+    yield_time_ms: Option<u64>,
     #[serde(default)]
     max_tokens: Option<usize>,
     #[serde(default)]
     terminate: bool,
-}
-
-fn default_wait_yield_time_ms() -> u64 {
-    DEFAULT_WAIT_YIELD_TIME_MS
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
@@ -53,7 +57,7 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
     }
 
     fn spec(&self) -> ToolSpec {
-        create_wait_tool()
+        create_wait_tool(self.default_wait_timeout_ms)
     }
 
     fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
@@ -65,6 +69,12 @@ impl ToolExecutor<ToolInvocation> for CodeModeWaitHandler {
 }
 
 impl CodeModeWaitHandler {
+    pub(crate) fn new(default_wait_timeout_ms: u64) -> Self {
+        Self {
+            default_wait_timeout_ms,
+        }
+    }
+
     /// Ждёт очередной ответ ячейки и передаёт общему пути ответа текущий
     /// `call_id` вызова `wait` вместе с длительностью от хост-процесса или
     /// резервным локальным замером.
@@ -101,23 +111,70 @@ impl CodeModeWaitHandler {
                 let started_at = std::time::Instant::now();
                 telemetry.cell_id = Some(args.cell_id.clone());
                 let cell_id = codex_code_mode::CellId::new(args.cell_id);
-                let wait_response = if args.terminate {
-                    exec.session
+                let timeout_ms = args.yield_time_ms.unwrap_or(self.default_wait_timeout_ms);
+                let (wait_response, wait_wake_reason) = if args.terminate {
+                    let response = exec
+                        .session
                         .services
                         .code_mode_service
                         .terminate(cell_id)
-                        .await
+                        .await;
+                    (response, WaitWakeReason::Completed)
                 } else {
-                    exec.session
-                        .services
-                        .code_mode_service
-                        .wait(codex_code_mode::WaitRequest {
-                            cell_id,
-                            yield_time_ms: args.yield_time_ms,
-                        })
-                        .await
-                }
-                .map_err(|error| {
+                    let turn_state = exec
+                        .session
+                        .input_queue
+                        .turn_state_for_sub_id(&exec.session.active_turn, &exec.turn.sub_id)
+                        .await;
+                    let mut steer_subscription = exec
+                        .session
+                        .input_queue
+                        .subscribe_steer(turn_state.as_deref())
+                        .await;
+                    let wait_started_at = std::time::Instant::now();
+                    let wait = exec.session.services.code_mode_service.wait(
+                        codex_code_mode::WaitRequest {
+                            cell_id: cell_id.clone(),
+                            yield_time_ms: timeout_ms,
+                        },
+                    );
+                    tokio::pin!(wait);
+                    tokio::select! {
+                        biased;
+                        response = &mut wait => {
+                            let reason = match response.as_ref() {
+                                Ok(codex_code_mode::WaitOutcome::LiveCell(
+                                    codex_code_mode::RuntimeResponse::Yielded { .. },
+                                )) => {
+                                    let observed_wait = response
+                                        .as_ref()
+                                        .ok()
+                                        .and_then(codex_code_mode::WaitOutcome::code_mode_host_duration)
+                                        .unwrap_or_else(|| wait_started_at.elapsed());
+                                    if observed_wait >= Duration::from_millis(timeout_ms) {
+                                        WaitWakeReason::TimedOut
+                                    } else {
+                                        WaitWakeReason::Activity
+                                    }
+                                }
+                                Ok(_) => WaitWakeReason::Completed,
+                                Err(_) => WaitWakeReason::Completed,
+                            };
+                            (response, reason)
+                        }
+                        _ = steer_subscription.wait() => (
+                            Ok(codex_code_mode::WaitOutcome::LiveCell(
+                                codex_code_mode::RuntimeResponse::Yielded {
+                                    cell_id,
+                                    content_items: Vec::new(),
+                                    code_mode_host_duration: None,
+                                },
+                            )),
+                            WaitWakeReason::Steered,
+                        ),
+                    }
+                };
+                let wait_response = wait_response.map_err(|error| {
                     telemetry.finish(/*success*/ false);
                     FunctionCallError::RespondToModel(error)
                 })?;
@@ -165,7 +222,7 @@ impl CodeModeWaitHandler {
                 let wall_time = wait_response
                     .code_mode_host_duration()
                     .unwrap_or_else(|| started_at.elapsed());
-                handle_runtime_response(
+                let mut output = handle_runtime_response(
                     &exec,
                     &call_id,
                     wait_response.into(),
@@ -173,8 +230,22 @@ impl CodeModeWaitHandler {
                     wall_time,
                 )
                 .await
-                .map_err(FunctionCallError::RespondToModel)
-                .map(boxed_tool_output)
+                .map_err(FunctionCallError::RespondToModel)?;
+                let wait_reason = format!("Wait wake reason: {}\n", wait_wake_reason.as_str());
+                if let Some(codex_protocol::models::FunctionCallOutputContentItem::InputText {
+                    text,
+                }) = output.body.first_mut()
+                {
+                    text.insert_str(0, &wait_reason);
+                } else {
+                    output.body.insert(
+                        0,
+                        codex_protocol::models::FunctionCallOutputContentItem::InputText {
+                            text: wait_reason,
+                        },
+                    );
+                }
+                Ok(boxed_tool_output(output))
             }
             _ => Err(FunctionCallError::RespondToModel(format!(
                 "{WAIT_TOOL_NAME} expects JSON arguments"

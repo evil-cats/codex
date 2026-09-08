@@ -892,7 +892,9 @@ fn register_code_mode_executors(
         code_mode_nested_tool_specs,
     );
 
-    registry.prepend_trusted(Arc::new(CodeModeWaitHandler));
+    registry.prepend_trusted(Arc::new(CodeModeWaitHandler::new(
+        turn_context.config.code_mode.default_wait_timeout_ms,
+    )));
     registry.prepend_trusted(Arc::new(execute_handler));
 
     code_mode_tool_names
@@ -1009,7 +1011,12 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
                         context.environments,
                     ),
                 }));
-                registry.add(WriteStdinHandler);
+                registry.add(WriteStdinHandler::new(
+                    crate::unified_exec::BackgroundTerminalWaitTimeouts {
+                        default_ms: turn_context.config.background_terminal_wait_timeout_ms,
+                        max_ms: turn_context.config.background_terminal_max_timeout,
+                    },
+                ));
             }
             if turn_context.config.features.enabled(Feature::ViewImage) {
                 registry.add(ViewImageHandler::new(ViewImageToolOptions {
@@ -1100,7 +1107,12 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
     };
     if features.enabled(Feature::UnifiedExec) {
         registry.add(ExecCommandHandler::new(options));
-        registry.add(WriteStdinHandler);
+        registry.add(WriteStdinHandler::new(
+            crate::unified_exec::BackgroundTerminalWaitTimeouts {
+                default_ms: turn_context.config.background_terminal_wait_timeout_ms,
+                max_ms: turn_context.config.background_terminal_max_timeout,
+            },
+        ));
     } else {
         // Managed requirements are the only configuration path that can keep
         // unified exec disabled. Preserve command execution without exposing a

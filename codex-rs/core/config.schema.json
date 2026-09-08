@@ -474,6 +474,12 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "default_wait_timeout_ms": {
+          "description": "Watchdog timeout по умолчанию для вызовов Code Mode wait, в миллисекундах.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
         "direct_only_tool_namespaces": {
           "description": "Exact tool namespaces to expose only as direct model tools. These tools bypass deferral, remain top-level in code-mode-only sessions, and are omitted from the nested code-mode tool surface.",
           "items": {
@@ -5951,9 +5957,15 @@
       "description": "Optional policy instructions for the guardian auto-reviewer."
     },
     "background_terminal_max_timeout": {
-      "description": "Maximum poll window for background terminal output (`write_stdin`), in milliseconds. Default: `300000` (5 minutes).",
+      "description": "Верхняя граница ожидания пустого `write_stdin`, в миллисекундах. По умолчанию: `3600000` (1 час).",
       "format": "uint64",
       "minimum": 0.0,
+      "type": "integer"
+    },
+    "background_terminal_wait_timeout_ms": {
+      "description": "Watchdog timeout по умолчанию для пустого `write_stdin`, в миллисекундах. По умолчанию: `60000` (1 минута).",
+      "format": "uint64",
+      "minimum": 5000.0,
       "type": "integer"
     },
     "browser_use": {

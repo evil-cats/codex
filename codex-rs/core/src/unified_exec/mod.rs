@@ -78,7 +78,8 @@ pub(crate) const WINDOWS_INITIAL_EXEC_YIELD_TIME_FLOOR_MS: u64 = 10_000;
 // Minimum yield time for an empty `write_stdin`.
 pub(crate) const MIN_EMPTY_YIELD_TIME_MS: u64 = 5_000;
 pub(crate) const MAX_YIELD_TIME_MS: u64 = 30_000;
-pub(crate) const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 300_000;
+pub(crate) const DEFAULT_BACKGROUND_TERMINAL_WAIT_TIMEOUT_MS: u64 = 60_000;
+pub(crate) const DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS: u64 = 3_600_000;
 pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
 pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_BYTES: usize = 1024 * 1024; // 1 MiB
 pub(crate) const UNIFIED_EXEC_OUTPUT_MAX_TOKENS: usize = UNIFIED_EXEC_OUTPUT_MAX_BYTES / 4;
@@ -144,7 +145,7 @@ pub(crate) enum ExecCommandOutputRecipient {
 pub(crate) struct WriteStdinRequest<'a> {
     pub process_id: i32,
     pub input: &'a str,
-    pub yield_time_ms: u64,
+    pub yield_time_ms: Option<u64>,
     pub max_output_tokens: Option<usize>,
     pub truncation_policy: TruncationPolicy,
     pub interaction_event: Option<WriteStdinInteractionEvent<'a>>,
@@ -176,22 +177,33 @@ impl ProcessStore {
 
 pub(crate) struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
+    default_write_stdin_yield_time_ms: u64,
     max_write_stdin_yield_time_ms: u64,
 }
 
+/// Итоговые границы одного ожидания пустого `write_stdin`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BackgroundTerminalWaitTimeouts {
+    pub default_ms: u64,
+    pub max_ms: u64,
+}
+
 impl UnifiedExecProcessManager {
-    pub(crate) fn new(max_write_stdin_yield_time_ms: u64) -> Self {
+    pub(crate) fn new(timeouts: BackgroundTerminalWaitTimeouts) -> Self {
         Self {
             process_store: Mutex::new(ProcessStore::default()),
-            max_write_stdin_yield_time_ms: max_write_stdin_yield_time_ms
-                .max(MIN_EMPTY_YIELD_TIME_MS),
+            default_write_stdin_yield_time_ms: timeouts.default_ms,
+            max_write_stdin_yield_time_ms: timeouts.max_ms,
         }
     }
 }
 
 impl Default for UnifiedExecProcessManager {
     fn default() -> Self {
-        Self::new(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
+        Self::new(BackgroundTerminalWaitTimeouts {
+            default_ms: DEFAULT_BACKGROUND_TERMINAL_WAIT_TIMEOUT_MS,
+            max_ms: DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS,
+        })
     }
 }
 

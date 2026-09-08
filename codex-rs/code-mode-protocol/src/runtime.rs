@@ -13,7 +13,7 @@ use crate::FunctionCallOutputContentItem;
 use crate::ToolDefinition;
 
 pub const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 10_000;
-pub const DEFAULT_WAIT_YIELD_TIME_MS: u64 = 10_000;
+pub const DEFAULT_WAIT_YIELD_TIME_MS: u64 = 60_000;
 pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL: usize = 10_000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

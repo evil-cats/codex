@@ -1222,6 +1222,66 @@ disable_in_process_fallback = true
 }
 
 #[tokio::test]
+async fn event_driven_wait_config_defaults_overrides_and_rejects_conflict() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let defaults = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    assert_eq!(defaults.background_terminal_wait_timeout_ms, 60_000);
+    assert_eq!(defaults.background_terminal_max_timeout, 3_600_000);
+    assert_eq!(defaults.code_mode.default_wait_timeout_ms, 60_000);
+    assert_eq!(defaults.multi_agent_v2.default_wait_timeout_ms, 60_000);
+
+    let configured_toml: ConfigToml = toml::from_str(
+        r#"
+background_terminal_wait_timeout_ms = 600000
+background_terminal_max_timeout = 700000
+
+[features.code_mode]
+default_wait_timeout_ms = 600000
+
+[features.multi_agent_v2]
+default_wait_timeout_ms = 600000
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+    let configured = Config::load_from_base_config_with_overrides(
+        configured_toml,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    assert_eq!(configured.background_terminal_wait_timeout_ms, 600_000);
+    assert_eq!(configured.background_terminal_max_timeout, 700_000);
+    assert_eq!(configured.code_mode.default_wait_timeout_ms, 600_000);
+    assert_eq!(configured.multi_agent_v2.default_wait_timeout_ms, 600_000);
+
+    let invalid_toml: ConfigToml = toml::from_str(
+        r#"
+background_terminal_wait_timeout_ms = 600001
+background_terminal_max_timeout = 600000
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+    let error = Config::load_from_base_config_with_overrides(
+        invalid_toml,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("terminal wait timeout above the configured maximum must fail");
+    assert_eq!(
+        error.to_string(),
+        "background_terminal_wait_timeout_ms must be at most background_terminal_max_timeout"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_resolves_tool_registry_config() -> std::io::Result<()> {
     let codex_home = tempdir()?;
 

@@ -3,7 +3,7 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
 use std::collections::BTreeMap;
 
-pub(crate) fn create_wait_tool() -> ToolSpec {
+pub(crate) fn create_wait_tool(default_wait_timeout_ms: u64) -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "cell_id".to_string(),
@@ -11,9 +11,9 @@ pub(crate) fn create_wait_tool() -> ToolSpec {
         ),
         (
             "yield_time_ms".to_string(),
-            JsonSchema::number(Some(
-                "Wait before yielding more output. Defaults to 10000 ms.".to_string(),
-            )),
+            JsonSchema::number(Some(format!(
+                "Watchdog timeout for this wait. Defaults to {default_wait_timeout_ms} ms; cell completion, explicit yield, or new user input returns sooner."
+            ))),
         ),
         (
             "max_tokens".to_string(),
@@ -53,9 +53,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn create_wait_tool_matches_expected_spec() {
+    fn event_driven_wait_config_create_wait_tool_matches_expected_spec() {
         assert_eq!(
-            create_wait_tool(),
+            create_wait_tool(/*default_wait_timeout_ms*/ 60_000),
             ToolSpec::Function(ResponsesApiTool {
                 name: codex_code_mode::WAIT_TOOL_NAME.to_string(),
                 description: format!(
@@ -90,7 +90,7 @@ mod tests {
                         (
                             "yield_time_ms".to_string(),
                             JsonSchema::number(Some(
-                                "Wait before yielding more output. Defaults to 10000 ms."
+                                "Watchdog timeout for this wait. Defaults to 60000 ms; cell completion, explicit yield, or new user input returns sooner."
                                     .to_string(),
                             )),
                         ),

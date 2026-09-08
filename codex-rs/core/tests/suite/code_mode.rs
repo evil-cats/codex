@@ -148,6 +148,23 @@ fn tool_names(body: &Value) -> Vec<String> {
 }
 
 fn function_tool_output_items(req: &ResponsesRequest, call_id: &str) -> Vec<Value> {
+    let mut items = function_tool_output_items_with_wait_reason(req, call_id);
+    if let Some(Value::String(text)) = items
+        .first_mut()
+        .and_then(Value::as_object_mut)
+        .and_then(|item| item.get_mut("text"))
+        && text.starts_with("Wait wake reason: ")
+        && let Some((_, status)) = text.split_once('\n')
+    {
+        *text = status.to_string();
+    }
+    items
+}
+
+fn function_tool_output_items_with_wait_reason(
+    req: &ResponsesRequest,
+    call_id: &str,
+) -> Vec<Value> {
     match req.function_call_output(call_id).get("output") {
         Some(Value::Array(items)) => items.clone(),
         Some(Value::String(text)) => {
@@ -165,8 +182,8 @@ fn text_item(items: &[Value], index: usize) -> &str {
 }
 
 fn extract_running_cell_id(text: &str) -> String {
-    text.strip_prefix("Script running with cell ID ")
-        .and_then(|rest| rest.split('\n').next())
+    text.lines()
+        .find_map(|line| line.strip_prefix("Script running with cell ID "))
         .expect("running header should contain a cell ID")
         .to_string()
 }
@@ -2419,7 +2436,7 @@ async fn code_mode_wait_timeout_reconnects_on_next_exec() -> Result<()> {
 
 #[cfg_attr(windows, ignore = "no exec_command on Windows")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn code_mode_can_yield_and_resume_with_wait() -> Result<()> {
+async fn event_driven_wait_runtime_code_mode_can_yield_and_resume_with_wait() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
@@ -2505,11 +2522,12 @@ text("phase 3");
     test.submit_turn("wait again").await?;
 
     let second_request = second_completion.single_request();
-    let second_items = function_tool_output_items(&second_request, "call-2");
+    let second_items = function_tool_output_items_with_wait_reason(&second_request, "call-2");
     assert_eq!(second_items.len(), 2);
     assert_regex_match(
         concat!(
             r"(?s)\A",
+            r"Wait wake reason: timed_out\n",
             r"Script running with cell ID \d+\nWall time \d+\.\d seconds\nOutput:\n\z"
         ),
         text_item(&second_items, /*index*/ 0),
@@ -2549,16 +2567,169 @@ text("phase 3");
     test.submit_turn("wait for completion").await?;
 
     let third_request = third_completion.single_request();
-    let third_items = function_tool_output_items(&third_request, "call-3");
+    let third_items = function_tool_output_items_with_wait_reason(&third_request, "call-3");
     assert_eq!(third_items.len(), 2);
     assert_regex_match(
         concat!(
             r"(?s)\A",
+            r"Wait wake reason: completed\n",
             r"Script completed\nWall time \d+\.\d seconds\nOutput:\n\z"
         ),
         text_item(&third_items, /*index*/ 0),
     );
     assert_eq!(text_item(&third_items, /*index*/ 1), "phase 3");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_driven_wait_runtime_code_mode_wait_wakes_on_steer_and_preserves_cell() -> Result<()>
+{
+    skip_if_no_network!(Ok(()));
+
+    const STEER_PROMPT: &str = "stop waiting for the code cell";
+    let server = responses::start_mock_server().await;
+    let mut builder = test_codex().with_config(move |config| {
+        let _ = config.features.enable(Feature::CodeMode);
+    });
+    let test = builder.build(&server).await?;
+    let completion_gate = test.workspace_path("code-mode-steer-completion.ready");
+    let completion_wait = wait_for_file_source(&completion_gate)?;
+    let code = format!(
+        r#"
+text("phase 1");
+yield_control();
+text("buffered before steer");
+{completion_wait}
+text("phase 2");
+"#
+    );
+
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-steer-1"),
+            ev_custom_tool_call("call-steer-exec", "exec", &code),
+            ev_completed("resp-steer-1"),
+        ]),
+    )
+    .await;
+    let initial_completion = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-steer-1", "waiting"),
+            ev_completed("resp-steer-2"),
+        ]),
+    )
+    .await;
+    test.submit_turn("start a steerable code cell").await?;
+    let initial_request = initial_completion.single_request();
+    let initial_items = custom_tool_output_items(&initial_request, "call-steer-exec");
+    let cell_id = extract_running_cell_id(text_item(&initial_items, /*index*/ 0));
+
+    let wait_mock = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-steer-3"),
+            responses::ev_function_call(
+                "call-steer-wait",
+                "wait",
+                &serde_json::to_string(&serde_json::json!({
+                    "cell_id": cell_id.clone(),
+                    "yield_time_ms": 600_000,
+                }))?,
+            ),
+            ev_completed("resp-steer-3"),
+        ]),
+    )
+    .await;
+    let steered_completion = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-steer-2", "continued"),
+            ev_completed("resp-steer-4"),
+        ]),
+    )
+    .await;
+    let steer = async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while wait_mock.requests().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("code-mode wait request should arrive");
+        test.codex
+            .start_or_steer_turn(TurnInputRequest::user_input(vec![UserInput::Text {
+                text: STEER_PROMPT.to_string(),
+                text_elements: Vec::new(),
+            }]))
+            .await?;
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::try_join!(test.submit_turn("wait for the cell"), steer)?;
+
+    let steered_request = steered_completion.single_request();
+    let steered_items =
+        function_tool_output_items_with_wait_reason(&steered_request, "call-steer-wait");
+    assert_eq!(steered_items.len(), 1);
+    assert_regex_match(
+        concat!(
+            r"(?s)\AWait wake reason: steered\n",
+            r"Script running with cell ID \d+\nWall time \d+\.\d seconds\nOutput:\n\z"
+        ),
+        text_item(&steered_items, /*index*/ 0),
+    );
+    assert!(
+        steered_request
+            .body_json()
+            .to_string()
+            .contains(STEER_PROMPT)
+    );
+
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-steer-5"),
+            responses::ev_function_call(
+                "call-steer-finish",
+                "wait",
+                &serde_json::to_string(&serde_json::json!({
+                    "cell_id": cell_id,
+                    "yield_time_ms": 2_000,
+                }))?,
+            ),
+            ev_completed("resp-steer-5"),
+        ]),
+    )
+    .await;
+    let final_completion = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-steer-3", "done"),
+            ev_completed("resp-steer-6"),
+        ]),
+    )
+    .await;
+    fs::write(&completion_gate, "ready")?;
+    test.submit_turn("finish the code cell").await?;
+
+    let final_request = final_completion.single_request();
+    let final_items =
+        function_tool_output_items_with_wait_reason(&final_request, "call-steer-finish");
+    assert_eq!(final_items.len(), 3);
+    assert_regex_match(
+        concat!(
+            r"(?s)\AWait wake reason: completed\n",
+            r"Script completed\nWall time \d+\.\d seconds\nOutput:\n\z"
+        ),
+        text_item(&final_items, /*index*/ 0),
+    );
+    assert_eq!(
+        text_item(&final_items, /*index*/ 1),
+        "buffered before steer"
+    );
+    assert_eq!(text_item(&final_items, /*index*/ 2), "phase 2");
 
     Ok(())
 }

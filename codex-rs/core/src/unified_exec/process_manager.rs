@@ -32,8 +32,11 @@ use crate::plugins::metrics::finish_and_track_measurements;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
+use crate::session::SteerSubscription;
 use crate::tools::ApprovalContext;
 use crate::tools::context::ExecCommandToolOutput;
+use crate::tools::context::WaitWakeReason;
+use crate::tools::context::WriteStdinToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventStage;
@@ -660,6 +663,7 @@ impl UnifiedExecProcessManager {
             process.output_handles(),
             Some(context.session.subscribe_elicitation_pause_state()),
             deadline,
+            /*steer_subscription*/ None,
         )
         .await;
         if let Some(completion) = completion.as_mut()
@@ -903,7 +907,7 @@ impl UnifiedExecProcessManager {
         &self,
         context: &UnifiedExecContext,
         request: WriteStdinRequest<'_>,
-    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+    ) -> Result<WriteStdinToolOutput, UnifiedExecError> {
         let process_id = request.process_id;
 
         // Different terminal sessions can be polled concurrently, but reads and
@@ -1013,17 +1017,52 @@ impl UnifiedExecProcessManager {
         let yield_time_ms = {
             // Empty polls use configurable background timeout bounds. Non-empty
             // writes keep a fixed max cap so interactive stdin remains responsive.
-            let time_ms = request.yield_time_ms.max(MIN_YIELD_TIME_MS);
+            let time_ms = request
+                .yield_time_ms
+                .unwrap_or(if request.input.is_empty() {
+                    self.default_write_stdin_yield_time_ms
+                } else {
+                    MIN_YIELD_TIME_MS
+                })
+                .max(MIN_YIELD_TIME_MS);
             if request.input.is_empty() {
                 time_ms.clamp(MIN_EMPTY_YIELD_TIME_MS, self.max_write_stdin_yield_time_ms)
             } else {
                 time_ms.min(MAX_YIELD_TIME_MS)
             }
         };
+        let mut steer_subscription = if request.input.is_empty() {
+            if let Some(interaction_event) = request.interaction_event.as_ref() {
+                let turn_state = interaction_event
+                    .session
+                    .input_queue
+                    .turn_state_for_sub_id(
+                        &interaction_event.session.active_turn,
+                        &interaction_event.turn.sub_id,
+                    )
+                    .await;
+                Some(
+                    interaction_event
+                        .session
+                        .input_queue
+                        .subscribe_steer(turn_state.as_deref())
+                        .await,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let start = Instant::now();
         let deadline = start + Duration::from_millis(yield_time_ms);
-        let collected_output =
-            Self::collect_output_until_deadline(&output, pause_state, deadline).await;
+        let collected_output = Self::collect_output_until_deadline(
+            &output,
+            pause_state,
+            deadline,
+            steer_subscription.as_mut(),
+        )
+        .await;
         let wall_time = Instant::now().saturating_duration_since(start);
 
         let original_token_count = usize::try_from(approx_tokens_from_byte_count(
@@ -1106,6 +1145,19 @@ impl UnifiedExecProcessManager {
             output_spill: None,
         };
 
+        let wait_wake_reason = request.input.is_empty().then(|| {
+            if response.process_id.is_none() {
+                WaitWakeReason::Completed
+            } else if steer_subscription
+                .as_ref()
+                .is_some_and(SteerSubscription::triggered)
+            {
+                WaitWakeReason::Steered
+            } else {
+                WaitWakeReason::TimedOut
+            }
+        });
+
         if request.input.is_empty()
             && response.process_id.is_some()
             && let Some(WriteStdinInteractionEvent { session, turn }) = request.interaction_event
@@ -1122,7 +1174,7 @@ impl UnifiedExecProcessManager {
                 .await;
         }
 
-        Ok(response)
+        Ok(WriteStdinToolOutput::new(response, wait_wake_reason))
     }
 
     async fn refresh_process_state(&self, process_id: i32) -> ProcessStatus {
@@ -1569,6 +1621,7 @@ impl UnifiedExecProcessManager {
         output: &OutputHandles<MAX_BYTES>,
         mut pause_state: Option<watch::Receiver<bool>>,
         mut deadline: Instant,
+        mut steer_subscription: Option<&mut SteerSubscription>,
     ) -> HeadTailBuffer<MAX_BYTES> {
         const POST_EXIT_CLOSE_WAIT_CAP: Duration = Duration::from_millis(50);
 
@@ -1638,9 +1691,19 @@ impl UnifiedExecProcessManager {
                 tokio::pin!(notified);
                 let exit_notified = cancellation_token.cancelled();
                 tokio::pin!(exit_notified);
+                let steer = async {
+                    if let Some(subscription) = steer_subscription.as_deref_mut() {
+                        subscription.wait().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                };
+                tokio::pin!(steer);
                 tokio::select! {
+                    biased;
                     _ = &mut notified => {}
                     _ = &mut exit_notified => exit_signal_received = true,
+                    _ = &mut steer => break,
                     _ = tokio::time::sleep(remaining) => break,
                     _ = Self::wait_for_pause_change(pause_state.as_ref()) => {}
                 }
@@ -1648,6 +1711,13 @@ impl UnifiedExecProcessManager {
             }
 
             collected.push_buffer(drained_output);
+
+            if steer_subscription
+                .as_deref_mut()
+                .is_some_and(SteerSubscription::try_observe)
+            {
+                break;
+            }
 
             exit_signal_received |= cancellation_token.is_cancelled();
             if Instant::now() >= deadline {

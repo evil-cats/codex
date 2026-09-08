@@ -168,6 +168,7 @@ async fn exec_command_with_tty(
         process.output_handles(),
         Some(session.subscribe_elicitation_pause_state()),
         deadline,
+        /*steer_subscription*/ None,
     )
     .await;
     let wall_time = Instant::now().saturating_duration_since(started_at);
@@ -319,7 +320,7 @@ async fn write_stdin(
     process_id: i32,
     input: &str,
     yield_time_ms: u64,
-) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+) -> Result<crate::tools::context::WriteStdinToolOutput, UnifiedExecError> {
     session
         .services
         .unified_exec_manager
@@ -333,7 +334,7 @@ async fn write_stdin(
             WriteStdinRequest {
                 process_id,
                 input,
-                yield_time_ms,
+                yield_time_ms: Some(yield_time_ms),
                 max_output_tokens: None,
                 truncation_policy: TruncationPolicy::Tokens(10_000),
                 interaction_event: None,
@@ -835,6 +836,7 @@ async fn unified_exec_uses_remote_exec_server_when_configured() -> anyhow::Resul
         process.output_handles(),
         /*pause_state*/ None,
         Instant::now() + Duration::from_millis(2_500),
+        /*steer_subscription*/ None,
     )
     .await
     .to_bytes_with_omission_marker();

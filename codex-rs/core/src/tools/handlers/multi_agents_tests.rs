@@ -3507,7 +3507,7 @@ async fn multi_agent_v2_wait_agent_returns_for_already_queued_mail() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_wait_agent_wakes_on_any_mailbox_notification() {
+async fn event_driven_wait_runtime_multi_agent_v2_wakes_on_mailbox_notification() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let root = manager

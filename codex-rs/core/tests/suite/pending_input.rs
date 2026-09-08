@@ -570,7 +570,7 @@ async fn queue_only_agent_mail_wakes_sleeping_root_with_previous_turn_context() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
+async fn event_driven_wait_runtime_steer_interrupts_wait_agent_and_is_forwarded() {
     const WAIT_CALL_ID: &str = "wait-call";
     const INITIAL_PROMPT: &str = "wait for an agent";
     const STEER_PROMPT: &str = "stop waiting and continue";

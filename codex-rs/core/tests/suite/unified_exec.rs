@@ -81,6 +81,7 @@ fn extract_output_text(item: &Value) -> Option<&str> {
 
 #[derive(Debug)]
 struct ParsedUnifiedExecOutput {
+    wait_wake_reason: Option<String>,
     chunk_id: Option<String>,
     wall_time_seconds: f64,
     process_id: Option<String>,
@@ -105,6 +106,7 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
     let regex = OUTPUT_REGEX.get_or_init(|| {
         Regex::new(concat!(
             r#"(?s)^(?:Warning: truncated output \(original token count: \d+\)\n)?(?:Total output lines: \d+\n\n)?"#,
+            r#"(?:Wait wake reason: (?P<wait_wake_reason>[^\n]+)\n)?"#,
             r#"(?:Chunk ID: (?P<chunk_id>[^\n]+)\n)?"#,
             r#"Wall time: (?P<wall_time>-?\d+(?:\.\d+)?) seconds\n"#,
             r#"(?:Process exited with code (?P<exit_code>-?\d+)\n)?"#,
@@ -119,6 +121,10 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
     let captures = regex
         .captures(cleaned)
         .ok_or_else(|| anyhow::anyhow!("missing Output section in unified exec output {raw}"))?;
+
+    let wait_wake_reason = captures
+        .name("wait_wake_reason")
+        .map(|value| value.as_str().to_string());
 
     let chunk_id = captures
         .name("chunk_id")
@@ -164,6 +170,7 @@ fn parse_unified_exec_output(raw: &str) -> Result<ParsedUnifiedExecOutput> {
     } = parse_unified_exec_output_body(body)?;
 
     Ok(ParsedUnifiedExecOutput {
+        wait_wake_reason,
         chunk_id,
         wall_time_seconds,
         process_id,
@@ -3269,7 +3276,7 @@ PY
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
+async fn event_driven_wait_runtime_unified_exec_timeout_and_followup_poll() -> Result<()> {
     // TODO(anp): Remove after unified-exec fixtures use target-native commands.
     skip_if_target_windows!(Ok(()), "uses a POSIX-only command fixture");
     skip_if_no_network!(Ok(()));
@@ -3344,12 +3351,106 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     assert!(first_output.output.is_empty());
 
     let poll_output = outputs.get(second_call_id).expect("missing poll output");
+    assert_eq!(poll_output.wait_wake_reason.as_deref(), Some("completed"));
     assert_eq!(poll_output.output_lines, None);
     assert_eq!(poll_output.output_saved_to, None);
     let output_text = poll_output.output.as_str();
     assert!(
         output_text.contains("ready"),
         "expected ready output, got {output_text:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_driven_wait_runtime_write_stdin_wakes_on_steer_without_stopping_process()
+-> Result<()> {
+    skip_if_target_windows!(Ok(()), "uses a POSIX-only command fixture");
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+
+    const STEER_PROMPT: &str = "stop waiting for the terminal";
+    let server = start_mock_server().await;
+    let mut builder = test_codex();
+    let test = builder.build_with_auto_env(&server).await?;
+    let exec_call_id = "event-wait-exec";
+    let wait_call_id = "event-wait-stdin";
+    let request_log = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_function_call(
+                    exec_call_id,
+                    "exec_command",
+                    &serde_json::to_string(&serde_json::json!({
+                        "cmd": "sleep 0.5; echo buffered; sleep 30",
+                        "yield_time_ms": 10,
+                    }))?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_function_call(
+                    wait_call_id,
+                    "write_stdin",
+                    &serde_json::to_string(&serde_json::json!({
+                        "chars": "",
+                        "session_id": 1000,
+                        "yield_time_ms": 600_000,
+                    }))?,
+                ),
+                ev_completed("resp-2"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "continued"),
+                ev_completed("resp-3"),
+            ]),
+        ],
+    )
+    .await;
+
+    submit_unified_exec_turn(&test, "start background work", PermissionProfile::Disabled).await?;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if request_log.requests().len() >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("write_stdin request should start");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    submit_unified_exec_turn(&test, STEER_PROMPT, PermissionProfile::Disabled).await?;
+
+    loop {
+        let event = test.codex.next_event().await.expect("event");
+        if matches!(event.msg, EventMsg::TurnComplete(_)) {
+            break;
+        }
+    }
+
+    let requests = request_log.requests();
+    let bodies = requests
+        .iter()
+        .map(core_test_support::responses::ResponsesRequest::body_json)
+        .collect::<Vec<_>>();
+    let outputs = collect_tool_outputs(&bodies)?;
+    let wait_output = outputs
+        .get(wait_call_id)
+        .expect("missing write_stdin output");
+    assert_eq!(wait_output.wait_wake_reason.as_deref(), Some("steered"));
+    assert!(wait_output.process_id.is_some());
+    assert!(wait_output.output.contains("buffered"));
+    assert!(
+        bodies
+            .last()
+            .expect("follow-up request")
+            .to_string()
+            .contains(STEER_PROMPT)
     );
 
     Ok(())

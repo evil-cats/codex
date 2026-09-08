@@ -25,6 +25,9 @@ pub struct CodeModeConfigToml {
     /// Default yield timeout for code-mode exec calls, in milliseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_exec_yield_time_ms: Option<u64>,
+    /// Watchdog timeout по умолчанию для вызовов Code Mode wait, в миллисекундах.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_wait_timeout_ms: Option<u64>,
     /// Exact tool namespaces to omit from the code-mode nested tool surface.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excluded_tool_namespaces: Option<Vec<String>>,

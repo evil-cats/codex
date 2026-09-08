@@ -5,6 +5,7 @@ use crate::config::edit::ConfigEditsBuilder;
 use crate::context::world_state::validate_managed_developer_instructions;
 use crate::guardian::BUNDLED_GUARDIAN_POLICY;
 use crate::path_utils::normalize_for_native_workdir;
+use crate::unified_exec::DEFAULT_BACKGROUND_TERMINAL_WAIT_TIMEOUT_MS;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
@@ -244,7 +245,7 @@ pub(crate) const DEFAULT_READ_FILE_CONTENT_MAX_TOKENS: usize = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
-pub(crate) const DEFAULT_MULTI_AGENT_V2_DEFAULT_WAIT_TIMEOUT_MS: i64 = 30_000;
+pub(crate) const DEFAULT_MULTI_AGENT_V2_DEFAULT_WAIT_TIMEOUT_MS: i64 = 60_000;
 const DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE: &str = "collaboration";
 
 pub(crate) const HARD_MIN_MULTI_AGENT_V2_TIMEOUT_MS: i64 = 0;
@@ -1067,8 +1068,12 @@ pub struct Config {
     /// Configuration for the experimental code-mode tool surface.
     pub code_mode: CodeModeConfig,
 
-    /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
-    /// Default: `300000` (5 minutes).
+    /// Watchdog timeout по умолчанию для пустого `write_stdin`, в миллисекундах.
+    /// По умолчанию: `60000` (1 минута).
+    pub background_terminal_wait_timeout_ms: u64,
+
+    /// Верхняя граница ожидания пустого `write_stdin`, в миллисекундах.
+    /// По умолчанию: `3600000` (1 час).
     pub background_terminal_max_timeout: u64,
 
     /// Compatibility-only settings retained for legacy `ghost_snapshot`
@@ -1134,10 +1139,12 @@ pub struct ToolRegistryConfig {
 }
 
 const DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS: u64 = 30_000;
+const DEFAULT_CODE_MODE_WAIT_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CodeModeConfig {
     pub default_exec_yield_time_ms: u64,
+    pub default_wait_timeout_ms: u64,
     pub excluded_tool_namespaces: Vec<String>,
     pub direct_only_tool_namespaces: Vec<String>,
     /// Keep code mode fail-closed when the standalone host is unavailable.
@@ -1148,6 +1155,7 @@ impl Default for CodeModeConfig {
     fn default() -> Self {
         Self {
             default_exec_yield_time_ms: DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS,
+            default_wait_timeout_ms: DEFAULT_CODE_MODE_WAIT_TIMEOUT_MS,
             excluded_tool_namespaces: Vec::new(),
             direct_only_tool_namespaces: Vec::new(),
             disable_in_process_fallback: false,
@@ -2770,6 +2778,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
         default_exec_yield_time_ms: base
             .and_then(|config| config.default_exec_yield_time_ms)
             .unwrap_or(DEFAULT_CODE_MODE_EXEC_YIELD_TIME_MS),
+        default_wait_timeout_ms: base
+            .and_then(|config| config.default_wait_timeout_ms)
+            .unwrap_or(DEFAULT_CODE_MODE_WAIT_TIMEOUT_MS),
         excluded_tool_namespaces: base
             .and_then(|config| config.excluded_tool_namespaces.as_ref())
             .cloned()
@@ -3928,6 +3939,23 @@ impl Config {
             .background_terminal_max_timeout
             .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
             .max(MIN_EMPTY_YIELD_TIME_MS);
+        let background_terminal_wait_timeout_ms = cfg
+            .background_terminal_wait_timeout_ms
+            .unwrap_or(DEFAULT_BACKGROUND_TERMINAL_WAIT_TIMEOUT_MS);
+        if background_terminal_wait_timeout_ms < MIN_EMPTY_YIELD_TIME_MS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "background_terminal_wait_timeout_ms must be at least {MIN_EMPTY_YIELD_TIME_MS}"
+                ),
+            ));
+        }
+        if background_terminal_wait_timeout_ms > background_terminal_max_timeout {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "background_terminal_wait_timeout_ms must be at most background_terminal_max_timeout",
+            ));
+        }
 
         let ghost_snapshot = {
             let mut config = GhostSnapshotConfig::default();
@@ -4454,6 +4482,7 @@ impl Config {
             update_plan_enabled,
             tool_registry,
             code_mode,
+            background_terminal_wait_timeout_ms,
             background_terminal_max_timeout,
             ghost_snapshot,
             multi_agent_v2,
