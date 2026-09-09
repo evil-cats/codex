@@ -46,9 +46,10 @@ Watchdog timeout остаётся необходим для обнаружени
 | Файл | Ответственность |
 | --- | --- |
 | `codex-rs/config/src/config_toml.rs` | Объявляет верхнеуровневый `background_terminal_wait_timeout_ms` и сохраняет совместимость терминальной конфигурации |
+| `codex-rs/config/defaults.toml` | Задаёт `background_terminal_max_timeout = 3_600_000` в слое `ConfigLayerSource::PackagedDefaults` |
 | `codex-rs/features/src/feature_configs.rs` | Объявляет `[features.code_mode].default_wait_timeout_ms`; сохраняет существующий `[features.multi_agent_v2].default_wait_timeout_ms` |
 | `codex-rs/core/src/config/mod.rs` | Материализует три итоговых timeout, задаёт значение `60_000` по умолчанию и проверяет допустимые сочетания |
-| `codex-rs/core/src/config/config_tests.rs` | Проверяет значения по умолчанию, явные значения и ошибки конфликтующей конфигурации |
+| `codex-rs/core/src/config/config_tests.rs` | Проверяет согласованность слоя `ConfigLayerSource::PackagedDefaults` с runtime fallback, явные значения и ошибки конфликтующей конфигурации |
 | `codex-rs/core/config.schema.json` | Описывает новые ключи конфигурации и их единицы измерения |
 | `codex-rs/core/src/session/mod.rs` | Экспортирует внутреннюю подписку на `Steer` владельцам wait-механизмов |
 | `codex-rs/core/src/session/input_queue.rs` | Предоставляет неразрушающее уведомление о `Steer`, которым могут пользоваться все три wait-механизма |
@@ -187,9 +188,10 @@ polling поверх wait tool.
 3. Добавить `background_terminal_wait_timeout_ms` и
    `[features.code_mode].default_wait_timeout_ms`, изменить значение по умолчанию
    `[features.multi_agent_v2].default_wait_timeout_ms` на `60_000`.
-4. Поднять стандартный `background_terminal_max_timeout` до `3_600_000`,
-   сохранить явно заданную границу и отклонять
-   `background_terminal_wait_timeout_ms`, если она эту границу превышает.
+4. Поднять `background_terminal_max_timeout` до `3_600_000` как в
+   `codex-rs/config/defaults.toml`, так и в runtime fallback; сохранить явно
+   заданную границу и отклонять `background_terminal_wait_timeout_ms`, если она
+   эту границу превышает.
 5. Материализовать итоговые значения по умолчанию и обновить config schema.
 6. Различать отсутствующий timeout и явно переданное в вызове значение; не
    применять значение фонового терминала по умолчанию к непустому `write_stdin`.
@@ -210,7 +212,7 @@ polling поверх wait tool.
   "schema": "fork-tests.v1",
   "tests": [
     {
-      "purpose": "единые значения wait watchdog по умолчанию, переопределения конфигурации и model-visible описания инструментов",
+      "purpose": "согласованность ConfigLayerSource::PackagedDefaults и runtime fallback, переопределения wait watchdog и model-visible описания инструментов",
       "argv": ["just", "test", "-p", "codex-core", "event_driven_wait_config"]
     },
     {

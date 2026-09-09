@@ -1222,7 +1222,27 @@ disable_in_process_fallback = true
 }
 
 #[tokio::test]
+/// Проверяет согласованность слоя `ConfigLayerSource::PackagedDefaults`,
+/// runtime fallback и явных границ всех watchdog-настроек.
 async fn event_driven_wait_config_defaults_overrides_and_rejects_conflict() -> std::io::Result<()> {
+    let layered_codex_home = tempdir()?;
+    std::fs::write(
+        layered_codex_home.path().join(CONFIG_TOML_FILE),
+        "background_terminal_wait_timeout_ms = 600000\n",
+    )?;
+    let layered = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(layered_codex_home.path().to_path_buf())
+        .fallback_cwd(Some(layered_codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+    assert_eq!(
+        (
+            layered.background_terminal_wait_timeout_ms,
+            layered.background_terminal_max_timeout,
+        ),
+        (600_000, 3_600_000)
+    );
+
     let codex_home = tempdir()?;
     let defaults = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
@@ -1230,10 +1250,15 @@ async fn event_driven_wait_config_defaults_overrides_and_rejects_conflict() -> s
         codex_home.abs(),
     )
     .await?;
-    assert_eq!(defaults.background_terminal_wait_timeout_ms, 60_000);
-    assert_eq!(defaults.background_terminal_max_timeout, 3_600_000);
-    assert_eq!(defaults.code_mode.default_wait_timeout_ms, 60_000);
-    assert_eq!(defaults.multi_agent_v2.default_wait_timeout_ms, 60_000);
+    assert_eq!(
+        (
+            defaults.background_terminal_wait_timeout_ms,
+            defaults.background_terminal_max_timeout,
+            defaults.code_mode.default_wait_timeout_ms,
+            defaults.multi_agent_v2.default_wait_timeout_ms,
+        ),
+        (60_000, 3_600_000, 60_000, 60_000)
+    );
 
     let configured_toml: ConfigToml = toml::from_str(
         r#"
