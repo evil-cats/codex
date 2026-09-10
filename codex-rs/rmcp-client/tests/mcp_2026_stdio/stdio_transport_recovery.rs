@@ -1,9 +1,9 @@
 //! Проверяет восстановление MCP stdio напрямую через публичный `RmcpClient`.
 //!
 //! Сценарии запускают управляемый `test_stdio_server` с отдельным временным
-//! состоянием. Они наблюдают число реальных запусков, инициализаций и вызовов
-//! инструмента, поэтому отличают успешное восстановление от лишнего повторного
-//! запуска или скрытого повтора исходной операции.
+//! состоянием. Они наблюдают число реальных запусков, инициализаций, вызовов
+//! инструмента и минимальные паузы между попытками, поэтому отличают успешное
+//! восстановление от лишнего запуска или скрытого повтора исходной операции.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -11,6 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
@@ -32,7 +33,7 @@ const RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV: &str =
     "MCP_TEST_RECOVERY_CLOSE_BARRIER_PARTICIPANTS";
 const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
 const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
-const RECOVERY_INITIALIZE_FAIL_AT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAIL_AT";
+const RECOVERY_INITIALIZE_FAILURE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAILURE_COUNT";
 const RECOVERY_INITIALIZE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_STATE_FILE";
 const RECOVERY_LAUNCH_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_LAUNCH_LOG_FILE";
 const RECOVERY_REMOVE_CWD_ON_CLOSE_ENV: &str = "MCP_TEST_RECOVERY_REMOVE_CWD_ON_CLOSE";
@@ -189,18 +190,28 @@ fn read_counter(path: &Path) -> anyhow::Result<u64> {
     }
 }
 
-/// Два вызова на одном закрытом сервисе создают один новый процесс и повторяются независимо.
+/// Два вызова на одном закрытом сервисе разделяют одну recovery-серию и
+/// повторяются независимо.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_transport_failures_share_one_recovery_launch() -> anyhow::Result<()> {
+async fn concurrent_transport_failures_share_one_recovery_series() -> anyhow::Result<()> {
     let paths = RecoveryPaths::new()?;
     let mut env = paths.environment(/*close_count*/ 2);
     env.insert(
         OsString::from(RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV),
         OsString::from("2"),
     );
+    env.insert(
+        OsString::from(RECOVERY_INITIALIZE_FAILURE_COUNT_ENV),
+        OsString::from("1"),
+    );
     let client = initialized_recovery_client(&paths, env).await?;
 
+    let recovery_started = Instant::now();
     let (first, second) = tokio::join!(call_recovery_probe(&client), call_recovery_probe(&client));
+    assert!(
+        recovery_started.elapsed() >= Duration::from_millis(250),
+        "second recovery launch must wait for the first retry delay"
+    );
     assert_eq!(
         (first?, second?),
         (
@@ -211,8 +222,8 @@ async fn concurrent_transport_failures_share_one_recovery_launch() -> anyhow::Re
     assert_eq!(
         paths.observed_state()?,
         ObservedRecoveryState {
-            launches: 2,
-            initialize_attempts: 2,
+            launches: 3,
+            initialize_attempts: 3,
             tool_calls: 4,
         }
     );
@@ -287,7 +298,8 @@ async fn event_stream_dispatch_recovers_idle_stdio_process() -> anyhow::Result<(
     Ok(())
 }
 
-/// Ошибка создания транспорта не повторяет операцию, а следующий вызов видит старый мёртвый запуск.
+/// Постоянная ошибка создания транспорта не начинает серию повторов, а
+/// следующий вызов видит старый мёртвый запуск.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transport_creation_failure_preserves_dead_state_for_next_call() -> anyhow::Result<()> {
     let paths = RecoveryPaths::new()?;
@@ -328,24 +340,69 @@ async fn transport_creation_failure_preserves_dead_state_for_next_call() -> anyh
     Ok(())
 }
 
-/// Ошибка повторного `initialize` не запускает операцию и не заменяет старый закрытый сервис.
+/// Четыре ошибки `initialize` приводят к успеху пятого запуска и единственному
+/// повтору исходной операции.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn reinitialize_failure_preserves_closed_service_for_next_call() -> anyhow::Result<()> {
+async fn recovery_succeeds_on_fifth_attempt_and_retries_operation_once() -> anyhow::Result<()> {
     let paths = RecoveryPaths::new()?;
     let mut env = paths.environment(/*close_count*/ 1);
     env.insert(
-        OsString::from(RECOVERY_INITIALIZE_FAIL_AT_ENV),
-        OsString::from("2"),
+        OsString::from(RECOVERY_INITIALIZE_FAILURE_COUNT_ENV),
+        OsString::from("4"),
     );
     let client = initialized_recovery_client(&paths, env).await?;
 
-    let failed = call_recovery_probe(&client).await;
-    assert!(failed.is_err(), "second initialize must fail recovery");
+    let recovery_started = Instant::now();
+    assert_eq!(
+        call_recovery_probe(&client).await?,
+        expected_probe_result("recovered")
+    );
+    assert!(
+        recovery_started.elapsed() >= Duration::from_millis(3_750),
+        "fifth recovery launch must observe every retry delay"
+    );
     assert_eq!(
         paths.observed_state()?,
         ObservedRecoveryState {
-            launches: 2,
-            initialize_attempts: 2,
+            launches: 6,
+            initialize_attempts: 6,
+            tool_calls: 2,
+        }
+    );
+
+    client.shutdown().await;
+    Ok(())
+}
+
+/// После пяти ошибок `initialize` текущий вызов получает последнюю ошибку, а
+/// следующий внешний вызов начинает новую полную серию.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exhausted_recovery_series_allows_next_call_to_start_new_series() -> anyhow::Result<()> {
+    let paths = RecoveryPaths::new()?;
+    let mut env = paths.environment(/*close_count*/ 1);
+    env.insert(
+        OsString::from(RECOVERY_INITIALIZE_FAILURE_COUNT_ENV),
+        OsString::from("5"),
+    );
+    let client = initialized_recovery_client(&paths, env).await?;
+
+    let recovery_started = Instant::now();
+    let error = call_recovery_probe(&client)
+        .await
+        .expect_err("five initialize failures must exhaust one recovery series");
+    assert!(
+        recovery_started.elapsed() >= Duration::from_millis(3_750),
+        "an exhausted recovery series must observe every retry delay"
+    );
+    assert!(
+        format!("{error:#}").contains("configured initialize failure at recovery attempt 5"),
+        "the exhausted series must return its last error: {error:#}"
+    );
+    assert_eq!(
+        paths.observed_state()?,
+        ObservedRecoveryState {
+            launches: 6,
+            initialize_attempts: 6,
             tool_calls: 1,
         }
     );
@@ -357,8 +414,8 @@ async fn reinitialize_failure_preserves_closed_service_for_next_call() -> anyhow
     assert_eq!(
         paths.observed_state()?,
         ObservedRecoveryState {
-            launches: 3,
-            initialize_attempts: 3,
+            launches: 7,
+            initialize_attempts: 7,
             tool_calls: 2,
         }
     );

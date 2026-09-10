@@ -93,6 +93,8 @@ use crate::stdio_server_launcher::StdioServerTransport;
 use crate::utils::build_default_headers;
 use codex_config::types::OAuthCredentialsStoreMode;
 
+#[path = "service_recovery.rs"]
+mod service_recovery;
 #[path = "streamable_http_retry.rs"]
 mod streamable_http_retry;
 
@@ -1473,74 +1475,6 @@ impl RmcpClient {
             }
             ClientOperationError::Timeout { .. } | ClientOperationError::Service(_) => false,
         }
-    }
-
-    async fn reinitialize_after_service_failure(
-        &self,
-        failed_service: &Arc<RunningService<RoleClient, ElicitationClientService>>,
-    ) -> Result<()> {
-        let _recovery_guard = self
-            .session_recovery_lock
-            .acquire()
-            .await
-            .map_err(|_| anyhow!("MCP client recovery semaphore closed"))?;
-
-        {
-            let guard = self.state.lock().await;
-            match &*guard {
-                ClientState::Ready { service, .. } if !Arc::ptr_eq(service, failed_service) => {
-                    return Ok(());
-                }
-                ClientState::Ready { .. } => {}
-                ClientState::Connecting { .. } => {
-                    return Err(anyhow!("MCP client not initialized"));
-                }
-                ClientState::Closed => {
-                    return Err(anyhow!("MCP client is shut down"));
-                }
-            }
-        }
-
-        let initialize_context = self
-            .initialize_context
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(|| anyhow!("MCP client cannot recover before initialize succeeds"))?;
-        let pending_transport = Self::create_pending_transport(&self.transport_recipe).await?;
-        let stdio_process = Self::stdio_process_from_pending_transport(&pending_transport);
-        let (service, oauth_persistor) = self
-            .connect_pending_transport_with_initialize_retries(
-                pending_transport,
-                initialize_context.client_service,
-                initialize_context.timeout,
-            )
-            .await?;
-        service
-            .peer()
-            .peer_info()
-            .ok_or_else(|| anyhow!("recovered handshake succeeded but server info was missing"))?;
-
-        {
-            let mut state = self.state.lock().await;
-            if matches!(*state, ClientState::Closed) {
-                return Err(anyhow!("MCP client is shut down"));
-            }
-            let mut current_stdio_process = self.stdio_process.lock().await;
-            *state = ClientState::Ready {
-                service,
-                oauth: oauth_persistor.clone(),
-            };
-            *current_stdio_process = stdio_process;
-        }
-
-        if let Some(runtime) = oauth_persistor
-            && let Err(error) = runtime.persist_if_needed().await
-        {
-            warn!("failed to persist OAuth tokens after session recovery: {error}");
-        }
-
-        Ok(())
     }
 }
 

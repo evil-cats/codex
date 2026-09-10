@@ -69,7 +69,7 @@ const RECOVERY_CLOSE_BARRIER_PARTICIPANTS_ENV: &str =
     "MCP_TEST_RECOVERY_CLOSE_BARRIER_PARTICIPANTS";
 const RECOVERY_CLOSE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_COUNT";
 const RECOVERY_CLOSE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_CLOSE_STATE_FILE";
-const RECOVERY_INITIALIZE_FAIL_AT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAIL_AT";
+const RECOVERY_INITIALIZE_FAILURE_COUNT_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_FAILURE_COUNT";
 const RECOVERY_INITIALIZE_STATE_FILE_ENV: &str = "MCP_TEST_RECOVERY_INITIALIZE_STATE_FILE";
 const RECOVERY_LAUNCH_LOG_FILE_ENV: &str = "MCP_TEST_RECOVERY_LAUNCH_LOG_FILE";
 const RECOVERY_REMOVE_CWD_ON_CLOSE_ENV: &str = "MCP_TEST_RECOVERY_REMOVE_CWD_ON_CLOSE";
@@ -557,25 +557,28 @@ impl ServerHandler for TestToolServer {
             mutate_recovery_counter(RECOVERY_INITIALIZE_STATE_FILE_ENV, |observed| {
                 Some(observed + 1)
             })?;
-        if let Ok(fail_at) = std::env::var(RECOVERY_INITIALIZE_FAIL_AT_ENV) {
-            let fail_at = fail_at.parse::<u64>().map_err(|error| {
+        if let Ok(failure_count) = std::env::var(RECOVERY_INITIALIZE_FAILURE_COUNT_ENV) {
+            let failure_count = failure_count.parse::<u64>().map_err(|error| {
                 McpError::internal_error(
-                    format!("invalid {RECOVERY_INITIALIZE_FAIL_AT_ENV}: {error}"),
+                    format!("invalid {RECOVERY_INITIALIZE_FAILURE_COUNT_ENV}: {error}"),
                     None,
                 )
             })?;
             let initialize_attempt = initialize_attempt.ok_or_else(|| {
                 McpError::internal_error(
                     format!(
-                        "{RECOVERY_INITIALIZE_FAIL_AT_ENV} requires \
+                        "{RECOVERY_INITIALIZE_FAILURE_COUNT_ENV} requires \
                          {RECOVERY_INITIALIZE_STATE_FILE_ENV}"
                     ),
                     None,
                 )
             })?;
-            if initialize_attempt == fail_at {
+            // Первоначальный initialize занимает первый номер; настройка
+            // управляет только последующими recovery-рукопожатиями.
+            let recovery_attempt = initialize_attempt.saturating_sub(1);
+            if recovery_attempt != 0 && recovery_attempt <= failure_count {
                 return Err(McpError::internal_error(
-                    format!("configured initialize failure at attempt {initialize_attempt}"),
+                    format!("configured initialize failure at recovery attempt {recovery_attempt}"),
                     None,
                 ));
             }
