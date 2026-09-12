@@ -895,6 +895,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
         )
 
     def test_remote_install_syncs_and_probes_each_host(self) -> None:
+        """Удалённая установка публикует оба бинарника через системный `sudo`."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.create_release_fast_pair(root)
@@ -924,6 +925,7 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             steps = RecordingLogSession.instances[0].steps
             labels = [label for label, _argv in steps]
             for host in ("oleg.home", "f-ms-dev"):
+                self.assertIn(f"{host} require non-interactive sudo", labels)
                 self.assertIn(f"{host} create install directory", labels)
                 self.assertIn(f"{host} sync binaries", labels)
                 self.assertIn(f"{host} probe installed binaries", labels)
@@ -945,6 +947,36 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
                         ].capture_steps
                     ],
                 )
+            self.assertEqual(
+                [
+                    argv
+                    for label, argv in steps
+                    if label.endswith("require non-interactive sudo")
+                ],
+                [
+                    ["ssh", "oleg.home", "sudo -n -- true"],
+                    ["ssh", "f-ms-dev", "sudo -n -- true"],
+                ],
+            )
+            self.assertEqual(
+                [
+                    argv
+                    for label, argv in steps
+                    if label.endswith("create install directory")
+                ],
+                [
+                    [
+                        "ssh",
+                        "oleg.home",
+                        "sudo -n -- mkdir -p -- /usr/local/bin",
+                    ],
+                    [
+                        "ssh",
+                        "f-ms-dev",
+                        "sudo -n -- mkdir -p -- /usr/local/bin",
+                    ],
+                ],
+            )
             sync_commands = [
                 argv for label, argv in steps if label.endswith("sync binaries")
             ]
@@ -952,8 +984,85 @@ class ReleaseFastWorkflowTests(unittest.TestCase):
             for command, host in zip(
                 sync_commands, ("oleg.home", "f-ms-dev"), strict=True
             ):
+                self.assertIn("--no-owner", command)
+                self.assertIn("--no-group", command)
+                self.assertIn("--rsync-path=sudo -n -- rsync", command)
                 self.assertIn("--delay-updates", command)
-                self.assertEqual(command[-1], f"{host}:.local/bin/")
+                self.assertEqual(command[-1], f"{host}:/usr/local/bin/")
+
+    def test_remote_install_explicit_target_does_not_use_implicit_sudo(self) -> None:
+        """Явный `--target` использует права пользователя SSH-сессии."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.create_release_fast_pair(root)
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    str(root),
+                    "--host",
+                    "oleg.home",
+                    "--target",
+                    ".local/bin/codex-hermione",
+                ]
+            )
+
+            with (
+                unittest.mock.patch.object(fork_cli, "LogSession", RecordingLogSession),
+                unittest.mock.patch.object(
+                    fork_cli,
+                    "resolve_codex_v8_cargo_env_for_host",
+                    return_value=(0, {}),
+                ),
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 0)
+        steps = RecordingLogSession.instances[0].steps
+        self.assertNotIn(
+            "oleg.home require non-interactive sudo",
+            [label for label, _argv in steps],
+        )
+        create_command = next(
+            argv
+            for label, argv in steps
+            if label == "oleg.home create install directory"
+        )
+        self.assertEqual(create_command, ["ssh", "oleg.home", "mkdir -p -- .local/bin"])
+        sync_command = next(
+            argv for label, argv in steps if label == "oleg.home sync binaries"
+        )
+        self.assertNotIn("--rsync-path=sudo -n -- rsync", sync_command)
+        self.assertNotIn("--no-owner", sync_command)
+        self.assertNotIn("--no-group", sync_command)
+        self.assertEqual(sync_command[-1], "oleg.home:.local/bin/")
+
+    def test_default_remote_install_requires_sudo_before_build(self) -> None:
+        """Недоступный удалённый `sudo` останавливает сборку до её запуска."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            args = fork_cli.build_parser().parse_args(
+                [
+                    "install",
+                    "--repo-root",
+                    temp_dir,
+                    "--host",
+                    "oleg.home",
+                ]
+            )
+            RecordingLogSession.step_responses[
+                "oleg.home require non-interactive sudo"
+            ] = 1
+
+            with unittest.mock.patch.object(
+                fork_cli, "LogSession", RecordingLogSession
+            ):
+                result = fork_cli.cmd_install(args)
+
+        self.assertEqual(result, 1)
+        self.assertNotIn(
+            "release-fast freshness build",
+            [label for label, _argv in RecordingLogSession.instances[0].steps],
+        )
 
     def test_install_requires_code_mode_host_before_syncing_main(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

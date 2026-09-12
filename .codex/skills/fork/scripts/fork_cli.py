@@ -36,7 +36,8 @@ DEVELOPMENT_REVISION = "dev"
 FULL_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 REVISION_ELF_SECTION = ".hermione_revision"
 REVISION_ELF_SECTION_SIZE = 40
-DEFAULT_LOCAL_INSTALL_TARGET = Path("/usr/local/bin/codex-hermione")
+DEFAULT_INSTALL_TARGET = "/usr/local/bin/codex-hermione"
+DEFAULT_LOCAL_INSTALL_TARGET = Path(DEFAULT_INSTALL_TARGET)
 
 REQUIRED_FILES = (
     "SKILL.md",
@@ -544,7 +545,8 @@ def install_binary_artifacts(
 
 
 def resolve_remote_install_target(value: str | None) -> PurePosixPath:
-    raw_target = value or ".local/bin/codex-hermione"
+    """Возвращает SSH-target, подставляя общий системный путь по умолчанию."""
+    raw_target = value or DEFAULT_INSTALL_TARGET
     if raw_target.startswith("~/"):
         raw_target = raw_target[2:]
     if not raw_target or any(character.isspace() for character in raw_target):
@@ -2032,7 +2034,13 @@ def cmd_build_fast(args: argparse.Namespace) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Собирает и устанавливает stamped-комплект из чистого Git HEAD."""
+    """Собирает и устанавливает stamped-комплект из чистого Git HEAD.
+
+    Системный target по умолчанию проверяет требуемый `sudo` до сборки и повышает
+    права только при публикации: локально через `sudo`, а на SSH-хосте через
+    `sudo -n` без запроса пароля. Явный `--target` всегда сохраняет прямую
+    публикацию с правами вызывающего пользователя.
+    """
     repo_root = Path(args.repo_root).resolve() if args.repo_root else find_repo_root()
     session = LogSession(repo_root=repo_root, log_kind="install", mode="install")
 
@@ -2040,6 +2048,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     source_path = source_artifacts[0].path
     hosts = tuple(args.host)
     publish_local_with_sudo = not hosts and not args.target
+    publish_remote_with_sudo = bool(hosts) and not args.target
     try:
         for host in hosts:
             validate_remote_install_host(host)
@@ -2093,6 +2102,18 @@ def cmd_install(args: argparse.Namespace) -> int:
     if result != 0:
         return result
     assert expected_revision is not None
+
+    if publish_remote_with_sudo:
+        assert ssh_cmd is not None
+        # Удалённый `rsync` использует stdin для протокола и не может запросить
+        # пароль. Проверяем `sudo -n` до дорогой release-сборки.
+        for host in hosts:
+            result = session.run_step(
+                f"{host} require non-interactive sudo",
+                [ssh_cmd, host, shlex.join(["sudo", "-n", "--", "true"])],
+            )
+            if result != 0:
+                return result
 
     result, cargo_env = resolve_codex_v8_cargo_env_for_host(session, repo_root)
     if result != 0:
@@ -2310,6 +2331,20 @@ def cmd_install(args: argparse.Namespace) -> int:
                 ),
             ]
         )
+        remote_privilege_prefix = (
+            ["sudo", "-n", "--"] if publish_remote_with_sudo else []
+        )
+        # `--rsync-path` повышает права только принимающей стороны при системном
+        # пути по умолчанию.
+        remote_rsync_options = (
+            [
+                "--no-owner",
+                "--no-group",
+                "--rsync-path=sudo -n -- rsync",
+            ]
+            if publish_remote_with_sudo
+            else []
+        )
         for host in hosts:
             session.write(f"remote host: {host}\n")
             for artifact, target in zip(staging_artifacts, remote_targets, strict=True):
@@ -2319,7 +2354,15 @@ def cmd_install(args: argparse.Namespace) -> int:
                 [
                     ssh_cmd,
                     host,
-                    shlex.join(["mkdir", "-p", "--", remote_directory]),
+                    shlex.join(
+                        [
+                            *remote_privilege_prefix,
+                            "mkdir",
+                            "-p",
+                            "--",
+                            remote_directory,
+                        ]
+                    ),
                 ],
             )
             if result != 0:
@@ -2329,6 +2372,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                 [
                     rsync_cmd,
                     "--archive",
+                    *remote_rsync_options,
                     "--delay-updates",
                     "--chmod=F755",
                     "--",
@@ -2471,10 +2515,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--target",
         help=(
             "Main install target. The Code Mode host is installed beside it. "
-            "Local installs default to /usr/local/bin/codex-hermione; default "
-            "local publication uses sudo. "
-            "Remote installs default to .local/bin/codex-hermione relative to "
-            "the SSH login home."
+            "Local and remote installs default to "
+            "/usr/local/bin/codex-hermione; default publication uses sudo. "
+            "An explicit target disables implicit sudo."
         ),
     )
     install.add_argument(
